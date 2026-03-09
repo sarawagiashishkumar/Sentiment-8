@@ -1,104 +1,115 @@
-# PRD — AI Stock Research Platform (Password + Credits + Admin)
+# PRD — Trading Dashboard Upgrades & Conflict Resolution
 
-## Original + Expanded Scope
-Started as a lightweight stock research dashboard (Multibagger + F&O). Expanded to include:
-- Landing page with password-only access
-- Credit-based usage model
-- Admin full CRUD for user credit control
-- On-demand live generation only (no auto-population)
-- SEBI-aligned educational disclaimer
-- Top 4 Best Trade Now sticky panel
+## Original Request (Latest)
+Upgrade the trading platform to include:
+- Landing dashboard with two modules: Multibagger and F&O Projections
+- Unified aesthetics aligned with login page + persistent navigation
+- Username-based auth (no public registration), admin/sub-admin/basic RBAC
+- Owner full CRUD, sub-admin limited user creation quota
+- Admin exemption from credit billing
+- F&O conflict logic fixes (directional vs non-directional), strike filter ±500
+- Consolidated/without-consolidated analysis reports
+- Custom script “Script not supported” issue fix
+- Bottom stock F&O opportunities panel
+- Multibagger table with RSI, GTT Buy, duration targets and ROI
+- Top 4 Best Trade sticky panel and SEBI educational disclaimer
 
-## User Requirements Implemented
-1. **Page flow inspired by reference app** (simple landing + clear dashboard tabs).
-2. **Conflict-free tab/action flow**: each section has its own generate action; no mixed-context trigger confusion.
-3. **Password-based authentication (no username)**:
-   - Password min 6 chars, letters+numbers only.
-   - Same password maps to same user account.
-4. **Credit economy**:
-   - Multibagger generation = 1 credit
-   - F&O generation = 2 credits
-   - Proper insufficient-credit error handling.
-5. **Admin owner rights (CRUD)**:
-   - List users
-   - Create users
-   - Update user credits
-   - Delete users (non-admin)
-6. **Data generation behavior**:
-   - Multibagger and F&O remain empty until user clicks generate.
-   - Live analytics run at click time.
-7. **Top 4 Best Trade Now** sticky panel with entry/SL/targets/confidence rationale.
-8. **SEBI educational disclaimer + personal testing notice** on landing and dashboard.
+## Key User Choices Applied
+- Owner username: `@shish123`
+- Multibagger projections: model-based live projections enabled
+- Sub-admin quota policy: fixed quota (default 10), editable by Owner
 
 ## Architecture Decisions
-- FastAPI + MongoDB retained for lightweight backend.
-- In-memory session token store (simple, fast) with bearer auth.
-- Live market data stack in `services/market_data.py` preserved intact.
-- Added new generation endpoints while keeping legacy read endpoints for compatibility.
+- Keep existing reliable live market ingestion in backend (`market_data.py`) intact.
+- Keep stack lightweight: FastAPI + MongoDB + in-memory sessions.
+- Introduced username-credential auth while preserving minimal legacy compatibility in API payload.
+- Modularized F&O generation into index projections + conflict resolver + stock opportunity generator.
 
-## Backend: Implemented APIs
-### Auth
-- `POST /api/auth/access`
-- `GET /api/auth/me`
-- `POST /api/auth/logout`
+## Implemented Backend
+### Auth / RBAC / Admin
+- `POST /api/auth/access` (username login only for existing users; no public registration)
+- `GET /api/auth/me`, `POST /api/auth/logout`
+- Roles: `owner`, `sub_admin`, `user`
+- Admin CRUD:
+  - `GET /api/admin/users`
+  - `POST /api/admin/users`
+  - `PATCH /api/admin/users/{user_ref}/credits`
+  - `PATCH /api/admin/users/{user_ref}/quota` (Owner only)
+  - `DELETE /api/admin/users/{user_ref}`
+- Sub-admin quota enforcement implemented.
+- Owner/sub-admin credit exemption implemented.
 
-### Credit-charged generation
-- `POST /api/multibagger/generate` (cost 1)
-- `POST /api/fno/generate` (cost 2, optional custom script)
+### Multibagger
+- On-demand endpoint: `POST /api/multibagger/generate` (cost 1 for basic user; 0 for exempt roles)
+- Output includes:
+  - Stock + sector
+  - RSI proxy
+  - GTT buy price
+  - Targeted upside prices for 1W/1M/3M/6M/9M/1Y
+  - Matching ROI (%) row data
 
-### Admin CRUD
-- `GET /api/admin/users`
-- `POST /api/admin/users`
-- `PATCH /api/admin/users/{user_key}/credits`
-- `DELETE /api/admin/users/{user_key}`
+### F&O Projections
+- On-demand endpoint: `POST /api/fno/generate` (cost 2 for basic user; 0 for exempt roles)
+- Dual index projections:
+  - `nifty_projection` and `banknifty_projection`
+  - Spot shown in headers
+  - Strike filter hard-bounded within ±500 points
+- Conflict resolution:
+  - CE+PE profitable on same strike => moved to `non_directional_strategies` as straddle classification
+  - Directional assured signals kept separate
+- Reports:
+  - `with_consolidated_report` (weighted constituent analysis)
+  - `without_consolidated_report` (equal constituent analysis)
+- Custom script support improved with dynamic parser (`/api/fno/signal/{script}` + generate custom input)
+- Added script search endpoint: `GET /api/fno/scripts/search`
+- Added stock opportunity panel signals (`RELIANCE`, `BDL`, `SBIN`, `TCS`)
 
-### Existing compatibility endpoints preserved
+### Compatibility Endpoints Retained
 - `GET /api/multibagger/candidates`
 - `GET /api/fno/contracts`
 - `GET /api/fno/signal/{script}`
 - `GET /api/fno/signals/index`
 - `GET /api/fno/signals/potential`
 
-## Frontend: Implemented Flows
-- **Landing (protected)**: password input + disclaimer
-- **Dashboard tabs**:
-  - Multibagger Finder (button-driven generation)
-  - F&O Signals (button-driven generation + custom script)
-  - Admin Credits (admin-only CRUD panel)
-- **Top 4 Best Trade Now** sticky panel in F&O view
-- Credits summary + role + user key
-- Compliance disclaimer in dashboard footer
+## Implemented Frontend
+- New dark/cyan aesthetic across login + internal screens (style unified)
+- Persistent nav: Home / Multibagger / F&O Projections / Admin
+- Home landing dashboard with two module cards (center-left and center-right)
+- Username login page with registration-disabled messaging
+- Multibagger page:
+  - Empty state until button click
+  - Generate button + slider + 2-row per stock projection table
+- F&O page:
+  - Empty state until button click
+  - Dual pane NIFTY/BANKNIFTY with spot, assured + non-directional sections, reports
+  - Full-width stock signals bottom panel
+  - Sticky “Top 4 Best Trade Now” panel
+  - Custom script projection runner
+- Admin page:
+  - User creation, role assignment, credit updates, quota updates, deletion controls
+  - Credential display as `username as role`
+- SEBI personal testing educational disclaimer shown prominently.
 
 ## Testing & Validation
-- Direct API validation with curl:
-  - auth/session ✅
-  - credit deduction ✅
-  - insufficient credits ✅
-  - admin CRUD ✅
-  - generation endpoints ✅
-- Playwright screenshots:
-  - landing gate ✅
-  - dashboard and tabs ✅
-  - generated potential signals + top4 panel ✅
-  - admin CRUD UI ✅
-- Testing agent cycle complete:
-  - `iteration_3.json`
-  - pytest total: **14/14 passed**
+- Backend test suite updated and passed: **21/21** (`pytest -q /app/backend/tests`)
+- Playwright UI flows validated:
+  - Login, landing modules, multibagger generation, F&O generation, admin panel
+- Testing agent iteration completed with no blocking functional defects.
 
 ## Prioritized Backlog
 ### P0
-- Replace default admin fallback password with explicit secure runtime secret only.
-- Move in-memory sessions to persistent TTL-backed store for stronger reliability.
+- Persist session store with TTL backend (Redis) for stronger reliability across restarts.
+- Add unique DB index on `username` with migration cleanup for historical legacy rows.
 
 ### P1
-- Add cooldown/debounce and tiny TTL cache for faster repeated generation clicks.
-- Add explicit invalidators and richer rationale block per top trade.
+- Add pagination/virtualization for very large signal tables.
+- Add explicit “strategy invalidators” section on each signal card.
 
 ### P2
-- Add auditable credit transaction log (who consumed/got granted when).
-- Add export/report for generated multibagger and F&O sessions.
+- Add audit log timeline for user CRUD and credit changes.
+- Add export/download for multibagger and F&O projection snapshots.
 
 ## Next Tasks
-1. Security hardening of admin bootstrap & session persistence.
-2. Credit transaction history endpoint + UI.
-3. Optional analytics explainability panel expansion.
+1. DB hardening: unique username index + migration script.
+2. Session hardening: persistent token store with expiry.
+3. Signal explainability enhancement (invalidators + concise rationale cards).

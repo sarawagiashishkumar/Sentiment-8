@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   BarChart3,
@@ -520,7 +520,7 @@ export default function App() {
                       </TableHeader>
                       <TableBody>
                         {filteredMultibaggers.map((row) => (
-                          <>
+                          <Fragment key={`fragment-${row.symbol}`}>
                             <TableRow key={`${row.symbol}-target`} data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
                               <TableCell className="font-mono text-cyan-300">{row.company_name}</TableCell>
                               <TableCell>{row.sector}</TableCell>
@@ -558,7 +558,7 @@ export default function App() {
                                 </Badge>
                               </TableCell>
                             </TableRow>
-                          </>
+                          </Fragment>
                         ))}
                       </TableBody>
                     </Table>
