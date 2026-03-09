@@ -6,9 +6,10 @@ import pytest
 import requests
 from dotenv import load_dotenv
 
-# Auth, credit consumption, and admin CRUD regression tests for protected dashboard flows
 load_dotenv(Path("/app/frontend/.env"))
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
+
+OWNER_USERNAME = "@shish123"
 
 
 @pytest.fixture(scope="session")
@@ -25,8 +26,8 @@ def api_client():
     return session
 
 
-def _login(client: requests.Session, api_base_url: str, password: str) -> dict:
-    response = client.post(f"{api_base_url}/auth/access", json={"password": password}, timeout=30)
+def _login(client: requests.Session, api_base_url: str, username: str) -> dict:
+    response = client.post(f"{api_base_url}/auth/access", json={"username": username}, timeout=30)
     assert response.status_code == 200
     data = response.json()
     assert "token" in data and isinstance(data["token"], str) and data["token"]
@@ -37,144 +38,144 @@ def _auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_auth_me_reflects_admin_role_and_credits(api_client, api_base_url):
-    login = _login(api_client, api_base_url, "owner123")
-
+def test_auth_me_reflects_owner_role_and_admin_exemption(api_client, api_base_url):
+    login = _login(api_client, api_base_url, OWNER_USERNAME)
     me = api_client.get(f"{api_base_url}/auth/me", headers=_auth_headers(login["token"]), timeout=30)
     assert me.status_code == 200
-
     data = me.json()
-    assert data["role"] == "admin"
-    assert isinstance(data["credits"], int)
-    assert data["credits"] >= 0
-    assert data["user_key"] == login["user_key"]
+    assert data["role"] == "owner"
+    assert data["admin_exempt"] is True
+    assert data["username"] == OWNER_USERNAME
 
 
-def test_auth_me_reflects_sample_user_role_and_credits(api_client, api_base_url):
-    login = _login(api_client, api_base_url, "userabc1")
-
-    me = api_client.get(f"{api_base_url}/auth/me", headers=_auth_headers(login["token"]), timeout=30)
-    assert me.status_code == 200
-
-    data = me.json()
-    assert data["role"] == "user"
-    assert isinstance(data["credits"], int)
-    assert data["credits"] >= 0
-    assert data["user_key"] == login["user_key"]
-
-
-def test_multibagger_generate_charges_one_credit(api_client, api_base_url):
-    login = _login(api_client, api_base_url, "owner123")
+def test_owner_generation_is_credit_exempt(api_client, api_base_url):
+    login = _login(api_client, api_base_url, OWNER_USERNAME)
     headers = _auth_headers(login["token"])
+    before = api_client.get(f"{api_base_url}/auth/me", headers=headers, timeout=30).json()["credits"]
 
-    me_before = api_client.get(f"{api_base_url}/auth/me", headers=headers, timeout=30)
-    assert me_before.status_code == 200
-    credits_before = me_before.json()["credits"]
+    mb = api_client.post(f"{api_base_url}/multibagger/generate", json={}, headers=headers, timeout=120)
+    assert mb.status_code == 200
+    mb_data = mb.json()
+    assert mb_data["cost_charged"] == 0
 
-    response = api_client.post(f"{api_base_url}/multibagger/generate", json={}, headers=headers, timeout=120)
-    assert response.status_code == 200
+    fno = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=headers, timeout=180)
+    assert fno.status_code == 200
+    fno_data = fno.json()
+    assert fno_data["cost_charged"] == 0
 
-    data = response.json()
-    assert data["cost_charged"] == 1
-    assert data["credits_remaining"] == credits_before - 1
-    assert isinstance(data["candidates"], list)
-    assert isinstance(data["potential_count"], int)
-
-
-def test_fno_generate_charges_two_credits_and_top4(api_client, api_base_url):
-    login = _login(api_client, api_base_url, "owner123")
-    headers = _auth_headers(login["token"])
-
-    me_before = api_client.get(f"{api_base_url}/auth/me", headers=headers, timeout=30)
-    assert me_before.status_code == 200
-    credits_before = me_before.json()["credits"]
-
-    response = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=headers, timeout=150)
-    assert response.status_code == 200
-
-    data = response.json()
-    assert data["cost_charged"] == 2
-    assert data["credits_remaining"] == credits_before - 2
-    assert isinstance(data["signals"], list)
-    assert isinstance(data["top_trades"], list)
-    assert len(data["top_trades"]) <= 4
+    after = api_client.get(f"{api_base_url}/auth/me", headers=headers, timeout=30).json()["credits"]
+    assert before == after
 
 
-def test_admin_user_crud_create_list_update_delete(api_client, api_base_url):
-    admin = _login(api_client, api_base_url, "owner123")
-    admin_headers = _auth_headers(admin["token"])
+def test_admin_user_crud_create_update_delete_with_username(api_client, api_base_url):
+    owner = _login(api_client, api_base_url, OWNER_USERNAME)
+    owner_headers = _auth_headers(owner["token"])
 
-    temp_password = f"T{uuid.uuid4().hex[:9]}"
+    temp_username = f"user{uuid.uuid4().hex[:8]}1"
     create = api_client.post(
         f"{api_base_url}/admin/users",
-        json={"password": temp_password, "initial_credits": 3},
-        headers=admin_headers,
+        json={"username": temp_username, "role": "user", "initial_credits": 5},
+        headers=owner_headers,
         timeout=30,
     )
     assert create.status_code == 200
     created = create.json()
+    assert created["username"] == temp_username
     assert created["role"] == "user"
-    assert created["credits"] == 3
-    user_key = created["user_key"]
+    assert created["credits"] == 5
 
-    listed = api_client.get(f"{api_base_url}/admin/users", headers=admin_headers, timeout=30)
-    assert listed.status_code == 200
-    rows = listed.json()
-    assert any(row["user_key"] == user_key for row in rows)
-
-    updated = api_client.patch(
-        f"{api_base_url}/admin/users/{user_key}/credits",
-        json={"credits": 7},
-        headers=admin_headers,
+    update = api_client.patch(
+        f"{api_base_url}/admin/users/{created['user_key']}/credits",
+        json={"credits": 9},
+        headers=owner_headers,
         timeout=30,
     )
-    assert updated.status_code == 200
-    updated_data = updated.json()
-    assert updated_data["user_key"] == user_key
-    assert updated_data["credits"] == 7
+    assert update.status_code == 200
+    assert update.json()["credits"] == 9
 
-    user_login = _login(api_client, api_base_url, temp_password)
-    me = api_client.get(
+    user_login = _login(api_client, api_base_url, temp_username)
+    user_me = api_client.get(
         f"{api_base_url}/auth/me",
         headers=_auth_headers(user_login["token"]),
         timeout=30,
     )
-    assert me.status_code == 200
-    assert me.json()["credits"] == 7
+    assert user_me.status_code == 200
+    assert user_me.json()["credits"] == 9
 
-    deleted = api_client.delete(f"{api_base_url}/admin/users/{user_key}", headers=admin_headers, timeout=30)
-    assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
+    delete = api_client.delete(
+        f"{api_base_url}/admin/users/{created['user_key']}",
+        headers=owner_headers,
+        timeout=30,
+    )
+    assert delete.status_code == 200
+    assert delete.json()["deleted"] is True
 
-    listed_after = api_client.get(f"{api_base_url}/admin/users", headers=admin_headers, timeout=30)
-    assert listed_after.status_code == 200
-    assert all(row["user_key"] != user_key for row in listed_after.json())
+
+def test_sub_admin_quota_enforcement(api_client, api_base_url):
+    owner = _login(api_client, api_base_url, OWNER_USERNAME)
+    owner_headers = _auth_headers(owner["token"])
+
+    sub_username = f"sub{uuid.uuid4().hex[:7]}1"
+    sub_create = api_client.post(
+        f"{api_base_url}/admin/users",
+        json={"username": sub_username, "role": "sub_admin", "initial_credits": 0, "quota_limit": 1},
+        headers=owner_headers,
+        timeout=30,
+    )
+    assert sub_create.status_code == 200
+    sub_user_key = sub_create.json()["user_key"]
+
+    try:
+        sub_login = _login(api_client, api_base_url, sub_username)
+        sub_headers = _auth_headers(sub_login["token"])
+
+        first_user = f"u{uuid.uuid4().hex[:8]}1"
+        first_create = api_client.post(
+            f"{api_base_url}/admin/users",
+            json={"username": first_user, "role": "user", "initial_credits": 1},
+            headers=sub_headers,
+            timeout=30,
+        )
+        assert first_create.status_code == 200
+
+        second_user = f"u{uuid.uuid4().hex[:8]}2"
+        second_create = api_client.post(
+            f"{api_base_url}/admin/users",
+            json={"username": second_user, "role": "user", "initial_credits": 1},
+            headers=sub_headers,
+            timeout=30,
+        )
+        assert second_create.status_code == 403
+        assert "quota" in second_create.json().get("detail", "").lower()
+    finally:
+        api_client.delete(f"{api_base_url}/admin/users/{sub_user_key}", headers=owner_headers, timeout=30)
 
 
-def test_insufficient_credit_flow_returns_402(api_client, api_base_url):
-    admin = _login(api_client, api_base_url, "owner123")
-    admin_headers = _auth_headers(admin["token"])
+def test_basic_user_credit_deduction_and_insufficient_flow(api_client, api_base_url):
+    owner = _login(api_client, api_base_url, OWNER_USERNAME)
+    owner_headers = _auth_headers(owner["token"])
 
-    temp_password = f"T{uuid.uuid4().hex[:9]}"
+    username = f"basic{uuid.uuid4().hex[:8]}1"
     create = api_client.post(
         f"{api_base_url}/admin/users",
-        json={"password": temp_password, "initial_credits": 1},
-        headers=admin_headers,
+        json={"username": username, "role": "user", "initial_credits": 2},
+        headers=owner_headers,
         timeout=30,
     )
     assert create.status_code == 200
     user_key = create.json()["user_key"]
 
     try:
-        user = _login(api_client, api_base_url, temp_password)
-        fail_generate = api_client.post(
-            f"{api_base_url}/fno/generate",
-            json={},
-            headers=_auth_headers(user["token"]),
-            timeout=120,
-        )
-        assert fail_generate.status_code == 402
-        detail = fail_generate.json().get("detail", "")
-        assert "Insufficient credits" in detail
+        user_login = _login(api_client, api_base_url, username)
+        user_headers = _auth_headers(user_login["token"])
+
+        fno_ok = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=user_headers, timeout=180)
+        assert fno_ok.status_code == 200
+        assert fno_ok.json()["cost_charged"] == 2
+        assert fno_ok.json()["credits_remaining"] == 0
+
+        fno_fail = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=user_headers, timeout=180)
+        assert fno_fail.status_code == 402
+        assert "Insufficient credits" in fno_fail.json().get("detail", "")
     finally:
-        api_client.delete(f"{api_base_url}/admin/users/{user_key}", headers=admin_headers, timeout=30)
+        api_client.delete(f"{api_base_url}/admin/users/{user_key}", headers=owner_headers, timeout=30)

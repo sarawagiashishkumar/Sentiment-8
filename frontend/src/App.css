@@ -1,12 +1,16 @@
-.architect-grid-overlay {
+.dashboard-grid-overlay {
     position: fixed;
     inset: 0;
     pointer-events: none;
     background-image:
-        linear-gradient(to right, rgba(100, 116, 139, 0.06) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(100, 116, 139, 0.06) 1px, transparent 1px);
-    background-size: 36px 36px;
+        linear-gradient(to right, rgba(34, 211, 238, 0.08) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(34, 211, 238, 0.08) 1px, transparent 1px);
+    background-size: 44px 44px;
     z-index: 0;
+}
+
+.dashboard-dark-bg {
+    background: radial-gradient(circle at top, #0f172a 0%, #020617 55%, #020617 100%);
 }
 
 main {

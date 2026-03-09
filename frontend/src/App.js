@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
-  Activity,
   BarChart3,
+  GaugeCircle,
+  Home,
   KeyRound,
   LogOut,
   RefreshCw,
   Shield,
   Sparkles,
   TrendingUp,
-  Users,
+  UserCog,
 } from "lucide-react";
 import "@/App.css";
 import { Badge } from "@/components/ui/badge";
@@ -37,42 +38,48 @@ const formatNumber = (value, digits = 2) => {
   });
 };
 
-const formatTime = (isoValue) => {
-  if (!isoValue) return "-";
-  const date = new Date(isoValue);
+const formatTime = (iso) => {
+  if (!iso) return "-";
+  const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return date.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 };
 
-const getDirectionClass = (direction) => {
-  if (direction === "BULLISH") return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (direction === "BEARISH") return "bg-rose-50 text-rose-700 border-rose-200";
-  return "bg-slate-100 text-slate-700 border-slate-300";
+const directionBadge = (direction) => {
+  if (direction === "BULLISH") return "bg-emerald-600 text-white border-emerald-700";
+  if (direction === "BEARISH") return "bg-rose-600 text-white border-rose-700";
+  return "bg-slate-300 text-slate-800 border-slate-400";
 };
 
-const getQualityClass = (quality) => {
+const qualityBadge = (quality) => {
   if (quality === "HIGH") return "bg-emerald-600 text-white border-emerald-700";
   if (quality === "MEDIUM") return "bg-amber-500 text-white border-amber-600";
-  return "bg-slate-200 text-slate-700 border-slate-300";
+  return "bg-slate-300 text-slate-800 border-slate-400";
 };
 
-const getScoreClass = (isPotential, score) => {
-  if (isPotential) return "bg-cyan-500 text-slate-900 border-cyan-600";
-  if (score >= 70) return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (score >= 50) return "bg-amber-50 text-amber-700 border-amber-200";
-  return "bg-slate-100 text-slate-700 border-slate-300";
-};
+const scoreBadge = (isPotential) =>
+  isPotential
+    ? "bg-cyan-500 text-slate-900 border-cyan-600"
+    : "bg-slate-200 text-slate-700 border-slate-300";
 
-const defaultAdminForm = { password: "", initial_credits: 0 };
+const roles = [
+  { value: "user", label: "Basic User" },
+  { value: "sub_admin", label: "Sub-Admin" },
+];
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem("stock_auth_token") || "");
-  const [user, setUser] = useState(null);
-  const [authPassword, setAuthPassword] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState("");
+  const [me, setMe] = useState(null);
 
-  const [activeTab, setActiveTab] = useState("multibagger");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
+
+  const [currentPage, setCurrentPage] = useState("home");
 
   const [minScore, setMinScore] = useState(60);
   const [multibaggerData, setMultibaggerData] = useState(null);
@@ -82,21 +89,33 @@ export default function App() {
   const [fnoData, setFnoData] = useState(null);
   const [fnoLoading, setFnoLoading] = useState(false);
   const [fnoError, setFnoError] = useState("");
-  const [script, setScript] = useState("NIFTY10MAR26500PE");
+  const [customScript, setCustomScript] = useState("");
 
   const [adminUsers, setAdminUsers] = useState([]);
-  const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState("");
-  const [adminForm, setAdminForm] = useState(defaultAdminForm);
-  const [creditEditMap, setCreditEditMap] = useState({});
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    username: "",
+    role: "user",
+    initial_credits: 0,
+    quota_limit: 10,
+  });
+  const [creditEdit, setCreditEdit] = useState({});
+  const [quotaEdit, setQuotaEdit] = useState({});
 
-  const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
+  const authHeaders = useMemo(
+    () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    [token],
+  );
 
-  const loadMe = async (activeToken) => {
+  const isAdmin = me?.role === "owner" || me?.role === "sub_admin";
+  const isOwner = me?.role === "owner";
+
+  const hydrateMe = async (accessToken) => {
     const response = await axios.get(`${API}/auth/me`, {
-      headers: { Authorization: `Bearer ${activeToken}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
-    setUser(response.data);
+    setMe(response.data);
     return response.data;
   };
 
@@ -104,88 +123,84 @@ export default function App() {
     const bootstrap = async () => {
       if (!token) return;
       try {
-        await loadMe(token);
+        await hydrateMe(token);
       } catch {
         localStorage.removeItem("stock_auth_token");
         setToken("");
-        setUser(null);
+        setMe(null);
       }
     };
     bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onAccess = async (event) => {
+  const syncCredits = (credits) => {
+    setMe((prev) => (prev ? { ...prev, credits } : prev));
+  };
+
+  const onLogin = async (event) => {
     event.preventDefault();
-    setAuthError("");
-    if (!/^[A-Za-z0-9]{6,}$/.test(authPassword)) {
-      setAuthError("Password must be at least 6 characters and only letters/numbers.");
-      return;
-    }
-    setAuthLoading(true);
+    setLoginError("");
+    setLoginLoading(true);
     try {
-      const response = await axios.post(`${API}/auth/access`, { password: authPassword });
-      const newToken = response.data.token;
-      localStorage.setItem("stock_auth_token", newToken);
-      setToken(newToken);
-      setUser({
+      const response = await axios.post(`${API}/auth/access`, { username: loginUsername.trim() });
+      localStorage.setItem("stock_auth_token", response.data.token);
+      setToken(response.data.token);
+      setMe({
         role: response.data.role,
         credits: response.data.credits,
         user_key: response.data.user_key,
+        username: response.data.username,
+        admin_exempt: response.data.admin_exempt,
       });
-      setAuthPassword("");
+      setCurrentPage("home");
+      setLoginUsername("");
     } catch (error) {
-      setAuthError(error?.response?.data?.detail || "Unable to authenticate.");
+      setLoginError(error?.response?.data?.detail || "Unable to login");
     } finally {
-      setAuthLoading(false);
+      setLoginLoading(false);
     }
   };
 
   const onLogout = async () => {
     try {
-      if (token) {
-        await axios.post(`${API}/auth/logout`, {}, { headers: authHeaders });
-      }
+      await axios.post(`${API}/auth/logout`, {}, { headers: authHeaders });
     } catch {
       // ignore
-    } finally {
-      localStorage.removeItem("stock_auth_token");
-      setToken("");
-      setUser(null);
-      setMultibaggerData(null);
-      setFnoData(null);
-      setAdminUsers([]);
     }
+    localStorage.removeItem("stock_auth_token");
+    setToken("");
+    setMe(null);
+    setCurrentPage("home");
+    setMultibaggerData(null);
+    setFnoData(null);
+    setAdminUsers([]);
   };
 
-  const syncCredits = (credits) => {
-    setUser((prev) => (prev ? { ...prev, credits } : prev));
-  };
-
-  const generateMultibaggers = async () => {
-    setMultibaggerLoading(true);
+  const generateMultibagger = async () => {
     setMultibaggerError("");
+    setMultibaggerLoading(true);
     try {
       const response = await axios.post(`${API}/multibagger/generate`, {}, { headers: authHeaders });
       setMultibaggerData(response.data);
       syncCredits(response.data.credits_remaining);
     } catch (error) {
-      setMultibaggerError(error?.response?.data?.detail || "Unable to generate multibaggers.");
+      setMultibaggerError(error?.response?.data?.detail || "Unable to generate multibagger list");
     } finally {
       setMultibaggerLoading(false);
     }
   };
 
-  const generateFno = async (customScript = null) => {
-    setFnoLoading(true);
+  const generateFnoProjection = async (script = "") => {
     setFnoError("");
+    setFnoLoading(true);
     try {
-      const payload = customScript ? { custom_script: customScript.trim().toUpperCase() } : {};
+      const payload = script ? { custom_script: script.trim().toUpperCase() } : {};
       const response = await axios.post(`${API}/fno/generate`, payload, { headers: authHeaders });
       setFnoData(response.data);
       syncCredits(response.data.credits_remaining);
     } catch (error) {
-      setFnoError(error?.response?.data?.detail || "Unable to generate F&O signals.");
+      setFnoError(error?.response?.data?.detail || "Unable to generate F&O projections");
     } finally {
       setFnoLoading(false);
     }
@@ -196,126 +211,139 @@ export default function App() {
     setAdminError("");
     try {
       const response = await axios.get(`${API}/admin/users`, { headers: authHeaders });
-      setAdminUsers(response.data || []);
-      const map = {};
-      (response.data || []).forEach((item) => {
-        map[item.user_key] = item.credits;
+      const rows = response.data || [];
+      setAdminUsers(rows);
+      const creditMap = {};
+      const quotaMap = {};
+      rows.forEach((row) => {
+        creditMap[row.user_key] = row.credits;
+        quotaMap[row.user_key] = row.quota_limit;
       });
-      setCreditEditMap(map);
+      setCreditEdit(creditMap);
+      setQuotaEdit(quotaMap);
     } catch (error) {
-      setAdminError(error?.response?.data?.detail || "Unable to load users.");
+      setAdminError(error?.response?.data?.detail || "Unable to load users");
     } finally {
       setAdminLoading(false);
     }
   };
 
-  const createUserByAdmin = async (event) => {
+  const createUser = async (event) => {
     event.preventDefault();
     setAdminError("");
     try {
-      await axios.post(`${API}/admin/users`, adminForm, { headers: authHeaders });
-      setAdminForm(defaultAdminForm);
+      await axios.post(`${API}/admin/users`, createForm, { headers: authHeaders });
+      setCreateForm({ username: "", role: "user", initial_credits: 0, quota_limit: 10 });
       await loadAdminUsers();
     } catch (error) {
-      setAdminError(error?.response?.data?.detail || "Unable to create user.");
+      setAdminError(error?.response?.data?.detail || "Unable to create user");
     }
   };
 
-  const updateCredits = async (userKey) => {
+  const updateCredits = async (userRef) => {
     try {
       await axios.patch(
-        `${API}/admin/users/${userKey}/credits`,
-        { credits: Number(creditEditMap[userKey] || 0) },
+        `${API}/admin/users/${userRef}/credits`,
+        { credits: Number(creditEdit[userRef] || 0) },
         { headers: authHeaders },
       );
       await loadAdminUsers();
     } catch (error) {
-      setAdminError(error?.response?.data?.detail || "Unable to update credits.");
+      setAdminError(error?.response?.data?.detail || "Unable to update credits");
     }
   };
 
-  const deleteUser = async (userKey) => {
+  const updateQuota = async (userRef) => {
     try {
-      await axios.delete(`${API}/admin/users/${userKey}`, { headers: authHeaders });
+      await axios.patch(
+        `${API}/admin/users/${userRef}/quota`,
+        { quota_limit: Number(quotaEdit[userRef] || 1) },
+        { headers: authHeaders },
+      );
       await loadAdminUsers();
     } catch (error) {
-      setAdminError(error?.response?.data?.detail || "Unable to delete user.");
+      setAdminError(error?.response?.data?.detail || "Unable to update quota");
     }
   };
 
-  const filteredCandidates = useMemo(() => {
-    if (!multibaggerData?.candidates) return [];
-    return multibaggerData.candidates.filter((row) => row.multibagger_score >= minScore);
+  const deleteUser = async (userRef) => {
+    try {
+      await axios.delete(`${API}/admin/users/${userRef}`, { headers: authHeaders });
+      await loadAdminUsers();
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to delete user");
+    }
+  };
+
+  const filteredMultibaggers = useMemo(() => {
+    const rows = multibaggerData?.candidates || [];
+    return rows.filter((row) => row.multibagger_score >= minScore);
   }, [multibaggerData, minScore]);
 
-  const bestTrades = useMemo(() => {
-    if (!fnoData?.top_trades) return [];
-    return fnoData.top_trades.slice(0, 4);
-  }, [fnoData]);
-
-  if (!token || !user) {
+  if (!token || !me) {
     return (
-      <main className="min-h-screen bg-black text-white" data-testid="landing-page">
-        <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col items-center justify-center px-4 py-10 text-center">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-500/50 bg-cyan-500/10 px-4 py-1 text-xs text-cyan-300" data-testid="landing-chip">
+      <main className="min-h-screen dashboard-dark-bg text-slate-100" data-testid="login-page">
+        <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col items-center justify-center px-4 py-10">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-4 py-1 text-xs text-cyan-300" data-testid="login-chip">
             <Sparkles size={14} />
-            SMART AI STOCK RESEARCH
+            TRADING RESEARCH PLATFORM
           </div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl" data-testid="landing-title">
-            Password Protected Research Dashboard
+
+          <h1 className="text-center text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl" data-testid="login-title">
+            Secure Access Dashboard
           </h1>
-          <p className="mt-4 max-w-3xl text-sm text-slate-300 sm:text-base" data-testid="landing-subtitle">
-            Personal testing and educational usage only. Enter your access password to use credit-based Multibagger and F&O live analysis.
+
+          <p className="mt-4 max-w-3xl text-center text-sm text-slate-300 sm:text-base" data-testid="login-subtitle">
+            Login with your username credential. Public registration is disabled — users are created only by Admin/Owner.
           </p>
 
-          <form onSubmit={onAccess} className="mt-8 w-full max-w-md space-y-3" data-testid="landing-access-form">
+          <form onSubmit={onLogin} className="mt-8 w-full max-w-md space-y-3" data-testid="login-form">
             <Input
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-              placeholder="Enter password (min 6, letters/numbers)"
+              value={loginUsername}
+              onChange={(event) => setLoginUsername(event.target.value)}
+              placeholder="Enter Username"
               className="h-11 border-slate-700 bg-slate-950 text-white placeholder:text-slate-400"
-              data-testid="landing-password-input"
+              data-testid="login-username-input"
             />
             <Button
               type="submit"
               className="h-11 w-full bg-cyan-500 text-slate-900 hover:bg-cyan-400"
-              data-testid="landing-access-button"
+              data-testid="login-submit-button"
             >
               <KeyRound size={16} />
-              {authLoading ? "Verifying..." : "Access Dashboard"}
+              {loginLoading ? "Signing in..." : "Login"}
             </Button>
-            {authError ? (
-              <p className="text-sm text-rose-400" data-testid="landing-auth-error">{authError}</p>
-            ) : null}
+            {loginError ? <p className="text-sm text-rose-400" data-testid="login-error">{loginError}</p> : null}
           </form>
 
-          <div className="mt-10 w-full max-w-4xl rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-left" data-testid="landing-disclaimer-block">
-            <p className="text-sm font-semibold text-cyan-300">Personal Testing & SEBI Educational Disclaimer</p>
-            <p className="mt-2 text-xs leading-relaxed text-slate-300">
-              This product is strictly for educational research, simulation, and personal testing. It does not provide investment advice,
-              stock recommendation, or guaranteed returns. Please consult a SEBI-registered investment advisor before making real trades.
-            </p>
-          </div>
+          <Card className="mt-8 w-full max-w-4xl border-cyan-500/20 bg-slate-950/70" data-testid="login-disclaimer-card">
+            <CardContent className="pt-5">
+              <p className="text-sm font-semibold text-cyan-300">Personal Testing & Educational Disclaimer (SEBI-aligned)</p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-300">
+                This dashboard is for personal testing and educational analytics only. It does not provide investment advice,
+                assured returns, or recommendation service. Please consult a SEBI-registered advisor before real trading.
+              </p>
+            </CardContent>
+          </Card>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900" data-testid="dashboard-page">
-      <div className="architect-grid-overlay" />
-      <div className="relative mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <header className="mb-8 space-y-4" data-testid="dashboard-header">
+    <main className="min-h-screen dashboard-dark-bg text-slate-100" data-testid="app-shell">
+      <div className="dashboard-grid-overlay" />
+      <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <header className="mb-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-lg" data-testid="app-header">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600" data-testid="header-chip">
-              <Activity size={14} />
-              Live Market Dashboard
+            <div>
+              <p className="text-xs uppercase tracking-wide text-cyan-300">AI Trading Dashboard</p>
+              <h1 className="text-2xl font-bold text-white sm:text-3xl">Multibagger & F&O Projections</h1>
             </div>
             <Button
               type="button"
               onClick={onLogout}
-              className="border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+              className="border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"
               data-testid="logout-button"
             >
               <LogOut size={16} />
@@ -323,90 +351,124 @@ export default function App() {
             </Button>
           </div>
 
-          <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl lg:text-6xl" data-testid="dashboard-title">
-            AI Stock Research – Multibagger & F&O
-          </h1>
-          <p className="text-sm text-slate-500 sm:text-base" data-testid="dashboard-subtitle">
-            Lightweight, button-driven live analysis. Nothing generates until you click a generate button.
-          </p>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="summary-cards">
-            <Card data-testid="summary-user-card">
-              <CardContent className="pt-6">
-                <p className="text-sm text-slate-500">Session User</p>
-                <p className="mt-2 font-mono text-lg">{user.user_key.slice(0, 8)}...</p>
-                <p className="mt-1 text-xs text-slate-500">Role: {user.role.toUpperCase()}</p>
-              </CardContent>
-            </Card>
-            <Card data-testid="summary-credit-card">
-              <CardContent className="pt-6">
-                <p className="text-sm text-slate-500">Available Credits</p>
-                <p className="mt-2 font-mono text-3xl font-semibold">{user.credits}</p>
-                <p className="mt-1 text-xs text-slate-500">Multibagger = 1 | F&O = 2</p>
-              </CardContent>
-            </Card>
-            <Card data-testid="summary-disclaimer-card">
-              <CardContent className="pt-6">
-                <p className="text-sm text-slate-500">Usage Scope</p>
-                <p className="mt-2 text-sm font-medium text-slate-800">Personal Testing + Educational</p>
-                <p className="mt-1 text-xs text-slate-500">Not investment advice</p>
-              </CardContent>
-            </Card>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3" data-testid="summary-username">
+              <p className="text-xs text-slate-400">Username</p>
+              <p className="font-mono text-sm text-cyan-300">{me.username}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3" data-testid="summary-role">
+              <p className="text-xs text-slate-400">Role</p>
+              <p className="font-mono text-sm text-cyan-300">{me.role}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3" data-testid="summary-credits">
+              <p className="text-xs text-slate-400">Credits</p>
+              <p className="font-mono text-sm text-cyan-300">{me.admin_exempt ? "EXEMPT" : me.credits}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3" data-testid="summary-cost-note">
+              <p className="text-xs text-slate-400">Generation Cost</p>
+              <p className="font-mono text-sm text-cyan-300">Multibagger:1 | F&O:2</p>
+            </div>
           </div>
         </header>
 
-        <section className="mb-6 flex flex-wrap gap-3" data-testid="tab-controls">
+        <nav className="mb-6 flex flex-wrap gap-3" data-testid="persistent-nav">
           <Button
             type="button"
-            onClick={() => setActiveTab("multibagger")}
-            className={activeTab === "multibagger" ? "bg-slate-900 text-white hover:bg-slate-800" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}
-            data-testid="tab-multibagger"
+            onClick={() => setCurrentPage("home")}
+            className={currentPage === "home" ? "bg-cyan-500 text-slate-900 hover:bg-cyan-400" : "border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"}
+            data-testid="nav-home"
           >
-            <BarChart3 size={16} />
-            Multibagger Finder
+            <Home size={16} /> Home
           </Button>
           <Button
             type="button"
-            onClick={() => setActiveTab("fno")}
-            className={activeTab === "fno" ? "bg-slate-900 text-white hover:bg-slate-800" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}
-            data-testid="tab-fno"
+            onClick={() => setCurrentPage("multibagger")}
+            className={currentPage === "multibagger" ? "bg-cyan-500 text-slate-900 hover:bg-cyan-400" : "border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"}
+            data-testid="nav-multibagger"
           >
-            <TrendingUp size={16} />
-            F&O Signals
+            <BarChart3 size={16} /> Multibagger
           </Button>
-          {user.role === "admin" ? (
+          <Button
+            type="button"
+            onClick={() => setCurrentPage("fno")}
+            className={currentPage === "fno" ? "bg-cyan-500 text-slate-900 hover:bg-cyan-400" : "border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"}
+            data-testid="nav-fno-projections"
+          >
+            <TrendingUp size={16} /> F&O Projections
+          </Button>
+          {isAdmin ? (
             <Button
               type="button"
               onClick={() => {
-                setActiveTab("admin");
+                setCurrentPage("admin");
                 loadAdminUsers();
               }}
-              className={activeTab === "admin" ? "bg-slate-900 text-white hover:bg-slate-800" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}
-              data-testid="tab-admin"
+              className={currentPage === "admin" ? "bg-cyan-500 text-slate-900 hover:bg-cyan-400" : "border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"}
+              data-testid="nav-admin"
             >
-              <Shield size={16} />
-              Admin Credits
+              <Shield size={16} /> Admin
             </Button>
           ) : null}
-        </section>
+        </nav>
 
-        {activeTab === "multibagger" ? (
-          <section className="space-y-6" data-testid="multibagger-section">
-            <Card>
+        {currentPage === "home" ? (
+          <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6" data-testid="home-landing-dashboard">
+            <h2 className="mb-6 text-2xl font-bold text-white">Landing Dashboard</h2>
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+              <Card
+                className="cursor-pointer border-cyan-500/30 bg-slate-900/70 transition-colors hover:border-cyan-400"
+                onClick={() => setCurrentPage("multibagger")}
+                data-testid="home-module-multibagger"
+              >
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-cyan-300">
+                    <BarChart3 size={18} /> Multibagger
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-300">
+                    Discover potential multibagger stocks with RSI, GTT buy levels, and projected upside tables.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card
+                className="cursor-pointer border-cyan-500/30 bg-slate-900/70 transition-colors hover:border-cyan-400"
+                onClick={() => setCurrentPage("fno")}
+                data-testid="home-module-fno"
+              >
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-cyan-300">
+                    <TrendingUp size={18} /> F&O Projections
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-300">
+                    Run live NIFTY/BANKNIFTY projections with assured vs non-directional strategy separation.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </section>
+        ) : null}
+
+        {currentPage === "multibagger" ? (
+          <section className="space-y-6" data-testid="multibagger-page">
+            <Card className="border-slate-800 bg-slate-950/70">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-                <CardTitle className="text-lg">Multibagger Discovery</CardTitle>
+                <CardTitle className="text-white">Multibagger Discovery</CardTitle>
                 <Button
                   type="button"
-                  onClick={generateMultibaggers}
+                  onClick={generateMultibagger}
                   className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
-                  data-testid="generate-multibagger-button"
+                  data-testid="multibagger-generate-button"
                 >
                   <RefreshCw size={16} className={multibaggerLoading ? "animate-spin" : ""} />
-                  {multibaggerLoading ? "Finding..." : "Get New Multibagger (-1 credit)"}
+                  {multibaggerLoading ? "Finding..." : "Find Multibagger"}
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="max-w-xl">
+                <div className="max-w-xl" data-testid="multibagger-slider-block">
                   <Slider
                     min={0}
                     max={100}
@@ -416,64 +478,87 @@ export default function App() {
                     data-testid="multibagger-score-slider"
                   />
                 </div>
-                <p className="text-sm text-slate-600" data-testid="multibagger-filter-note">
-                  Score filter ≥ <span className="font-mono">{minScore}</span>
+                <p className="text-sm text-slate-300" data-testid="multibagger-score-note">
+                  Minimum score: <span className="font-mono text-cyan-300">{minScore}</span>
                 </p>
-                {multibaggerError ? (
-                  <p className="text-sm text-rose-600" data-testid="multibagger-error">{multibaggerError}</p>
-                ) : null}
+                {multibaggerError ? <p className="text-sm text-rose-400" data-testid="multibagger-error">{multibaggerError}</p> : null}
                 {!multibaggerData ? (
-                  <p className="text-sm text-slate-500" data-testid="multibagger-pre-note">
-                    No multibagger list yet. Click <strong>Get New Multibagger</strong> to run live analysis.
+                  <p className="text-sm text-slate-400" data-testid="multibagger-empty-note">
+                    Nothing shown yet. Click <strong>Find Multibagger</strong> to run live analysis.
                   </p>
                 ) : (
-                  <p className="text-xs text-slate-500" data-testid="multibagger-refresh-time">
-                    Refreshed at: {formatTime(multibaggerData.analysis_refreshed_at)}
+                  <p className="text-xs text-slate-400" data-testid="multibagger-refreshed-at">
+                    Refreshed at: {formatTime(multibaggerData.analysis_refreshed_at)} | Charged: {multibaggerData.cost_charged}
                   </p>
                 )}
               </CardContent>
             </Card>
 
             {multibaggerData ? (
-              <Card>
+              <Card className="border-slate-800 bg-slate-950/70">
                 <CardHeader>
-                  <CardTitle className="text-lg" data-testid="multibagger-table-title">Top Multibagger Candidates</CardTitle>
+                  <CardTitle className="text-white">Projected Multibagger Table</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="relative w-full overflow-auto rounded-lg border border-slate-200" data-testid="multibagger-table-wrapper">
+                  <div className="relative w-full overflow-auto rounded-lg border border-slate-800" data-testid="multibagger-table-wrapper">
                     <Table data-testid="multibagger-table">
-                      <TableHeader className="bg-slate-50">
+                      <TableHeader className="bg-slate-900">
                         <TableRow>
-                          <TableHead>Symbol</TableHead>
-                          <TableHead>Company</TableHead>
+                          <TableHead>Stock</TableHead>
                           <TableHead>Sector</TableHead>
-                          <TableHead>LTP</TableHead>
-                          <TableHead>Market Cap (Cr)</TableHead>
-                          <TableHead>PE</TableHead>
-                          <TableHead>52W High</TableHead>
-                          <TableHead>52W Low</TableHead>
-                          <TableHead>Tier Pass</TableHead>
+                          <TableHead>RSI</TableHead>
+                          <TableHead>GTT Buy</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>1W</TableHead>
+                          <TableHead>1M</TableHead>
+                          <TableHead>3M</TableHead>
+                          <TableHead>6M</TableHead>
+                          <TableHead>9M</TableHead>
+                          <TableHead>1Y</TableHead>
                           <TableHead>Score</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredCandidates.map((stock) => (
-                          <TableRow key={stock.symbol} data-testid={`stock-row-${stock.symbol.toLowerCase()}`}>
-                            <TableCell className="font-mono">{stock.symbol}</TableCell>
-                            <TableCell>{stock.company_name}</TableCell>
-                            <TableCell>{stock.sector}</TableCell>
-                            <TableCell className="font-mono">₹{formatNumber(stock.ltp)}</TableCell>
-                            <TableCell className="font-mono">{formatNumber(stock.market_cap_cr, 0)}</TableCell>
-                            <TableCell className="font-mono">{formatNumber(stock.pe_ratio)}</TableCell>
-                            <TableCell className="font-mono">{formatNumber(stock.year_high)}</TableCell>
-                            <TableCell className="font-mono">{formatNumber(stock.year_low)}</TableCell>
-                            <TableCell className="font-mono">{stock.tier_pass_count}/8</TableCell>
-                            <TableCell>
-                              <Badge className={`border ${getScoreClass(stock.is_potential_multibagger, stock.multibagger_score)}`}>
-                                {stock.is_potential_multibagger ? `POTENTIAL ${stock.multibagger_score}` : stock.multibagger_score}
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
+                        {filteredMultibaggers.map((row) => (
+                          <>
+                            <TableRow key={`${row.symbol}-target`} data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
+                              <TableCell className="font-mono text-cyan-300">{row.company_name}</TableCell>
+                              <TableCell>{row.sector}</TableCell>
+                              <TableCell className="font-mono">{formatNumber(row.current_rsi_level)}</TableCell>
+                              <TableCell className="font-mono">₹{formatNumber(row.gtt_buy_price)}</TableCell>
+                              <TableCell className="text-slate-400">Targeted Upside Price</TableCell>
+                              <TableCell className="font-mono">₹{formatNumber(row.targeted_upside_price?.["1W"])}</TableCell>
+                              <TableCell className="font-mono">₹{formatNumber(row.targeted_upside_price?.["1M"])}</TableCell>
+                              <TableCell className="font-mono">₹{formatNumber(row.targeted_upside_price?.["3M"])}</TableCell>
+                              <TableCell className="font-mono">₹{formatNumber(row.targeted_upside_price?.["6M"])}</TableCell>
+                              <TableCell className="font-mono">₹{formatNumber(row.targeted_upside_price?.["9M"])}</TableCell>
+                              <TableCell className="font-mono">₹{formatNumber(row.targeted_upside_price?.["1Y"])}</TableCell>
+                              <TableCell>
+                                <Badge className={`border ${scoreBadge(row.is_potential_multibagger)}`}>
+                                  {row.multibagger_score}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+
+                            <TableRow key={`${row.symbol}-roi`} data-testid={`multibagger-roi-row-${row.symbol.toLowerCase()}`}>
+                              <TableCell className="font-mono text-slate-400">{row.symbol}</TableCell>
+                              <TableCell className="text-slate-500">Tier: {row.tier_pass_count}/8</TableCell>
+                              <TableCell className="text-slate-500">LTP: ₹{formatNumber(row.ltp)}</TableCell>
+                              <TableCell className="text-slate-500">PE: {formatNumber(row.pe_ratio)}</TableCell>
+                              <TableCell className="text-slate-400">% Profit</TableCell>
+                              <TableCell className="font-mono text-emerald-300">{formatNumber(row.targeted_upside_profit_pct?.["1W"])}%</TableCell>
+                              <TableCell className="font-mono text-emerald-300">{formatNumber(row.targeted_upside_profit_pct?.["1M"])}%</TableCell>
+                              <TableCell className="font-mono text-emerald-300">{formatNumber(row.targeted_upside_profit_pct?.["3M"])}%</TableCell>
+                              <TableCell className="font-mono text-emerald-300">{formatNumber(row.targeted_upside_profit_pct?.["6M"])}%</TableCell>
+                              <TableCell className="font-mono text-emerald-300">{formatNumber(row.targeted_upside_profit_pct?.["9M"])}%</TableCell>
+                              <TableCell className="font-mono text-emerald-300">{formatNumber(row.targeted_upside_profit_pct?.["1Y"])}%</TableCell>
+                              <TableCell>
+                                <Badge className={`border ${scoreBadge(row.is_potential_multibagger)}`}>
+                                  {row.is_potential_multibagger ? "POTENTIAL" : "WATCH"}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          </>
                         ))}
                       </TableBody>
                     </Table>
@@ -484,237 +569,340 @@ export default function App() {
           </section>
         ) : null}
 
-        {activeTab === "fno" ? (
-          <section className="space-y-6" data-testid="fno-section">
-            <Card>
+        {currentPage === "fno" ? (
+          <section className="space-y-6" data-testid="fno-page">
+            <Card className="border-slate-800 bg-slate-950/70">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-                <CardTitle className="text-lg">F&O Live Signal Generation</CardTitle>
+                <CardTitle className="text-white">F&O Projections</CardTitle>
                 <Button
                   type="button"
-                  onClick={() => generateFno()}
-                  className="bg-slate-900 text-white hover:bg-slate-800"
-                  data-testid="generate-fno-button"
+                  onClick={() => generateFnoProjection()}
+                  className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+                  data-testid="fno-generate-button"
                 >
                   <RefreshCw size={16} className={fnoLoading ? "animate-spin" : ""} />
-                  {fnoLoading ? "Generating..." : "Generate F&O Signals (-2 credits)"}
+                  {fnoLoading ? "Generating..." : "Generate F&O Projections"}
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
                 <form
-                  className="flex flex-col gap-3 sm:flex-row"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    generateFno(script);
+                    generateFnoProjection(customScript);
                   }}
-                  data-testid="custom-fno-form"
+                  className="flex flex-col gap-3 sm:flex-row"
+                  data-testid="fno-custom-script-form"
                 >
                   <Input
-                    value={script}
-                    onChange={(event) => setScript(event.target.value.toUpperCase())}
-                    placeholder="Enter script, e.g., NIFTY10MAR26500PE"
-                    className="font-mono"
-                    data-testid="custom-script-input"
+                    value={customScript}
+                    onChange={(event) => setCustomScript(event.target.value.toUpperCase())}
+                    placeholder="Run custom script or symbol (e.g. NIFTY10MAR26500PE / RELIANCE)"
+                    className="font-mono border-slate-700 bg-slate-900 text-slate-100"
+                    data-testid="fno-custom-script-input"
                   />
-                  <Button type="submit" className="bg-white text-slate-800 border border-slate-300 hover:bg-slate-100" data-testid="generate-custom-fno-button">
-                    Run Custom Script (-2 credits)
+                  <Button
+                    type="submit"
+                    className="border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"
+                    data-testid="fno-custom-script-submit"
+                  >
+                    Run Custom Projection
                   </Button>
                 </form>
-                {fnoError ? <p className="text-sm text-rose-600" data-testid="fno-error">{fnoError}</p> : null}
+                {fnoError ? <p className="text-sm text-rose-400" data-testid="fno-error">{fnoError}</p> : null}
                 {!fnoData ? (
-                  <p className="text-sm text-slate-500" data-testid="fno-pre-note">
-                    No F&O signals yet. Click <strong>Generate F&O Signals</strong> for live market analytics.
+                  <p className="text-sm text-slate-400" data-testid="fno-empty-note">
+                    Nothing shown yet. Click <strong>Generate F&O Projections</strong> for live analysis.
                   </p>
                 ) : (
-                  <p className="text-xs text-slate-500" data-testid="fno-refresh-time">
-                    Refreshed at: {formatTime(fnoData.analysis_refreshed_at)}
+                  <p className="text-xs text-slate-400" data-testid="fno-refreshed-at">
+                    Refreshed at: {formatTime(fnoData.analysis_refreshed_at)} | Charged: {fnoData.cost_charged}
                   </p>
                 )}
               </CardContent>
             </Card>
 
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-              <div className="space-y-6 lg:col-span-8">
-                {fnoData?.potential_signals?.length ? (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Potential Profitable Trade Signals</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      {fnoData.potential_signals.map((signal) => (
-                        <Card key={signal.script} className="border border-slate-200">
-                          <CardHeader className="space-y-3 border-b border-slate-100">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <CardTitle className="text-base font-semibold">{signal.script}</CardTitle>
-                              <div className="flex items-center gap-2">
-                                <Badge className={`border ${getQualityClass(signal.signal_quality)}`}>{signal.signal_quality}</Badge>
-                                <Badge className={`border ${getDirectionClass(signal.direction)}`}>{signal.direction}</Badge>
+            {fnoData ? (
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+                <div className="space-y-6 xl:col-span-8">
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2" data-testid="fno-dual-pane">
+                    {[fnoData.nifty_projection, fnoData.banknifty_projection].map((pane) => (
+                      <Card key={pane.index_name} className="border-slate-800 bg-slate-950/70" data-testid={`pane-${pane.index_name.toLowerCase()}`}>
+                        <CardHeader>
+                          <CardTitle className="flex items-center justify-between gap-2 text-white">
+                            <span>{pane.index_name}</span>
+                            <Badge className="border border-cyan-500/50 bg-cyan-500/20 text-cyan-200">
+                              Spot {formatNumber(pane.spot, 2)}
+                            </Badge>
+                          </CardTitle>
+                          <p className="text-xs text-slate-400" data-testid={`pane-range-${pane.index_name.toLowerCase()}`}>
+                            Strike Filter: {formatNumber(pane.strike_range_min, 0)} to {formatNumber(pane.strike_range_max, 0)}
+                          </p>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div data-testid={`pane-assured-${pane.index_name.toLowerCase()}`}>
+                            <p className="mb-2 text-sm font-semibold text-cyan-300">Assured Directional Projections</p>
+                            {pane.assured_signals.length ? (
+                              <div className="space-y-2">
+                                {pane.assured_signals.slice(0, 5).map((signal) => (
+                                  <div key={signal.script} className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs">
+                                    <div className="mb-1 flex items-center justify-between">
+                                      <span className="font-mono text-cyan-200">{signal.script}</span>
+                                      <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
+                                    </div>
+                                    <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
+                                    <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
+                                  </div>
+                                ))}
                               </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-sm text-slate-600 md:grid-cols-4">
-                              <p>Underlying: <span className="font-mono">{signal.underlying}</span></p>
-                              <p>Expiry: <span className="font-mono">{signal.expiry}</span></p>
-                              <p>Strike: <span className="font-mono">{formatNumber(signal.strike, 0)}</span></p>
-                              <p>Lot: <span className="font-mono">{signal.lot_size}</span></p>
-                            </div>
-                          </CardHeader>
-                          <CardContent className="grid grid-cols-1 gap-4 pt-4 md:grid-cols-2">
-                            <div className="space-y-1 text-sm">
-                              <p>Entry: <span className="font-mono">₹{formatNumber(signal.entry_price)}</span></p>
-                              <p>Stop Loss: <span className="font-mono">₹{formatNumber(signal.stop_loss)}</span></p>
-                              <p>Target1: <span className="font-mono">₹{formatNumber(signal.target1)}</span></p>
-                              <p>Target2: <span className="font-mono">₹{formatNumber(signal.target2)}</span></p>
-                            </div>
-                            <div className="space-y-1 text-sm">
-                              <p>Confluence: <span className="font-mono">{signal.confluence_score}/100</span></p>
-                              <p>R:R T1: <span className="font-mono">{formatNumber(signal.risk_reward_target1)}</span></p>
-                              <p>R:R T2: <span className="font-mono">{formatNumber(signal.risk_reward_target2)}</span></p>
-                              <p>Rationale: <span className="font-mono text-xs">{signal.trigger_factors.join(" | ")}</span></p>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </CardContent>
-                  </Card>
-                ) : null}
+                            ) : (
+                              <p className="text-xs text-slate-400">No assured directional setup currently.</p>
+                            )}
+                          </div>
 
-                {fnoData?.custom_signal ? (
-                  <Card data-testid="custom-signal-card">
-                    <CardHeader>
-                      <CardTitle className="text-lg">Custom Script Signal</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2 text-sm">
-                      <p>Script: <span className="font-mono">{fnoData.custom_signal.script}</span></p>
-                      <p>Direction: <span className="font-mono">{fnoData.custom_signal.direction}</span></p>
-                      <p>Confluence: <span className="font-mono">{fnoData.custom_signal.confluence_score}/100</span></p>
-                      <p>Entry/SL/Targets: <span className="font-mono">₹{formatNumber(fnoData.custom_signal.entry_price)} / ₹{formatNumber(fnoData.custom_signal.stop_loss)} / ₹{formatNumber(fnoData.custom_signal.target1)} / ₹{formatNumber(fnoData.custom_signal.target2)}</span></p>
-                    </CardContent>
-                  </Card>
-                ) : null}
-              </div>
+                          <div data-testid={`pane-nondirectional-${pane.index_name.toLowerCase()}`}>
+                            <p className="mb-2 text-sm font-semibold text-amber-300">Non-Directional Strategies</p>
+                            {pane.non_directional_strategies.length ? (
+                              <div className="space-y-2">
+                                {pane.non_directional_strategies.map((item) => (
+                                  <div key={`${pane.index_name}-${item.strike}`} className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                                    <p className="font-semibold text-amber-200">{item.strategy}</p>
+                                    <p>Strike: {formatNumber(item.strike, 0)} | CE: {item.ce_script} | PE: {item.pe_script}</p>
+                                    <p>Combined Entry: ₹{formatNumber(item.combined_entry)}</p>
+                                    <p>{item.rationale}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400">No CE+PE same-strike conflict currently.</p>
+                            )}
+                          </div>
 
-              <div className="lg:col-span-4">
-                <div className="sticky top-4">
-                  <Card data-testid="top4-trades-panel">
+                          <div className="grid grid-cols-1 gap-2" data-testid={`pane-reports-${pane.index_name.toLowerCase()}`}>
+                            <div className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs">
+                              <p className="font-semibold text-cyan-300">With Consolidated Analysis</p>
+                              <p>Breadth: {formatNumber(pane.with_consolidated_report.breadth_score)} | Momentum: {formatNumber(pane.with_consolidated_report.momentum_score)} | Bias: {pane.with_consolidated_report.bias}</p>
+                              <p>Contributors: {pane.with_consolidated_report.top_contributors.join(" | ")}</p>
+                            </div>
+                            <div className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs">
+                              <p className="font-semibold text-cyan-300">Without Consolidated Analysis</p>
+                              <p>Breadth: {formatNumber(pane.without_consolidated_report.breadth_score)} | Momentum: {formatNumber(pane.without_consolidated_report.momentum_score)} | Bias: {pane.without_consolidated_report.bias}</p>
+                              <p>Contributors: {pane.without_consolidated_report.top_contributors.join(" | ")}</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+
+                  <Card className="border-slate-800 bg-slate-950/70" data-testid="stock-fno-bottom-panel">
                     <CardHeader>
-                      <CardTitle className="text-lg">Top 4 Best Trade Now</CardTitle>
+                      <CardTitle className="text-white">Profitable F&O Signals — Individual Stocks</CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-3">
-                      {bestTrades.length ? (
-                        bestTrades.map((trade) => (
-                          <div key={`top-${trade.script}`} className="rounded-md border border-slate-200 bg-white p-3 text-sm" data-testid={`top-trade-${trade.script.toLowerCase()}`}>
+                    <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {fnoData.stock_signals?.length ? (
+                        fnoData.stock_signals.map((signal) => (
+                          <div key={signal.script} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`stock-fno-signal-${signal.script.toLowerCase()}`}>
                             <div className="mb-2 flex items-center justify-between gap-2">
-                              <p className="font-mono text-xs font-semibold">{trade.script}</p>
-                              <Badge className={`border ${getDirectionClass(trade.direction)}`}>{trade.direction}</Badge>
+                              <p className="font-mono text-cyan-200">{signal.script}</p>
+                              <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                             </div>
-                            <p>Entry: <span className="font-mono">₹{formatNumber(trade.entry_price)}</span></p>
-                            <p>SL: <span className="font-mono">₹{formatNumber(trade.stop_loss)}</span></p>
-                            <p>T1/T2: <span className="font-mono">₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</span></p>
-                            <p>Confidence: <span className="font-mono">{trade.confluence_score}/100 ({trade.signal_quality})</span></p>
-                            <p className="text-xs text-slate-500">{trade.trigger_factors.slice(0, 2).join(" | ")}</p>
+                            <p>Entry: ₹{formatNumber(signal.entry_price)}</p>
+                            <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
+                            <p>T1/T2: ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
+                            <p>Confidence: {signal.confluence_score}</p>
                           </div>
                         ))
                       ) : (
-                        <p className="text-sm text-slate-500" data-testid="top4-empty-note">Generate F&O signals to populate top trades.</p>
+                        <p className="text-sm text-slate-400">No stock F&O opportunities found in this cycle.</p>
                       )}
                     </CardContent>
                   </Card>
                 </div>
+
+                <div className="xl:col-span-4">
+                  <div className="sticky top-4 space-y-4">
+                    <Card className="border-slate-800 bg-slate-950/70" data-testid="top4-trades-panel">
+                      <CardHeader>
+                        <CardTitle className="text-white">Top 4 Best Trade Now</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {fnoData.top_trades?.length ? (
+                          fnoData.top_trades.map((trade) => (
+                            <div key={trade.script} className="rounded-md border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`top4-trade-${trade.script.toLowerCase()}`}>
+                              <div className="mb-2 flex items-center justify-between">
+                                <p className="font-mono text-cyan-200">{trade.script}</p>
+                                <Badge className={`border ${qualityBadge(trade.signal_quality)}`}>{trade.signal_quality}</Badge>
+                              </div>
+                              <p>Entry: ₹{formatNumber(trade.entry_price)}</p>
+                              <p>SL: ₹{formatNumber(trade.stop_loss)}</p>
+                              <p>T1/T2: ₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</p>
+                              <p>Confidence: {trade.confluence_score} | {trade.direction}</p>
+                              <p className="text-slate-400">{(trade.trigger_factors || []).slice(0, 2).join(" | ")}</p>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-slate-400">Generate projections to populate Top 4 trades.</p>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {fnoData.custom_signal ? (
+                      <Card className="border-slate-800 bg-slate-950/70" data-testid="custom-script-result-card">
+                        <CardHeader>
+                          <CardTitle className="text-white">Custom Script Result</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-1 text-xs">
+                          <p className="font-mono text-cyan-200">{fnoData.custom_signal.script}</p>
+                          <p>Direction: {fnoData.custom_signal.direction}</p>
+                          <p>Entry/SL/T1/T2: ₹{formatNumber(fnoData.custom_signal.entry_price)} / ₹{formatNumber(fnoData.custom_signal.stop_loss)} / ₹{formatNumber(fnoData.custom_signal.target1)} / ₹{formatNumber(fnoData.custom_signal.target2)}</p>
+                          <p>Confluence: {fnoData.custom_signal.confluence_score}</p>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : null}
           </section>
         ) : null}
 
-        {activeTab === "admin" && user.role === "admin" ? (
-          <section className="space-y-6" data-testid="admin-section">
-            <Card>
+        {currentPage === "admin" && isAdmin ? (
+          <section className="space-y-6" data-testid="admin-page">
+            <Card className="border-slate-800 bg-slate-950/70">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-                <CardTitle className="text-lg">Admin User & Credit Management (CRUD)</CardTitle>
+                <CardTitle className="text-white">User Management & Security</CardTitle>
                 <Button
                   type="button"
                   onClick={loadAdminUsers}
-                  className="bg-slate-900 text-white hover:bg-slate-800"
+                  className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
                   data-testid="admin-refresh-users-button"
                 >
-                  <Users size={16} />
-                  Refresh Users
+                  <UserCog size={16} /> Refresh Users
                 </Button>
               </CardHeader>
               <CardContent className="space-y-4">
-                <form onSubmit={createUserByAdmin} className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="admin-create-user-form">
+                <form onSubmit={createUser} className="grid grid-cols-1 gap-3 md:grid-cols-5" data-testid="admin-create-user-form">
                   <Input
-                    value={adminForm.password}
-                    onChange={(event) => setAdminForm((prev) => ({ ...prev, password: event.target.value }))}
-                    placeholder="New user password"
-                    data-testid="admin-new-password-input"
+                    value={createForm.username}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, username: event.target.value }))}
+                    placeholder="Username"
+                    data-testid="admin-create-username"
+                    className="border-slate-700 bg-slate-900 text-slate-100"
                   />
+                  <select
+                    value={createForm.role}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, role: event.target.value }))}
+                    className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100"
+                    data-testid="admin-create-role"
+                  >
+                    {roles.map((role) => (
+                      <option key={role.value} value={role.value}>{role.label}</option>
+                    ))}
+                  </select>
                   <Input
                     type="number"
                     min="0"
-                    value={adminForm.initial_credits}
-                    onChange={(event) => setAdminForm((prev) => ({ ...prev, initial_credits: Number(event.target.value) }))}
-                    placeholder="Initial credits"
-                    data-testid="admin-new-credits-input"
+                    value={createForm.initial_credits}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, initial_credits: Number(event.target.value) }))}
+                    placeholder="Initial Credits"
+                    data-testid="admin-create-credits"
+                    className="border-slate-700 bg-slate-900 text-slate-100"
                   />
-                  <Button type="submit" className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="admin-create-user-button">
-                    Create User
+                  <Input
+                    type="number"
+                    min="1"
+                    value={createForm.quota_limit}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, quota_limit: Number(event.target.value) }))}
+                    placeholder="Quota"
+                    data-testid="admin-create-quota"
+                    className="border-slate-700 bg-slate-900 text-slate-100"
+                    disabled={createForm.role !== "sub_admin"}
+                  />
+                  <Button type="submit" className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="admin-create-submit">
+                    Create
                   </Button>
                 </form>
-                {adminError ? <p className="text-sm text-rose-600" data-testid="admin-error">{adminError}</p> : null}
+
+                {adminError ? <p className="text-sm text-rose-400" data-testid="admin-error">{adminError}</p> : null}
 
                 {adminLoading ? (
-                  <p className="text-sm text-slate-500" data-testid="admin-loading">Loading users...</p>
+                  <p className="text-sm text-slate-400" data-testid="admin-loading">Loading users...</p>
                 ) : (
-                  <div className="relative w-full overflow-auto rounded-lg border border-slate-200" data-testid="admin-users-table-wrapper">
+                  <div className="relative w-full overflow-auto rounded-lg border border-slate-800" data-testid="admin-users-table-wrapper">
                     <Table data-testid="admin-users-table">
-                      <TableHeader className="bg-slate-50">
+                      <TableHeader className="bg-slate-900">
                         <TableRow>
-                          <TableHead>User Key</TableHead>
+                          <TableHead>Credential</TableHead>
                           <TableHead>Role</TableHead>
                           <TableHead>Credits</TableHead>
-                          <TableHead>Created</TableHead>
-                          <TableHead>Set Credits</TableHead>
+                          <TableHead>Quota</TableHead>
+                          <TableHead>Created By</TableHead>
                           <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {adminUsers.map((row) => (
-                          <TableRow key={row.user_key} data-testid={`admin-user-row-${row.user_key}`}>
-                            <TableCell className="font-mono text-xs">{row.user_key}</TableCell>
-                            <TableCell>
-                              <Badge className="border bg-white text-slate-700">{row.role}</Badge>
-                            </TableCell>
-                            <TableCell className="font-mono">{row.credits}</TableCell>
-                            <TableCell className="text-xs">{formatTime(row.created_at)}</TableCell>
+                          <TableRow key={row.user_key} data-testid={`admin-row-${row.user_key}`}>
+                            <TableCell className="font-mono text-xs text-cyan-200">{row.credential_label}</TableCell>
+                            <TableCell>{row.role}</TableCell>
                             <TableCell>
                               <Input
                                 type="number"
                                 min="0"
-                                value={creditEditMap[row.user_key] ?? row.credits}
+                                value={creditEdit[row.user_key] ?? row.credits}
                                 onChange={(event) =>
-                                  setCreditEditMap((prev) => ({
-                                    ...prev,
-                                    [row.user_key]: Number(event.target.value),
-                                  }))
+                                  setCreditEdit((prev) => ({ ...prev, [row.user_key]: Number(event.target.value) }))
                                 }
-                                className="h-8 w-28"
+                                className="h-8 w-24 border-slate-700 bg-slate-900 text-slate-100"
                                 data-testid={`admin-credit-input-${row.user_key}`}
                               />
                             </TableCell>
+                            <TableCell>
+                              {row.role === "sub_admin" ? (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    value={quotaEdit[row.user_key] ?? row.quota_limit}
+                                    onChange={(event) =>
+                                      setQuotaEdit((prev) => ({ ...prev, [row.user_key]: Number(event.target.value) }))
+                                    }
+                                    className="h-8 w-24 border-slate-700 bg-slate-900 text-slate-100"
+                                    data-testid={`admin-quota-input-${row.user_key}`}
+                                    disabled={!isOwner}
+                                  />
+                                  <span className="text-xs text-slate-400">used {row.quota_used}</span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-500">-</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs text-slate-400">{row.created_by}</TableCell>
                             <TableCell className="space-x-2">
                               <Button
                                 type="button"
                                 onClick={() => updateCredits(row.user_key)}
-                                className="h-8 bg-slate-900 px-3 text-white hover:bg-slate-800"
+                                className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700"
                                 data-testid={`admin-update-credit-${row.user_key}`}
                               >
-                                Update
+                                Update Credits
                               </Button>
-                              {row.role !== "admin" ? (
+                              {isOwner && row.role === "sub_admin" ? (
+                                <Button
+                                  type="button"
+                                  onClick={() => updateQuota(row.user_key)}
+                                  className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700"
+                                  data-testid={`admin-update-quota-${row.user_key}`}
+                                >
+                                  Update Quota
+                                </Button>
+                              ) : null}
+                              {row.role !== "owner" ? (
                                 <Button
                                   type="button"
                                   onClick={() => deleteUser(row.user_key)}
-                                  className="h-8 border border-rose-300 bg-white px-3 text-rose-600 hover:bg-rose-50"
-                                  data-testid={`admin-delete-user-${row.user_key}`}
+                                  className="h-8 border border-rose-600 bg-transparent px-3 text-xs text-rose-300 hover:bg-rose-500/10"
+                                  data-testid={`admin-delete-${row.user_key}`}
                                 >
                                   Delete
                                 </Button>
@@ -731,17 +919,19 @@ export default function App() {
           </section>
         ) : null}
 
-        <section className="mt-8" data-testid="compliance-disclaimer-section">
-          <Card className="border border-amber-200 bg-amber-50">
+        <footer className="mt-8" data-testid="footer-disclaimer">
+          <Card className="border border-cyan-500/20 bg-slate-950/70">
             <CardContent className="pt-5">
-              <p className="text-sm font-semibold text-amber-800">Personal Testing & Educational Disclaimer (SEBI-aligned)</p>
-              <p className="mt-2 text-xs leading-relaxed text-amber-900">
-                This application is for educational research and personal testing only. Outputs are analytics-based simulations and not investment advice,
-                recommendation, portfolio management service, or guaranteed-profit claims. Trading involves risk. Consult a SEBI-registered advisor for real investments.
+              <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
+                <GaugeCircle size={14} /> Personal Testing & Educational Disclaimer
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-300">
+                This platform is an educational analytics system for personal testing. Signals, projections, and scorecards are model-based outputs
+                and not trading advice. Market participation carries risk. Consult SEBI-registered advisors for investment decisions.
               </p>
             </CardContent>
           </Card>
-        </section>
+        </footer>
       </div>
     </main>
   );

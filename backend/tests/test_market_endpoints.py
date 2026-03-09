@@ -91,13 +91,14 @@ def test_fno_signals_index_cards(session_client, api_base_url):
     assert isinstance(data, list)
     assert len(data) >= 2
 
-    scripts = {row['script'] for row in data}
-    assert 'NIFTY10MAR26500CE' in scripts or 'NIFTY10MAR26500PE' in scripts
-    assert 'BANKNIFTY10MAR47000CE' in scripts or 'BANKNIFTY10MAR47000PE' in scripts
+    underlyings = {row['underlying'] for row in data}
+    assert 'NIFTY' in underlyings
+    assert 'BANKNIFTY' in underlyings
 
     for row in data:
         assert row['underlying'] in {'NIFTY', 'BANKNIFTY'}
         assert row['direction'] in {'BULLISH', 'BEARISH', 'NEUTRAL'}
+        assert row['strategy'] in {'Assured Directional Projection', 'Directional Projection (Low Confidence)'}
 
 
 def test_fno_potential_signals_shape_and_actionability(session_client, api_base_url):
@@ -112,6 +113,15 @@ def test_fno_potential_signals_shape_and_actionability(session_client, api_base_
         assert 'confluence_score' in row
         assert 'is_potential_trade' in row
         assert row['direction'] in {'BULLISH', 'BEARISH', 'NEUTRAL'}
+
+
+def test_fno_custom_signal_dynamic_script_parse(session_client, api_base_url):
+    script = 'NIFTY10MAR24050PE'
+    response = session_client.get(f'{api_base_url}/fno/signal/{script}', timeout=90)
+    assert response.status_code == 200
+    data = response.json()
+    assert data['script'] == script
+    assert data['underlying'] == 'NIFTY'
 
 
 def test_custom_script_refresh_nonce_returns_fresh_timestamp(session_client, api_base_url):

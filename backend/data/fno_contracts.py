@@ -53,6 +53,24 @@ FNO_CONTRACTS = [
         "exchange": "NFO",
         "lot_size": 250,
     },
+    {
+        "script": "BDL10MAR120CE",
+        "underlying": "BDL",
+        "expiry": "2026-03-10",
+        "strike": 120,
+        "option_type": "CE",
+        "exchange": "NFO",
+        "lot_size": 1350,
+    },
+    {
+        "script": "BDL10MAR120PE",
+        "underlying": "BDL",
+        "expiry": "2026-03-10",
+        "strike": 120,
+        "option_type": "PE",
+        "exchange": "NFO",
+        "lot_size": 1350,
+    },
 ]
 
 
