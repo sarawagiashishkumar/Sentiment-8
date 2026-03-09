@@ -1,0 +1,43 @@
+{
+  "summary": "Executed backend + frontend regression for new refresh buttons, potential F&O endpoint, custom script nonce flow, and multibagger tier/potential rendering against public preview URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard summary cards",
+        "issues": [
+          "Card label says 'Above min score' but value currently shows potentialCandidates.length (potential picks) instead of all rows above threshold, causing metric-label mismatch"
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_market_endpoints.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: align summary card label/value mapping for 'Above min score' metric to avoid user confusion"
+  ],
+  "critical_code_review_comments": [
+    "No blocking backend/API failures observed in this cycle; all tested requested flows passed on public URL",
+    "Potential endpoint currently returns actionable cards in this run (all returned is_potential_trade=true with high confluence)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_market_endpoints.py",
+    "/app/test_reports/iteration_2.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public preview URL is stable. Pytest: 8/8 pass including /api/fno/signals/potential shape/actionability, refresh_nonce timestamp refresh on custom script, and multibagger tier/potential fields. UI automation validated both hero refresh buttons trigger fresh API calls and custom script renders result.",
+  "rca of the issue": "No critical defect reproduced in this test run. Previously failing BANKNIFTY path appears resolved and now returns valid potential signal."
+}

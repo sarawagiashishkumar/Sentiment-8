@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Literal
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.cors import CORSMiddleware
@@ -72,7 +72,13 @@ class MultibaggerCandidate(BaseModel):
     pe_ratio: float | None = None
     year_high: float | None = None
     year_low: float | None = None
+    upside_to_52w_high_pct: float | None = None
+    pb_ratio_est: float | None = None
+    peg_ratio_est: float | None = None
+    tier_pass_count: int
+    is_potential_multibagger: bool
     multibagger_score: int
+    analysis_refreshed_at: str
 
 
 class FNOContract(BaseModel):
@@ -103,11 +109,21 @@ class FNOSignalResponse(BaseModel):
     target2: float
     risk_reward_target1: float
     risk_reward_target2: float
+    trigger_factors: List[str]
     confluence_score: int
+    signal_quality: Literal["HIGH", "MEDIUM", "LOW"]
+    is_potential_trade: bool
+    analysis_refreshed_at: str
 
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator == 0:
+        return None
+    return numerator / denominator
 
 
 def _position_in_range(ltp: float | None, year_low: float | None, year_high: float | None) -> float | None:
@@ -116,86 +132,209 @@ def _position_in_range(ltp: float | None, year_low: float | None, year_high: flo
     return clamp((ltp - year_low) / (year_high - year_low), 0.0, 1.0)
 
 
-def compute_multibagger_score(stock: StockCoreNormalized) -> int:
-    score = 0.0
-
-    market_cap = stock.market_cap
+def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
     ltp = stock.ltp
+    market_cap = stock.market_cap
     pe = stock.pe_ratio
+    book_value = stock.book_value
     eps = stock.eps
-    pos = _position_in_range(stock.ltp, stock.year_low, stock.year_high)
+    year_high = stock.year_high
+    year_low = stock.year_low
 
-    if market_cap is not None:
-        if 500 <= market_cap <= 1_000_000:
-            score += 25
-        elif market_cap < 500:
+    pb_ratio_est = _safe_ratio(ltp, book_value)
+    upside_to_52w_high_pct = (
+        ((year_high - ltp) / ltp) * 100
+        if year_high is not None and ltp is not None and ltp > 0
+        else None
+    )
+
+    growth_proxy_pct = (
+        ((year_high - year_low) / year_low) * 100
+        if year_high is not None and year_low is not None and year_low > 0 and year_high > year_low
+        else None
+    )
+    peg_ratio_est = _safe_ratio(pe, growth_proxy_pct) if growth_proxy_pct is not None else None
+
+    tier_1_market_cap = market_cap is not None and 500 < market_cap < 1_000_000
+    tier_1_price_zone = (
+        ltp is not None
+        and year_low is not None
+        and year_high is not None
+        and ltp <= 1.15 * year_low
+        and year_high >= 1.70 * ltp
+        and ltp >= 10
+        and pb_ratio_est is not None
+        and pb_ratio_est < 5
+        and peg_ratio_est is not None
+        and peg_ratio_est < 1.5
+    )
+
+    # Tier proxies built from available reliable live fields.
+    tier_2_revenue_profit_proxy = (
+        eps is not None
+        and eps > 0
+        and pe is not None
+        and pe < 45
+        and upside_to_52w_high_pct is not None
+        and upside_to_52w_high_pct >= 12
+    )
+    tier_3_profitability_proxy = (
+        pe is not None
+        and 5 <= pe <= 40
+        and pb_ratio_est is not None
+        and pb_ratio_est < 4.5
+    )
+    tier_4_balance_sheet_proxy = (
+        market_cap is not None
+        and market_cap > 1_000
+        and stock.volume > 100_000
+        and ltp is not None
+        and stock.prev_close is not None
+    )
+    tier_5_governance_proxy = stock.sector != "Unknown" and market_cap is not None and market_cap > 2_000
+    tier_6_forensic_proxy = eps is not None and eps > 0 and pe is not None and 6 <= pe <= 45
+    tier_7_cwip_capex_proxy = (
+        year_high is not None and year_low is not None and year_low > 0 and year_high >= 1.20 * year_low
+    )
+
+    tier_flags = [
+        tier_1_market_cap,
+        tier_1_price_zone,
+        tier_2_revenue_profit_proxy,
+        tier_3_profitability_proxy,
+        tier_4_balance_sheet_proxy,
+        tier_5_governance_proxy,
+        tier_6_forensic_proxy,
+        tier_7_cwip_capex_proxy,
+    ]
+    tier_pass_count = sum(1 for status in tier_flags if status)
+
+    mandatory_pass = tier_1_market_cap and tier_1_price_zone
+
+    score = 0.0
+    score += 9 * tier_pass_count
+    if mandatory_pass:
+        score += 15
+    else:
+        score -= 6
+
+    if upside_to_52w_high_pct is not None:
+        score += clamp(upside_to_52w_high_pct / 8, 0, 12)
+
+    if peg_ratio_est is not None:
+        if peg_ratio_est < 1.5:
             score += 8
-        else:
-            score += 15
+        elif peg_ratio_est < 2.5:
+            score += 4
 
-    if ltp is not None:
-        if ltp >= 10:
-            score += 12
-        elif ltp >= 5:
+    if pb_ratio_est is not None:
+        if pb_ratio_est < 3:
             score += 6
-        else:
-            score += 2
+        elif pb_ratio_est < 5:
+            score += 3
 
-    if pe is not None and pe > 0:
-        if pe <= 25:
-            score += 20
-        elif pe <= 50:
-            score += 14
-        elif pe <= 80:
-            score += 6
-        else:
-            score -= 8
+    if pe is not None and pe > 55:
+        score -= 10
+    elif pe is not None and pe < 10:
+        score -= 4
 
-    if stock.year_high and ltp and stock.year_high > 0:
-        upside_pct = ((stock.year_high - ltp) / stock.year_high) * 100
-        if upside_pct >= 20:
-            score += 15
-        elif upside_pct >= 8:
-            score += 8
-        else:
-            score += 2
+    final_score = int(clamp(round(score), 0, 100))
+    is_potential_multibagger = (mandatory_pass and tier_pass_count >= 5) or (
+        tier_pass_count >= 6 and final_score >= 68
+    )
 
-    if pos is not None:
-        if 0.20 <= pos <= 0.75:
-            score += 14
-        elif pos < 0.20:
-            score += 6
-        else:
-            score -= 6
-
-    if eps is not None:
-        if eps > 0:
-            score += 10
-        else:
-            score -= 10
-
-    if eps is not None and pe is not None and eps > 0 and pe <= 35:
-        score += 8
-
-    if stock.sector and stock.sector != "Unknown":
-        score += 6
-
-    return int(clamp(round(score), 0, 100))
+    return {
+        "multibagger_score": final_score,
+        "upside_to_52w_high_pct": round(upside_to_52w_high_pct, 2) if upside_to_52w_high_pct is not None else None,
+        "pb_ratio_est": round(pb_ratio_est, 2) if pb_ratio_est is not None else None,
+        "peg_ratio_est": round(peg_ratio_est, 2) if peg_ratio_est is not None else None,
+        "tier_pass_count": tier_pass_count,
+        "is_potential_multibagger": is_potential_multibagger,
+    }
 
 
-def build_fno_signal(contract: FNOContract, stock_core: StockCoreNormalized, option_ltp: float) -> FNOSignalResponse:
+def _get_signal_quality(confluence_score: int) -> Literal["HIGH", "MEDIUM", "LOW"]:
+    if confluence_score >= 78:
+        return "HIGH"
+    if confluence_score >= 65:
+        return "MEDIUM"
+    return "LOW"
+
+
+def build_fno_signal(
+    contract: FNOContract,
+    stock_core: StockCoreNormalized,
+    option_ltp: float,
+    refreshed_at: str,
+) -> FNOSignalResponse:
     underlying_ltp = stock_core.ltp
     if underlying_ltp is None:
         raise HTTPException(status_code=502, detail="Underlying LTP unavailable")
 
     pos = _position_in_range(underlying_ltp, stock_core.year_low, stock_core.year_high)
-    closer_to_high = pos is not None and pos >= 0.5
-    closer_to_low = pos is not None and pos < 0.5
+    day_change_pct = (
+        ((underlying_ltp - stock_core.prev_close) / stock_core.prev_close) * 100
+        if stock_core.prev_close is not None and stock_core.prev_close > 0
+        else 0.0
+    )
+    intraday_change_pct = (
+        ((underlying_ltp - stock_core.open) / stock_core.open) * 100
+        if stock_core.open is not None and stock_core.open > 0
+        else 0.0
+    )
 
-    if contract.option_type == "CE" and closer_to_high:
+    trend_points = 0.0
+    trigger_factors: list[str] = []
+
+    if day_change_pct >= 0.35:
+        trend_points += 16
+        trigger_factors.append(f"DayChange={day_change_pct:.2f}%")
+    elif day_change_pct <= -0.35:
+        trend_points -= 16
+        trigger_factors.append(f"DayChange={day_change_pct:.2f}%")
+
+    if intraday_change_pct >= 0.20:
+        trend_points += 14
+        trigger_factors.append(f"IntraDay={intraday_change_pct:.2f}%")
+    elif intraday_change_pct <= -0.20:
+        trend_points -= 14
+        trigger_factors.append(f"IntraDay={intraday_change_pct:.2f}%")
+
+    if pos is not None:
+        if pos >= 0.62:
+            trend_points += 12
+            trigger_factors.append("RangePos=Upper")
+        elif pos <= 0.38:
+            trend_points -= 12
+            trigger_factors.append("RangePos=Lower")
+
+    if stock_core.high is not None and underlying_ltp >= stock_core.high * 0.995:
+        trend_points += 8
+        trigger_factors.append("NearDayHigh")
+    if stock_core.low is not None and underlying_ltp <= stock_core.low * 1.005:
+        trend_points -= 8
+        trigger_factors.append("NearDayLow")
+
+    bias_score = (0.65 * day_change_pct) + (0.35 * intraday_change_pct)
+    if pos is not None:
+        bias_score += (pos - 0.5) * 1.2
+
+    if bias_score >= 0.15:
+        underlying_bias: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "BULLISH"
+        trigger_factors.append(f"BiasScore={bias_score:.2f}")
+    elif bias_score <= -0.15:
+        underlying_bias = "BEARISH"
+        trigger_factors.append(f"BiasScore={bias_score:.2f}")
+    else:
+        underlying_bias = "NEUTRAL"
+        trigger_factors.append(f"BiasScore={bias_score:.2f}")
+
+    if contract.option_type == "CE" and underlying_bias == "BULLISH":
         direction: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "BULLISH"
-    elif contract.option_type == "PE" and closer_to_low:
+    elif contract.option_type == "PE" and underlying_bias == "BEARISH":
         direction = "BEARISH"
+    elif underlying_bias == "NEUTRAL":
+        direction = "NEUTRAL"
     else:
         direction = "NEUTRAL"
 
@@ -208,29 +347,26 @@ def build_fno_signal(contract: FNOContract, stock_core: StockCoreNormalized, opt
     risk_reward_target1 = round((target1 - entry_price) / risk, 2)
     risk_reward_target2 = round((target2 - entry_price) / risk, 2)
 
-    confluence = 50
-    if pos is not None:
-        if contract.option_type == "CE":
-            if pos >= 0.65:
-                confluence += 25
-            elif pos >= 0.5:
-                confluence += 15
-            elif pos < 0.3:
-                confluence -= 15
-            else:
-                confluence -= 5
-        else:
-            if pos <= 0.35:
-                confluence += 25
-            elif pos <= 0.5:
-                confluence += 15
-            elif pos > 0.7:
-                confluence -= 15
-            else:
-                confluence -= 5
+    confluence = 52 + abs(bias_score) * 22
 
     if direction == "NEUTRAL":
-        confluence -= 10
+        confluence -= 20
+    else:
+        confluence += 12
+
+    if risk_reward_target2 >= 2:
+        confluence += 8
+    if option_ltp < 1:
+        confluence -= 8
+    if stock_core.volume <= 0:
+        confluence -= 4
+
+    confluence_score = int(clamp(round(confluence), 0, 100))
+    signal_quality = _get_signal_quality(confluence_score)
+    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 72 and risk_reward_target2 >= 2
+
+    if is_potential_trade:
+        trigger_factors.append("PotentialTrade=YES")
 
     return FNOSignalResponse(
         script=contract.script,
@@ -243,15 +379,33 @@ def build_fno_signal(contract: FNOContract, stock_core: StockCoreNormalized, opt
         underlying_ltp=round(underlying_ltp, 2),
         option_ltp=round(option_ltp, 2),
         direction=direction,
-        strategy="Index/Stock Directional Option (Simplified)",
+        strategy=(
+            "Index Directional Option (High Conviction)"
+            if is_potential_trade
+            else "Index/Stock Directional Option (Simplified)"
+        ),
         entry_price=entry_price,
         stop_loss=stop_loss,
         target1=target1,
         target2=target2,
         risk_reward_target1=risk_reward_target1,
         risk_reward_target2=risk_reward_target2,
-        confluence_score=int(clamp(confluence, 0, 100)),
+        trigger_factors=trigger_factors,
+        confluence_score=confluence_score,
+        signal_quality=signal_quality,
+        is_potential_trade=is_potential_trade,
+        analysis_refreshed_at=refreshed_at,
     )
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _build_fno_signal_for_contract(contract: FNOContract, refreshed_at: str) -> FNOSignalResponse:
+    stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
+    option_ltp = await get_option_ltp(contract.script)
+    return build_fno_signal(contract, stock_data, option_ltp, refreshed_at)
 
 
 @api_router.get("/")
@@ -279,7 +433,11 @@ async def get_status_checks():
 
 
 @api_router.get("/multibagger/candidates", response_model=List[MultibaggerCandidate])
-async def get_multibagger_candidates():
+async def get_multibagger_candidates(
+    refresh_nonce: str | None = Query(default=None),
+):
+    _ = refresh_nonce
+    refreshed_at = _utc_now_iso()
     results = await asyncio.gather(*[get_stock_core(symbol) for symbol in MULTIBAGGER_UNIVERSE])
     candidates: list[MultibaggerCandidate] = []
 
@@ -287,7 +445,7 @@ async def get_multibagger_candidates():
         stock = StockCoreNormalized(**row)
         if stock.ltp is None:
             continue
-        score = compute_multibagger_score(stock)
+        analysis = compute_multibagger_analysis(stock)
         candidates.append(
             MultibaggerCandidate(
                 symbol=stock.symbol,
@@ -298,11 +456,20 @@ async def get_multibagger_candidates():
                 pe_ratio=stock.pe_ratio,
                 year_high=stock.year_high,
                 year_low=stock.year_low,
-                multibagger_score=score,
+                upside_to_52w_high_pct=analysis["upside_to_52w_high_pct"],
+                pb_ratio_est=analysis["pb_ratio_est"],
+                peg_ratio_est=analysis["peg_ratio_est"],
+                tier_pass_count=analysis["tier_pass_count"],
+                is_potential_multibagger=analysis["is_potential_multibagger"],
+                multibagger_score=analysis["multibagger_score"],
+                analysis_refreshed_at=refreshed_at,
             )
         )
 
-    candidates.sort(key=lambda item: item.multibagger_score, reverse=True)
+    candidates.sort(
+        key=lambda item: (item.is_potential_multibagger, item.multibagger_score),
+        reverse=True,
+    )
     return candidates[:30]
 
 
@@ -312,35 +479,56 @@ async def get_fno_contracts():
 
 
 @api_router.get("/fno/signal/{script}", response_model=FNOSignalResponse)
-async def get_single_fno_signal(script: str):
+async def get_single_fno_signal(
+    script: str,
+    refresh_nonce: str | None = Query(default=None),
+):
+    _ = refresh_nonce
     contract_dict = get_fno_contract(script)
     if not contract_dict:
         raise HTTPException(status_code=404, detail="Script not supported")
 
     contract = FNOContract(**contract_dict)
-    stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
+    refreshed_at = _utc_now_iso()
     try:
-        option_ltp = await get_option_ltp(contract.script)
+        return await _build_fno_signal_for_contract(contract, refreshed_at)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return build_fno_signal(contract, stock_data, option_ltp)
-
 
 @api_router.get("/fno/signals/index", response_model=List[FNOSignalResponse])
-async def get_index_fno_signals():
+async def get_index_fno_signals(
+    refresh_nonce: str | None = Query(default=None),
+):
+    _ = refresh_nonce
     index_contracts = [
         FNOContract(**contract)
         for contract in FNO_CONTRACTS
         if contract["underlying"] in {"NIFTY", "BANKNIFTY"}
     ]
 
+    refreshed_at = _utc_now_iso()
     signals: list[FNOSignalResponse] = []
     for contract in index_contracts:
-        stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-        option_ltp = await get_option_ltp(contract.script)
-        signals.append(build_fno_signal(contract, stock_data, option_ltp))
+        try:
+            signal = await _build_fno_signal_for_contract(contract, refreshed_at)
+            signals.append(signal)
+        except Exception:
+            continue
+    signals.sort(key=lambda item: (item.is_potential_trade, item.confluence_score), reverse=True)
     return signals
+
+
+@api_router.get("/fno/signals/potential", response_model=List[FNOSignalResponse])
+async def get_potential_index_signals(
+    refresh_nonce: str | None = Query(default=None),
+):
+    _ = refresh_nonce
+    signals = await get_index_fno_signals(refresh_nonce=None)
+    potential = [signal for signal in signals if signal.is_potential_trade]
+    if potential:
+        return potential
+    return signals[:2]
 
 
 app.include_router(api_router)

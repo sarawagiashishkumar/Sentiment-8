@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { Activity, BarChart3, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  RefreshCw,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import "@/App.css";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +26,8 @@ import {
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+const buildRefreshToken = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
 const formatNumber = (value, digits = 2) => {
   if (value === null || value === undefined) {
     return "-";
@@ -26,6 +35,17 @@ const formatNumber = (value, digits = 2) => {
   return Number(value).toLocaleString("en-IN", {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
+  });
+};
+
+const formatTime = (isoValue) => {
+  if (!isoValue) return "-";
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
   });
 };
 
@@ -41,56 +61,90 @@ const getDirectionBadgeClass = (direction) => {
   return "bg-slate-100 text-slate-700 border-slate-200";
 };
 
+const getSignalQualityClass = (quality) => {
+  if (quality === "HIGH") return "bg-emerald-600 text-white border-emerald-700";
+  if (quality === "MEDIUM") return "bg-amber-500 text-white border-amber-600";
+  return "bg-slate-200 text-slate-700 border-slate-300";
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("multibagger");
   const [candidates, setCandidates] = useState([]);
   const [multibaggerLoading, setMultibaggerLoading] = useState(true);
+  const [multibaggerRefreshing, setMultibaggerRefreshing] = useState(false);
   const [multibaggerError, setMultibaggerError] = useState("");
+  const [multibaggerRefreshedAt, setMultibaggerRefreshedAt] = useState("");
   const [minScore, setMinScore] = useState(40);
 
   const [indexSignals, setIndexSignals] = useState([]);
   const [signalsLoading, setSignalsLoading] = useState(true);
+  const [signalsRefreshing, setSignalsRefreshing] = useState(false);
   const [signalsError, setSignalsError] = useState("");
+  const [signalsRefreshedAt, setSignalsRefreshedAt] = useState("");
 
   const [script, setScript] = useState("NIFTY10MAR26500PE");
   const [customSignal, setCustomSignal] = useState(null);
   const [customLoading, setCustomLoading] = useState(false);
   const [customError, setCustomError] = useState("");
 
-  useEffect(() => {
-    const loadMultibagger = async () => {
+  const loadMultibagger = async ({ showRefreshing = false } = {}) => {
+    if (showRefreshing) {
+      setMultibaggerRefreshing(true);
+    } else {
       setMultibaggerLoading(true);
-      setMultibaggerError("");
-      try {
-        const response = await axios.get(`${API}/multibagger/candidates`);
-        setCandidates(response.data || []);
-      } catch {
-        setMultibaggerError("Failed to load multibagger candidates.");
-      } finally {
-        setMultibaggerLoading(false);
-      }
-    };
+    }
+    setMultibaggerError("");
+    try {
+      const response = await axios.get(`${API}/multibagger/candidates`, {
+        params: { refresh_nonce: buildRefreshToken() },
+      });
+      const rows = response.data || [];
+      setCandidates(rows);
+      setMultibaggerRefreshedAt(rows[0]?.analysis_refreshed_at || new Date().toISOString());
+    } catch {
+      setMultibaggerError("Failed to load multibagger candidates.");
+    } finally {
+      setMultibaggerLoading(false);
+      setMultibaggerRefreshing(false);
+    }
+  };
 
-    const loadIndexSignals = async () => {
+  const loadSignals = async ({ showRefreshing = false } = {}) => {
+    if (showRefreshing) {
+      setSignalsRefreshing(true);
+    } else {
       setSignalsLoading(true);
-      setSignalsError("");
-      try {
-        const response = await axios.get(`${API}/fno/signals/index`);
-        setIndexSignals(response.data || []);
-      } catch {
-        setSignalsError("Failed to load index F&O signals.");
-      } finally {
-        setSignalsLoading(false);
-      }
-    };
+    }
+    setSignalsError("");
+    try {
+      const response = await axios.get(`${API}/fno/signals/potential`, {
+        params: { refresh_nonce: buildRefreshToken() },
+      });
+      const rows = response.data || [];
+      setIndexSignals(rows);
+      setSignalsRefreshedAt(rows[0]?.analysis_refreshed_at || new Date().toISOString());
+    } catch {
+      setSignalsError("Failed to load potential F&O signals.");
+    } finally {
+      setSignalsLoading(false);
+      setSignalsRefreshing(false);
+    }
+  };
 
+  useEffect(() => {
     loadMultibagger();
-    loadIndexSignals();
+    loadSignals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredCandidates = useMemo(
     () => candidates.filter((stock) => stock.multibagger_score >= minScore),
     [candidates, minScore],
+  );
+
+  const potentialCandidates = useMemo(
+    () => filteredCandidates.filter((stock) => stock.is_potential_multibagger),
+    [filteredCandidates],
   );
 
   const handleCustomSignal = async (event) => {
@@ -105,7 +159,9 @@ export default function App() {
     setCustomLoading(true);
     setCustomError("");
     try {
-      const response = await axios.get(`${API}/fno/signal/${encodeURIComponent(normalizedScript)}`);
+      const response = await axios.get(`${API}/fno/signal/${encodeURIComponent(normalizedScript)}`, {
+        params: { refresh_nonce: buildRefreshToken() },
+      });
       setCustomSignal(response.data);
       setScript(normalizedScript);
     } catch (error) {
@@ -127,12 +183,20 @@ export default function App() {
           <CardTitle className="text-base font-semibold text-slate-900" data-testid={`${cardTestId}-script`}>
             {signal.script}
           </CardTitle>
-          <Badge
-            className={`border font-medium ${getDirectionBadgeClass(signal.direction)}`}
-            data-testid={`${cardTestId}-direction`}
-          >
-            {signal.direction}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge
+              className={`border font-medium ${getSignalQualityClass(signal.signal_quality)}`}
+              data-testid={`${cardTestId}-quality`}
+            >
+              {signal.signal_quality}
+            </Badge>
+            <Badge
+              className={`border font-medium ${getDirectionBadgeClass(signal.direction)}`}
+              data-testid={`${cardTestId}-direction`}
+            >
+              {signal.direction}
+            </Badge>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-2 text-sm text-slate-600 md:grid-cols-4">
           <div data-testid={`${cardTestId}-underlying`}>Underlying: <span className="font-mono">{signal.underlying}</span></div>
@@ -165,6 +229,13 @@ export default function App() {
           <p data-testid={`${cardTestId}-confluence`}>
             Confluence Score: <span className="font-mono">{signal.confluence_score}/100</span>
           </p>
+          <p data-testid={`${cardTestId}-potential`}>
+            Potential Trade: <span className="font-mono">{signal.is_potential_trade ? "YES" : "WATCH"}</span>
+          </p>
+        </div>
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3" data-testid={`${cardTestId}-triggers`}>
+          <p className="mb-1 text-xs font-medium text-slate-500">Live Triggers</p>
+          <p className="font-mono text-xs text-slate-700">{(signal.trigger_factors || []).join(" | ") || "-"}</p>
         </div>
       </CardContent>
     </Card>
@@ -183,8 +254,28 @@ export default function App() {
             AI Stock Research – Multibagger & F&O
           </h1>
           <p className="max-w-3xl text-sm text-slate-500 sm:text-base" data-testid="app-subtitle">
-            Minimal dashboard for live Indian market screening and simplified options signals.
+            Live analytics with one-click refresh for fresh multibagger discovery and potential F&O trade signals.
           </p>
+          <div className="flex flex-wrap gap-3" data-testid="hero-refresh-actions">
+            <Button
+              type="button"
+              onClick={() => loadMultibagger({ showRefreshing: true })}
+              className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+              data-testid="hero-refresh-multibagger-button"
+            >
+              <RefreshCw size={16} className={multibaggerRefreshing ? "animate-spin" : ""} />
+              GET NEW MULTIBAGGERS
+            </Button>
+            <Button
+              type="button"
+              onClick={() => loadSignals({ showRefreshing: true })}
+              className="bg-slate-900 text-white hover:bg-slate-800"
+              data-testid="hero-refresh-signals-button"
+            >
+              <Sparkles size={16} className={signalsRefreshing ? "animate-pulse" : ""} />
+              GET NEW SIGNALS
+            </Button>
+          </div>
         </header>
 
         <section className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-12" data-testid="summary-section">
@@ -192,18 +283,27 @@ export default function App() {
             <CardContent className="pt-6">
               <p className="text-sm text-slate-500" data-testid="summary-candidates-label">Candidates loaded</p>
               <p className="mt-2 font-mono text-3xl font-semibold" data-testid="summary-candidates-value">{candidates.length}</p>
+              <p className="mt-1 text-xs text-slate-500" data-testid="summary-candidates-refresh-time">
+                Refreshed: {formatTime(multibaggerRefreshedAt)}
+              </p>
             </CardContent>
           </Card>
           <Card className="md:col-span-4" data-testid="summary-card-filtered">
             <CardContent className="pt-6">
               <p className="text-sm text-slate-500" data-testid="summary-filtered-label">Above min score</p>
-              <p className="mt-2 font-mono text-3xl font-semibold" data-testid="summary-filtered-value">{filteredCandidates.length}</p>
+              <p className="mt-2 font-mono text-3xl font-semibold" data-testid="summary-filtered-value">{potentialCandidates.length}</p>
+              <p className="mt-1 text-xs text-slate-500" data-testid="summary-filtered-helper">
+                Potential picks after live tier filter
+              </p>
             </CardContent>
           </Card>
           <Card className="md:col-span-4" data-testid="summary-card-signals">
             <CardContent className="pt-6">
-              <p className="text-sm text-slate-500" data-testid="summary-signals-label">Index F&O signals</p>
+              <p className="text-sm text-slate-500" data-testid="summary-signals-label">Potential F&O signals</p>
               <p className="mt-2 font-mono text-3xl font-semibold" data-testid="summary-signals-value">{indexSignals.length}</p>
+              <p className="mt-1 text-xs text-slate-500" data-testid="summary-signals-refresh-time">
+                Refreshed: {formatTime(signalsRefreshedAt)}
+              </p>
             </CardContent>
           </Card>
         </section>
@@ -241,7 +341,18 @@ export default function App() {
           <section className="space-y-6" data-testid="multibagger-view">
             <Card data-testid="multibagger-filter-card">
               <CardHeader>
-                <CardTitle className="text-lg text-slate-900" data-testid="multibagger-filter-title">Minimum Score Filter</CardTitle>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle className="text-lg text-slate-900" data-testid="multibagger-filter-title">Minimum Score Filter</CardTitle>
+                  <Button
+                    type="button"
+                    onClick={() => loadMultibagger({ showRefreshing: true })}
+                    className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+                    data-testid="multibagger-refresh-button"
+                  >
+                    <RefreshCw size={15} className={multibaggerRefreshing ? "animate-spin" : ""} />
+                    GET NEW MULTIBAGGERS
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="max-w-xl" data-testid="multibagger-score-slider-container">
@@ -255,7 +366,7 @@ export default function App() {
                   />
                 </div>
                 <p className="text-sm text-slate-600" data-testid="multibagger-score-value">
-                  Showing stocks with score <span className="font-mono">≥ {minScore}</span>
+                  Showing stocks with score <span className="font-mono">≥ {minScore}</span> and tier-pass analytics
                 </p>
               </CardContent>
             </Card>
@@ -282,6 +393,7 @@ export default function App() {
                           <TableHead data-testid="head-pe">PE</TableHead>
                           <TableHead data-testid="head-52wh">52W High</TableHead>
                           <TableHead data-testid="head-52wl">52W Low</TableHead>
+                          <TableHead data-testid="head-tier">Tier Pass</TableHead>
                           <TableHead data-testid="head-score">Score</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -296,9 +408,14 @@ export default function App() {
                             <TableCell className="font-mono" data-testid={`stock-pe-${stock.symbol.toLowerCase()}`}>{formatNumber(stock.pe_ratio)}</TableCell>
                             <TableCell className="font-mono" data-testid={`stock-yearhigh-${stock.symbol.toLowerCase()}`}>{formatNumber(stock.year_high)}</TableCell>
                             <TableCell className="font-mono" data-testid={`stock-yearlow-${stock.symbol.toLowerCase()}`}>{formatNumber(stock.year_low)}</TableCell>
+                            <TableCell className="font-mono" data-testid={`stock-tier-${stock.symbol.toLowerCase()}`}>
+                              {stock.tier_pass_count}/8
+                            </TableCell>
                             <TableCell data-testid={`stock-score-${stock.symbol.toLowerCase()}`}>
-                              <Badge className={`border ${getScoreBadgeClass(stock.multibagger_score)}`}>
-                                {stock.multibagger_score}
+                              <Badge
+                                className={`border ${stock.is_potential_multibagger ? "bg-cyan-500 text-slate-900 border-cyan-600" : getScoreBadgeClass(stock.multibagger_score)}`}
+                              >
+                                {stock.is_potential_multibagger ? `POTENTIAL ${stock.multibagger_score}` : stock.multibagger_score}
                               </Badge>
                             </TableCell>
                           </TableRow>
@@ -314,13 +431,26 @@ export default function App() {
           <section className="space-y-8" data-testid="fno-view">
             <Card data-testid="index-signals-card">
               <CardHeader>
-                <CardTitle className="text-lg text-slate-900" data-testid="index-signals-title">Index F&O Signals</CardTitle>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle className="text-lg text-slate-900" data-testid="index-signals-title">Potential Profitable Trade Signals</CardTitle>
+                  <Button
+                    type="button"
+                    onClick={() => loadSignals({ showRefreshing: true })}
+                    className="bg-slate-900 text-white hover:bg-slate-800"
+                    data-testid="signals-refresh-button"
+                  >
+                    <RefreshCw size={15} className={signalsRefreshing ? "animate-spin" : ""} />
+                    GET NEW SIGNALS
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 {signalsLoading ? (
-                  <p className="text-sm text-slate-500" data-testid="index-signals-loading">Loading index signals...</p>
+                  <p className="text-sm text-slate-500" data-testid="index-signals-loading">Running fresh live analytics...</p>
                 ) : signalsError ? (
                   <p className="text-sm text-rose-600" data-testid="index-signals-error">{signalsError}</p>
+                ) : indexSignals.length === 0 ? (
+                  <p className="text-sm text-slate-500" data-testid="index-signals-empty">No potential setup right now. Click GET NEW SIGNALS to re-check live market.</p>
                 ) : (
                   <div className="grid grid-cols-1 gap-6" data-testid="index-signals-grid">
                     {indexSignals.map((signal) => (
@@ -368,7 +498,7 @@ export default function App() {
                 ) : (
                   <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500" data-testid="custom-signal-empty-state">
                     <TrendingDown className="mb-2" size={16} />
-                    Enter a valid script and submit to view the signal card.
+                    Enter a valid script and submit to run fresh live analytics.
                   </div>
                 )}
               </CardContent>

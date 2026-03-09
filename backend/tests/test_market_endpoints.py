@@ -98,3 +98,57 @@ def test_fno_signals_index_cards(session_client, api_base_url):
     for row in data:
         assert row['underlying'] in {'NIFTY', 'BANKNIFTY'}
         assert row['direction'] in {'BULLISH', 'BEARISH', 'NEUTRAL'}
+
+
+def test_fno_potential_signals_shape_and_actionability(session_client, api_base_url):
+    response = session_client.get(f'{api_base_url}/fno/signals/potential', timeout=120)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+
+    for row in data:
+        assert 'confluence_score' in row
+        assert 'is_potential_trade' in row
+        assert row['direction'] in {'BULLISH', 'BEARISH', 'NEUTRAL'}
+
+
+def test_custom_script_refresh_nonce_returns_fresh_timestamp(session_client, api_base_url):
+    script = 'NIFTY10MAR26500PE'
+    first = session_client.get(
+        f'{api_base_url}/fno/signal/{script}',
+        params={'refresh_nonce': 'pytest-run-1'},
+        timeout=90,
+    )
+    second = session_client.get(
+        f'{api_base_url}/fno/signal/{script}',
+        params={'refresh_nonce': 'pytest-run-2'},
+        timeout=90,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    first_data = first.json()
+    second_data = second.json()
+    assert first_data['analysis_refreshed_at'] != second_data['analysis_refreshed_at']
+
+
+def test_multibagger_rows_include_tier_and_potential_flags(session_client, api_base_url):
+    response = session_client.get(
+        f'{api_base_url}/multibagger/candidates',
+        params={'refresh_nonce': 'pytest-multi-refresh'},
+        timeout=120,
+    )
+    assert response.status_code == 200
+
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+
+    first = data[0]
+    assert 'tier_pass_count' in first
+    assert 'is_potential_multibagger' in first
+    assert isinstance(first['tier_pass_count'], int)
+    assert isinstance(first['is_potential_multibagger'], bool)
