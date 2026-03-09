@@ -290,7 +290,7 @@ export default function App() {
           </Card>
           <Card className="md:col-span-4" data-testid="summary-card-filtered">
             <CardContent className="pt-6">
-              <p className="text-sm text-slate-500" data-testid="summary-filtered-label">Above min score</p>
+              <p className="text-sm text-slate-500" data-testid="summary-filtered-label">Potential multibagger picks</p>
               <p className="mt-2 font-mono text-3xl font-semibold" data-testid="summary-filtered-value">{potentialCandidates.length}</p>
               <p className="mt-1 text-xs text-slate-500" data-testid="summary-filtered-helper">
                 Potential picks after live tier filter

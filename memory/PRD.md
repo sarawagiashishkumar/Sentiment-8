@@ -1,76 +1,65 @@
 # PRD — AI Stock Research: Multibagger & F&O
 
 ## Original Problem Statement
-Build a simple ultra-minimal full-stack app (FastAPI + React) for:
-- Multibagger stock candidates
-- F&O contracts and signals
+Build a minimalist full-stack stock research app (FastAPI + React) for:
+- Multibagger discovery
+- F&O contract signals
 - Custom script signal lookup
-With backend-only analysis logic and frontend display.
+using live market data.
 
-## User Choices / Updates
-- No API keys available.
-- Use reliable live market data sources with fallback strategy.
-- No dummy option LTP.
-- Option LTP should use exact underlying+expiry+strike+CE/PE with nearest-expiry fallback (and robust fallback handling when exact strike is unavailable).
+## User Choices / Latest Requests
+- Keep reliable live data API intact (no dummy option LTP).
+- Add one-click refresh UX:
+  - **GET NEW MULTIBAGGERS**
+  - **GET NEW SIGNALS**
+- Improve signal quality to avoid weak neutral cards and surface potential profitable trades.
+- Keep implementation lightweight, fast, and low-complexity infra.
 
 ## Architecture Decisions
-- **Backend**: FastAPI with typed Pydantic response models.
-- **Data source strategy**:
-  - Primary: Moneycontrol live endpoints (`priceapi` + `mcapi`) for stocks/index and option-chain parsing.
-  - Secondary fallback: RapidAPI helper support kept in one place for future key wiring.
-- **Core helpers**:
-  - `get_stock_core(symbol)` normalizes stock/index data into one schema.
-  - `get_option_ltp(script)` fetches live option LTP through a unified resolver.
-- **Domain data**:
-  - Hardcoded F&O universe in `data/fno_contracts.py`.
-  - Hardcoded 50+ multibagger universe in `data/symbols.py`.
-- **Frontend**: Single-page dashboard with 2 views via tabs (no routing complexity).
+- Backend remains FastAPI with in-memory lightweight processing (no heavy infra dependencies added).
+- Live data flow preserved via existing reliable providers in `services/market_data.py`.
+- Refresh is implemented via explicit `refresh_nonce` query params + fresh recomputation on demand.
+- Added dedicated potential signals endpoint for trade-focused cards.
 
-## What Has Been Implemented
-- Backend endpoints:
-  - `GET /api/multibagger/candidates` (top 30 sorted by score)
-  - `GET /api/fno/contracts`
-  - `GET /api/fno/signal/{script}`
-  - `GET /api/fno/signals/index`
-- Multibagger scoring engine (0–100) using market cap, PE, price zone, EPS, and range-position heuristics.
-- Live F&O signal engine with entry/SL/targets, risk-reward, direction, and confluence score.
-- Option LTP resolver improved with:
-  - nearest-expiry fallback
-  - nearest-valid-strike fallback when exact strike has no tradable LTP
-- Frontend dashboard:
-  - Header + KPI cards
-  - Multibagger table + min-score slider
-  - Index F&O signal cards
-  - Custom script checker with error handling
-- Added `data-testid` attributes across interactive and key user-facing elements.
+## Implemented (Current)
+- **Backend APIs**
+  - `GET /api/multibagger/candidates?refresh_nonce=...`
+  - `GET /api/fno/signal/{script}?refresh_nonce=...`
+  - `GET /api/fno/signals/index?refresh_nonce=...`
+  - `GET /api/fno/signals/potential?refresh_nonce=...` (new)
+- **Multibagger engine upgrades**
+  - Tier-style analytics proxy logic, tier pass count, PB/PEG estimates, potential flag.
+  - Candidate response now includes `tier_pass_count`, `is_potential_multibagger`, `analysis_refreshed_at`.
+- **F&O signal engine upgrades**
+  - Stronger live confluence/bias model to reduce low-quality neutral outputs.
+  - Added `signal_quality`, `is_potential_trade`, `trigger_factors`, `analysis_refreshed_at`.
+  - Potential endpoint returns high-conviction opportunities first.
+- **Frontend UX upgrades**
+  - Prominent buttons: **GET NEW MULTIBAGGERS** and **GET NEW SIGNALS**.
+  - Refresh timestamps displayed in summary cards.
+  - F&O section now focused on **Potential Profitable Trade Signals**.
+  - Multibagger table now shows tier pass and potential tags.
+  - Custom script lookup still supported with fresh live refresh.
 
-## Testing Status
-- Backend regression tests: `5 passed` (`/app/backend/tests/test_market_endpoints.py`).
-- API spot checks via curl:
-  - multibagger list ✅
-  - single signal NIFTY ✅
-  - single signal BANKNIFTY ✅
-  - index signals list ✅
-- Frontend Playwright screenshots captured for:
-  - initial load
-  - tab switching
-  - slider interaction
-  - custom BANKNIFTY signal render
+## Validation / Testing
+- API smoke tests via curl: passed for all updated endpoints.
+- Pytest regression: **8 passed** (`/app/backend/tests/test_market_endpoints.py`).
+- Browser automation checks: refresh buttons, tab flow, potential signal cards, custom script flow all verified.
 
 ## Prioritized Backlog
 ### P0
-- Add caching/rate-limit guard for external provider calls to reduce latency/spikes.
-- Add structured provider health/error telemetry endpoint for observability.
+- Add short TTL in-memory caching + stale-while-refresh for faster repeated refresh bursts.
+- Add structured fallback diagnostics in responses (provider and fallback level used).
 
 ### P1
-- Add server-side pagination/sorting controls for multibagger table.
-- Add richer signal explanation blocks (why bullish/bearish/neutral).
+- Add “Best Trade” ranking panel with top-1 rationale and invalidation conditions.
+- Add richer multibagger explanation columns (which tiers failed/passed).
 
 ### P2
-- Add watchlist persistence and historical signal snapshots.
-- Add downloadable CSV export for screened candidates/signals.
+- Optional async worker scheduling for periodic snapshots (lightweight cron/apscheduler).
+- Historical signal tracking and downloadable reports.
 
 ## Next Tasks
-1. Introduce async caching layer (TTL) for `get_stock_core` and option-chain pages.
-2. Add backend diagnostics metadata (provider used, fallback level) to responses.
-3. Add table sort controls and lightweight skeleton loaders in frontend.
+1. Introduce lightweight request-throttled cache for frequent refresh clicks.
+2. Expose per-signal invalidators and confidence explanations in UI.
+3. Add compact homepage route with CTA navigation to dashboard (if requested).
