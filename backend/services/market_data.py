@@ -135,13 +135,16 @@ class MarketDataClient:
                 "sector": "Index",
             }
 
-        meta = self.resolve_symbol_meta(symbol_upper)
-        candidate_codes: list[str] = []
+        candidate_codes: list[str] = [symbol_upper]
         company_name = symbol_upper
+
+        meta = self.resolve_symbol_meta(symbol_upper)
         if meta:
             candidate_codes.extend([meta["id"], meta["did"]])
             company_name = meta.get("name") or company_name
-        candidate_codes.append(symbol_upper)
+
+        # Preserve order, remove duplicates
+        candidate_codes = list(dict.fromkeys(code for code in candidate_codes if code))
 
         for code in candidate_codes:
             if not code:
@@ -253,14 +256,30 @@ class MarketDataClient:
             for idx, val in re.findall(r'id="puts_ltp(\d+)"[^>]*>\s*([0-9,.-]+)\s*<', option_chain_html)
         }
 
+        option_map = call_map if option_type.upper() == "CE" else put_map
+
         for idx, strike_value in strike_map.items():
             if strike_value is None:
                 continue
             if abs(strike_value - float(strike)) > 0.01:
                 continue
-            if option_type.upper() == "CE":
-                return call_map.get(idx)
-            return put_map.get(idx)
+            exact_ltp = option_map.get(idx)
+            if exact_ltp is not None and exact_ltp > 0:
+                return exact_ltp
+
+        nearest_candidates: list[tuple[float, float]] = []
+        for idx, strike_value in strike_map.items():
+            if strike_value is None:
+                continue
+            ltp_value = option_map.get(idx)
+            if ltp_value is None or ltp_value <= 0:
+                continue
+            nearest_candidates.append((abs(strike_value - float(strike)), ltp_value))
+
+        if nearest_candidates:
+            nearest_candidates.sort(key=lambda item: item[0])
+            return nearest_candidates[0][1]
+
         return None
 
     def fetch_option_ltp_for_contract(self, contract: dict[str, Any]) -> float:

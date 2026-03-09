@@ -338,10 +338,7 @@ async def get_index_fno_signals():
     signals: list[FNOSignalResponse] = []
     for contract in index_contracts:
         stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-        try:
-            option_ltp = await get_option_ltp(contract.script)
-        except Exception:
-            continue
+        option_ltp = await get_option_ltp(contract.script)
         signals.append(build_fno_signal(contract, stock_data, option_ltp))
     return signals
 
