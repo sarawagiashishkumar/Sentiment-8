@@ -1,0 +1,155 @@
+{
+  "identity": "E1: The Anti-AI Designer",
+  "project_name": "AI Stock Research – Multibagger & F&O",
+  "design_philosophy": {
+    "core_concept": "The Architect's Ledger",
+    "visual_style": "Precision Minimalist / Swiss Financial",
+    "theme_mode": "light",
+    "key_principles": [
+      "Clarity is king: Data must be instantly readable",
+      "Function over form: Decoration serves data, not vice versa",
+      "Architectural precision: Use grids and lines to structure content",
+      "Trustworthy palette: Use established financial colors but refine them"
+    ]
+  },
+  "typography": {
+    "font_family_primary": "Plus Jakarta Sans, sans-serif",
+    "font_family_secondary": "Inter, sans-serif",
+    "font_family_mono": "JetBrains Mono, monospace",
+    "scale": {
+      "h1": "text-3xl font-bold tracking-tight text-slate-900",
+      "h2": "text-2xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-xl font-semibold text-slate-800",
+      "body": "text-base font-normal text-slate-600 leading-relaxed",
+      "small": "text-sm font-medium text-slate-500",
+      "number": "font-mono font-medium tracking-wide"
+    }
+  },
+  "colors": {
+    "palette": {
+      "background": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "primary": "#0F172A",
+      "secondary": "#64748B",
+      "accent": "#2563EB",
+      "success": "#16A34A",
+      "warning": "#D97706",
+      "error": "#DC2626",
+      "border": "#E2E8F0",
+      "ring": "#94A3B8"
+    },
+    "usage": {
+      "text_primary": "text-slate-900",
+      "text_secondary": "text-slate-500",
+      "bg_app": "bg-slate-50",
+      "bg_card": "bg-white",
+      "border_default": "border-slate-200",
+      "profit_text": "text-emerald-600",
+      "loss_text": "text-rose-600",
+      "neutral_text": "text-slate-400"
+    }
+  },
+  "layout_strategy": {
+    "grid_system": "Bento Grid",
+    "container_width": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "spacing": {
+      "section_gap": "gap-8",
+      "card_padding": "p-6",
+      "internal_gap": "gap-4"
+    },
+    "modes": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-12 gap-6",
+      "list": "flex flex-col gap-4"
+    }
+  },
+  "components": {
+    "buttons": {
+      "style": "rounded-md font-medium transition-all duration-200 ease-in-out focus:ring-2 focus:ring-offset-2",
+      "variants": {
+        "primary": "bg-slate-900 text-white hover:bg-slate-800 focus:ring-slate-900 shadow-sm",
+        "secondary": "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-slate-500 shadow-sm",
+        "danger": "bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 hover:border-rose-300 focus:ring-rose-500",
+        "ghost": "bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+      }
+    },
+    "cards": {
+      "style": "bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow duration-200",
+      "header": "px-6 py-4 border-b border-slate-100 flex items-center justify-between",
+      "body": "p-6"
+    },
+    "inputs": {
+      "style": "flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200"
+    },
+    "tables": {
+      "wrapper": "relative w-full overflow-auto rounded-lg border border-slate-200",
+      "header_row": "border-b border-slate-200 bg-slate-50/50 hover:bg-slate-50/50",
+      "header_cell": "h-12 px-4 text-left align-middle font-medium text-slate-500 [&:has([role=checkbox])]:pr-0",
+      "body_row": "border-b border-slate-100 transition-colors hover:bg-slate-50/50 data-[state=selected]:bg-slate-100",
+      "cell": "p-4 align-middle [&:has([role=checkbox])]:pr-0 font-mono text-sm"
+    },
+    "badges": {
+      "base": "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2",
+      "success": "bg-emerald-100 text-emerald-800 hover:bg-emerald-200",
+      "error": "bg-rose-100 text-rose-800 hover:bg-rose-200",
+      "neutral": "bg-slate-100 text-slate-800 hover:bg-slate-200",
+      "score_high": "bg-emerald-50 text-emerald-700 border border-emerald-200",
+      "score_med": "bg-amber-50 text-amber-700 border border-amber-200",
+      "score_low": "bg-rose-50 text-rose-700 border border-rose-200"
+    }
+  },
+  "visual_enhancers": {
+    "shadows": "shadow-sm shadow-slate-200/50",
+    "borders": "border border-slate-200",
+    "gradients": "None (Flat minimalist style preferred)",
+    "textures": "Subtle noise on background (optional) or clean white paper look"
+  },
+  "motion": {
+    "default_transition": "transition-all duration-200 ease-in-out",
+    "hover_lift": "hover:-translate-y-0.5",
+    "fade_in": "animate-in fade-in zoom-in-95 duration-300"
+  },
+  "accessibility": {
+    "contrast_check": "Ensure text-slate-500 is only used for secondary info on white backgrounds",
+    "focus_states": "All interactive elements must have visible focus rings",
+    "aria_labels": "Required for icon-only buttons",
+    "test_ids": "All interactive elements MUST have data-testid attributes (e.g., 'search-input', 'submit-btn')"
+  },
+  "image_urls": {
+    "hero_abstract": "None (Use CSS patterns or Lucide Icons)",
+    "icons_library": "lucide-react"
+  },
+  "instructions_to_main_agent": [
+    "Use standard HTML/JS with Tailwind classes for layout. Do not over-engineer with complex libraries.",
+    "Strictly follow the color palette. Do not introduce new colors without reason.",
+    "Ensure the dashboard is responsive. Use 'grid-cols-1 md:grid-cols-12' pattern.",
+    "For the Multibagger score, use a color-coded badge or progress bar (Green > 70, Yellow 40-70, Red < 40).",
+    "For F&O Signals, use clear 'BUY' (Green) and 'SELL' (Red) indicators.",
+    "All stock prices and financial numbers MUST use the 'font-mono' class (JetBrains Mono).",
+    "Use 'lucide-react' for icons (e.g., TrendingUp, TrendingDown, Activity, DollarSign).",
+    "Implement the 'Tabs' component using state to switch between 'Multibagger' and 'F&O' views.",
+    "Maintain a clean, professional 'Architectural' aesthetic - lots of white space, thin borders, precise alignment.",
+    "Add 'data-testid' to every interactive element (buttons, inputs, tabs, table rows) for testing."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy",
+    "Use glass-morphism effects with backdrop filters (12-24px blur) only for overlays/modals in light mode (frosted glass).",
+    "You MUST NOT apply universal transition. Eg: 'transition: all'. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms",
+    "You MUST NOT center align the app container, ie do not add '.App { text-align: center; }' in the css file. This disrupts the human natural reading flow of text",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Main agent relies on these image URLs. Missing categories (especially sponsor logos) = main agent will use placeholder text which is FORBIDDEN",
+    "Prioritize using pre-existing components from src/components/ui when applicable",
+    "Create new components that match the style and conventions of existing components when needed",
+    "Examine existing components to understand the project's component patterns before creating new ones",
+    "Components MUST use named exports (export const ComponentName = ...)",
+    "Pages MUST use default exports (export default function PageName() {...})",
+    "Use 'sonner' for toasts",
+    "Sonner component are located in '/app/src/components/ui/sonner.tsx'"
+  ]
+}
