@@ -1,15 +1,18 @@
 import asyncio
+import hashlib
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Literal
+from typing import Dict, List, Literal
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
+from pymongo import ReturnDocument
 from starlette.middleware.cors import CORSMiddleware
 
 from data.fno_contracts import FNO_CONTRACTS, get_fno_contract
@@ -32,6 +35,10 @@ db = client[os.environ["DB_NAME"]]
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+ADMIN_BOOTSTRAP_PASSWORD = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "owner123")
+PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9]{6,}$")
+SESSION_STORE: Dict[str, dict] = {}
+
 
 class StatusCheck(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -43,6 +50,39 @@ class StatusCheck(BaseModel):
 
 class StatusCheckCreate(BaseModel):
     client_name: str
+
+
+class AccessRequest(BaseModel):
+    password: str
+
+
+class AccessResponse(BaseModel):
+    token: str
+    role: Literal["admin", "user"]
+    credits: int
+    user_key: str
+
+
+class MeResponse(BaseModel):
+    role: Literal["admin", "user"]
+    credits: int
+    user_key: str
+
+
+class AdminUserView(BaseModel):
+    user_key: str
+    role: Literal["admin", "user"]
+    credits: int
+    created_at: str
+
+
+class AdminCreateUserRequest(BaseModel):
+    password: str
+    initial_credits: int = 0
+
+
+class AdminSetCreditsRequest(BaseModel):
+    credits: int
 
 
 class StockCoreNormalized(BaseModel):
@@ -116,8 +156,34 @@ class FNOSignalResponse(BaseModel):
     analysis_refreshed_at: str
 
 
+class MultibaggerGenerateResponse(BaseModel):
+    cost_charged: int
+    credits_remaining: int
+    analysis_refreshed_at: str
+    candidates: List[MultibaggerCandidate]
+    potential_count: int
+
+
+class FNOGenerateRequest(BaseModel):
+    custom_script: str | None = None
+
+
+class FNOGenerateResponse(BaseModel):
+    cost_charged: int
+    credits_remaining: int
+    analysis_refreshed_at: str
+    signals: List[FNOSignalResponse]
+    potential_signals: List[FNOSignalResponse]
+    top_trades: List[FNOSignalResponse]
+    custom_signal: FNOSignalResponse | None = None
+
+
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
@@ -130,6 +196,79 @@ def _position_in_range(ltp: float | None, year_low: float | None, year_high: flo
     if ltp is None or year_low is None or year_high is None or year_high <= year_low:
         return None
     return clamp((ltp - year_low) / (year_high - year_low), 0.0, 1.0)
+
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _validate_password(password: str) -> None:
+    if not PASSWORD_PATTERN.fullmatch(password):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 6 characters and contain only letters and numbers",
+        )
+
+
+async def _get_user_by_key(user_key: str) -> dict | None:
+    return await db.app_users.find_one({"user_key": user_key}, {"_id": 0})
+
+
+async def _get_or_create_user_by_password(password: str) -> dict:
+    fingerprint = _hash_password(password)
+    existing = await db.app_users.find_one({"password_fingerprint": fingerprint}, {"_id": 0})
+    if existing:
+        return existing
+
+    role: Literal["admin", "user"] = "admin" if password == ADMIN_BOOTSTRAP_PASSWORD else "user"
+    credits = 10_000 if role == "admin" else 0
+    new_user = {
+        "user_key": str(uuid.uuid4()),
+        "password_fingerprint": fingerprint,
+        "role": role,
+        "credits": credits,
+        "created_at": _utc_now_iso(),
+    }
+    await db.app_users.insert_one(new_user)
+    return {k: v for k, v in new_user.items() if k != "_id"}
+
+
+async def _consume_credits(user_key: str, cost: int) -> dict:
+    updated = await db.app_users.find_one_and_update(
+        {"user_key": user_key, "credits": {"$gte": cost}},
+        {"$inc": {"credits": -cost}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        user = await _get_user_by_key(user_key)
+        current = int(user.get("credits", 0)) if user else 0
+        raise HTTPException(
+            status_code=402,
+            detail=f"Insufficient credits. Required {cost}, available {current}",
+        )
+    return updated
+
+
+async def get_current_user(authorization: str | None = Header(default=None, alias="Authorization")) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = authorization.replace("Bearer ", "", 1).strip()
+    session = SESSION_STORE.get(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    user = await _get_user_by_key(session["user_key"])
+    if not user:
+        SESSION_STORE.pop(token, None)
+        raise HTTPException(status_code=401, detail="Session expired")
+    return user
+
+
+async def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return current_user
 
 
 def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
@@ -147,7 +286,6 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         if year_high is not None and ltp is not None and ltp > 0
         else None
     )
-
     growth_proxy_pct = (
         ((year_high - year_low) / year_low) * 100
         if year_high is not None and year_low is not None and year_low > 0 and year_high > year_low
@@ -169,7 +307,6 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         and peg_ratio_est < 1.5
     )
 
-    # Tier proxies built from available reliable live fields.
     tier_2_revenue_profit_proxy = (
         eps is not None
         and eps > 0
@@ -179,17 +316,10 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         and upside_to_52w_high_pct >= 12
     )
     tier_3_profitability_proxy = (
-        pe is not None
-        and 5 <= pe <= 40
-        and pb_ratio_est is not None
-        and pb_ratio_est < 4.5
+        pe is not None and 5 <= pe <= 40 and pb_ratio_est is not None and pb_ratio_est < 4.5
     )
     tier_4_balance_sheet_proxy = (
-        market_cap is not None
-        and market_cap > 1_000
-        and stock.volume > 100_000
-        and ltp is not None
-        and stock.prev_close is not None
+        market_cap is not None and market_cap > 1_000 and stock.volume > 100_000
     )
     tier_5_governance_proxy = stock.sector != "Unknown" and market_cap is not None and market_cap > 2_000
     tier_6_forensic_proxy = eps is not None and eps > 0 and pe is not None and 6 <= pe <= 45
@@ -210,29 +340,22 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
     tier_pass_count = sum(1 for status in tier_flags if status)
 
     mandatory_pass = tier_1_market_cap and tier_1_price_zone
-
     score = 0.0
     score += 9 * tier_pass_count
-    if mandatory_pass:
-        score += 15
-    else:
-        score -= 6
+    score += 15 if mandatory_pass else -6
 
     if upside_to_52w_high_pct is not None:
         score += clamp(upside_to_52w_high_pct / 8, 0, 12)
-
     if peg_ratio_est is not None:
         if peg_ratio_est < 1.5:
             score += 8
         elif peg_ratio_est < 2.5:
             score += 4
-
     if pb_ratio_est is not None:
         if pb_ratio_est < 3:
             score += 6
         elif pb_ratio_est < 5:
             score += 3
-
     if pe is not None and pe > 55:
         score -= 10
     elif pe is not None and pe < 10:
@@ -283,9 +406,8 @@ def build_fno_signal(
         else 0.0
     )
 
-    trend_points = 0.0
     trigger_factors: list[str] = []
-
+    trend_points = 0.0
     if day_change_pct >= 0.35:
         trend_points += 16
         trigger_factors.append(f"DayChange={day_change_pct:.2f}%")
@@ -318,23 +440,19 @@ def build_fno_signal(
     bias_score = (0.65 * day_change_pct) + (0.35 * intraday_change_pct)
     if pos is not None:
         bias_score += (pos - 0.5) * 1.2
+    trigger_factors.append(f"BiasScore={bias_score:.2f}")
 
     if bias_score >= 0.15:
         underlying_bias: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "BULLISH"
-        trigger_factors.append(f"BiasScore={bias_score:.2f}")
     elif bias_score <= -0.15:
         underlying_bias = "BEARISH"
-        trigger_factors.append(f"BiasScore={bias_score:.2f}")
     else:
         underlying_bias = "NEUTRAL"
-        trigger_factors.append(f"BiasScore={bias_score:.2f}")
 
     if contract.option_type == "CE" and underlying_bias == "BULLISH":
         direction: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "BULLISH"
     elif contract.option_type == "PE" and underlying_bias == "BEARISH":
         direction = "BEARISH"
-    elif underlying_bias == "NEUTRAL":
-        direction = "NEUTRAL"
     else:
         direction = "NEUTRAL"
 
@@ -348,12 +466,10 @@ def build_fno_signal(
     risk_reward_target2 = round((target2 - entry_price) / risk, 2)
 
     confluence = 52 + abs(bias_score) * 22
-
     if direction == "NEUTRAL":
         confluence -= 20
     else:
         confluence += 12
-
     if risk_reward_target2 >= 2:
         confluence += 8
     if option_ltp < 1:
@@ -364,7 +480,6 @@ def build_fno_signal(
     confluence_score = int(clamp(round(confluence), 0, 100))
     signal_quality = _get_signal_quality(confluence_score)
     is_potential_trade = direction != "NEUTRAL" and confluence_score >= 72 and risk_reward_target2 >= 2
-
     if is_potential_trade:
         trigger_factors.append("PotentialTrade=YES")
 
@@ -398,49 +513,9 @@ def build_fno_signal(
     )
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-async def _build_fno_signal_for_contract(contract: FNOContract, refreshed_at: str) -> FNOSignalResponse:
-    stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-    option_ltp = await get_option_ltp(contract.script)
-    return build_fno_signal(contract, stock_data, option_ltp, refreshed_at)
-
-
-@api_router.get("/")
-async def root():
-    return {"message": "AI Stock Research API"}
-
-
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    doc = status_obj.model_dump()
-    doc["timestamp"] = doc["timestamp"].isoformat()
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
-
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    for check in status_checks:
-        if isinstance(check.get("timestamp"), str):
-            check["timestamp"] = datetime.fromisoformat(check["timestamp"])
-    return status_checks
-
-
-@api_router.get("/multibagger/candidates", response_model=List[MultibaggerCandidate])
-async def get_multibagger_candidates(
-    refresh_nonce: str | None = Query(default=None),
-):
-    _ = refresh_nonce
-    refreshed_at = _utc_now_iso()
+async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCandidate]:
     results = await asyncio.gather(*[get_stock_core(symbol) for symbol in MULTIBAGGER_UNIVERSE])
     candidates: list[MultibaggerCandidate] = []
-
     for row in results:
         stock = StockCoreNormalized(**row)
         if stock.ltp is None:
@@ -465,12 +540,226 @@ async def get_multibagger_candidates(
                 analysis_refreshed_at=refreshed_at,
             )
         )
-
     candidates.sort(
         key=lambda item: (item.is_potential_multibagger, item.multibagger_score),
         reverse=True,
     )
     return candidates[:30]
+
+
+async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -> FNOSignalResponse:
+    stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
+    option_ltp = await get_option_ltp(contract.script)
+    return build_fno_signal(contract, stock_data, option_ltp, refreshed_at)
+
+
+async def _build_index_signals(refreshed_at: str) -> list[FNOSignalResponse]:
+    index_contracts = [
+        FNOContract(**contract)
+        for contract in FNO_CONTRACTS
+        if contract["underlying"] in {"NIFTY", "BANKNIFTY"}
+    ]
+    signals: list[FNOSignalResponse] = []
+    for contract in index_contracts:
+        try:
+            signal = await _build_signal_for_contract(contract, refreshed_at)
+            signals.append(signal)
+        except Exception:
+            continue
+    signals.sort(
+        key=lambda item: (item.is_potential_trade, item.confluence_score),
+        reverse=True,
+    )
+    return signals
+
+
+@api_router.get("/")
+async def root():
+    return {"message": "AI Stock Research API"}
+
+
+@api_router.post("/auth/access", response_model=AccessResponse)
+async def auth_access(payload: AccessRequest):
+    _validate_password(payload.password)
+    user = await _get_or_create_user_by_password(payload.password)
+    token = str(uuid.uuid4())
+    SESSION_STORE[token] = {
+        "user_key": user["user_key"],
+        "created_at": _utc_now_iso(),
+    }
+    return AccessResponse(
+        token=token,
+        role=user["role"],
+        credits=int(user.get("credits", 0)),
+        user_key=user["user_key"],
+    )
+
+
+@api_router.post("/auth/logout")
+async def auth_logout(current_user: dict = Depends(get_current_user), authorization: str | None = Header(default=None, alias="Authorization")):
+    _ = current_user
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "", 1).strip()
+        SESSION_STORE.pop(token, None)
+    return {"ok": True}
+
+
+@api_router.get("/auth/me", response_model=MeResponse)
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    return MeResponse(
+        role=current_user["role"],
+        credits=int(current_user.get("credits", 0)),
+        user_key=current_user["user_key"],
+    )
+
+
+@api_router.get("/admin/users", response_model=List[AdminUserView])
+async def admin_list_users(admin_user: dict = Depends(get_admin_user)):
+    _ = admin_user
+    rows = await db.app_users.find({}, {"_id": 0, "password_fingerprint": 0}).to_list(2000)
+    return [AdminUserView(**row) for row in rows]
+
+
+@api_router.post("/admin/users", response_model=AdminUserView)
+async def admin_create_user(payload: AdminCreateUserRequest, admin_user: dict = Depends(get_admin_user)):
+    _ = admin_user
+    _validate_password(payload.password)
+    credits = max(0, int(payload.initial_credits))
+    fingerprint = _hash_password(payload.password)
+    existing = await db.app_users.find_one({"password_fingerprint": fingerprint}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Password already mapped to an existing user")
+
+    doc = {
+        "user_key": str(uuid.uuid4()),
+        "password_fingerprint": fingerprint,
+        "role": "user",
+        "credits": credits,
+        "created_at": _utc_now_iso(),
+    }
+    await db.app_users.insert_one(doc)
+    return AdminUserView(
+        user_key=doc["user_key"],
+        role="user",
+        credits=credits,
+        created_at=doc["created_at"],
+    )
+
+
+@api_router.patch("/admin/users/{user_key}/credits", response_model=AdminUserView)
+async def admin_set_credits(
+    user_key: str,
+    payload: AdminSetCreditsRequest,
+    admin_user: dict = Depends(get_admin_user),
+):
+    _ = admin_user
+    credits = max(0, int(payload.credits))
+    updated = await db.app_users.find_one_and_update(
+        {"user_key": user_key},
+        {"$set": {"credits": credits}},
+        projection={"_id": 0, "password_fingerprint": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return AdminUserView(**updated)
+
+
+@api_router.delete("/admin/users/{user_key}")
+async def admin_delete_user(user_key: str, admin_user: dict = Depends(get_admin_user)):
+    _ = admin_user
+    target = await _get_user_by_key(user_key)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete admin user")
+
+    await db.app_users.delete_one({"user_key": user_key})
+    for token, session in list(SESSION_STORE.items()):
+        if session.get("user_key") == user_key:
+            SESSION_STORE.pop(token, None)
+    return {"deleted": True}
+
+
+@api_router.post("/multibagger/generate", response_model=MultibaggerGenerateResponse)
+async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
+    updated_user = await _consume_credits(current_user["user_key"], 1)
+    refreshed_at = _utc_now_iso()
+    candidates = await _build_multibagger_candidates(refreshed_at)
+    potential_count = len([row for row in candidates if row.is_potential_multibagger])
+    return MultibaggerGenerateResponse(
+        cost_charged=1,
+        credits_remaining=int(updated_user.get("credits", 0)),
+        analysis_refreshed_at=refreshed_at,
+        candidates=candidates,
+        potential_count=potential_count,
+    )
+
+
+@api_router.post("/fno/generate", response_model=FNOGenerateResponse)
+async def generate_fno_signals(
+    payload: FNOGenerateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    updated_user = await _consume_credits(current_user["user_key"], 2)
+    refreshed_at = _utc_now_iso()
+
+    signals = await _build_index_signals(refreshed_at)
+    potential_signals = [signal for signal in signals if signal.is_potential_trade]
+    custom_signal: FNOSignalResponse | None = None
+
+    if payload.custom_script:
+        contract_dict = get_fno_contract(payload.custom_script.strip().upper())
+        if not contract_dict:
+            raise HTTPException(status_code=404, detail="Script not supported")
+        custom_signal = await _build_signal_for_contract(FNOContract(**contract_dict), refreshed_at)
+
+    combined = list(signals)
+    if custom_signal and custom_signal.script not in {row.script for row in combined}:
+        combined.append(custom_signal)
+
+    top_trades = sorted(
+        combined,
+        key=lambda row: (row.is_potential_trade, row.confluence_score),
+        reverse=True,
+    )[:4]
+
+    return FNOGenerateResponse(
+        cost_charged=2,
+        credits_remaining=int(updated_user.get("credits", 0)),
+        analysis_refreshed_at=refreshed_at,
+        signals=signals,
+        potential_signals=potential_signals,
+        top_trades=top_trades,
+        custom_signal=custom_signal,
+    )
+
+
+@api_router.post("/status", response_model=StatusCheck)
+async def create_status_check(input: StatusCheckCreate):
+    status_dict = input.model_dump()
+    status_obj = StatusCheck(**status_dict)
+    doc = status_obj.model_dump()
+    doc["timestamp"] = doc["timestamp"].isoformat()
+    _ = await db.status_checks.insert_one(doc)
+    return status_obj
+
+
+@api_router.get("/status", response_model=List[StatusCheck])
+async def get_status_checks():
+    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
+    for check in status_checks:
+        if isinstance(check.get("timestamp"), str):
+            check["timestamp"] = datetime.fromisoformat(check["timestamp"])
+    return status_checks
+
+
+# Backward-compatible APIs kept intact
+@api_router.get("/multibagger/candidates", response_model=List[MultibaggerCandidate])
+async def get_multibagger_candidates(refresh_nonce: str | None = Query(default=None)):
+    _ = refresh_nonce
+    refreshed_at = _utc_now_iso()
+    return await _build_multibagger_candidates(refreshed_at)
 
 
 @api_router.get("/fno/contracts", response_model=List[FNOContract])
@@ -479,52 +768,27 @@ async def get_fno_contracts():
 
 
 @api_router.get("/fno/signal/{script}", response_model=FNOSignalResponse)
-async def get_single_fno_signal(
-    script: str,
-    refresh_nonce: str | None = Query(default=None),
-):
+async def get_single_fno_signal(script: str, refresh_nonce: str | None = Query(default=None)):
     _ = refresh_nonce
     contract_dict = get_fno_contract(script)
     if not contract_dict:
         raise HTTPException(status_code=404, detail="Script not supported")
-
-    contract = FNOContract(**contract_dict)
     refreshed_at = _utc_now_iso()
-    try:
-        return await _build_fno_signal_for_contract(contract, refreshed_at)
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return await _build_signal_for_contract(FNOContract(**contract_dict), refreshed_at)
 
 
 @api_router.get("/fno/signals/index", response_model=List[FNOSignalResponse])
-async def get_index_fno_signals(
-    refresh_nonce: str | None = Query(default=None),
-):
+async def get_index_fno_signals(refresh_nonce: str | None = Query(default=None)):
     _ = refresh_nonce
-    index_contracts = [
-        FNOContract(**contract)
-        for contract in FNO_CONTRACTS
-        if contract["underlying"] in {"NIFTY", "BANKNIFTY"}
-    ]
-
     refreshed_at = _utc_now_iso()
-    signals: list[FNOSignalResponse] = []
-    for contract in index_contracts:
-        try:
-            signal = await _build_fno_signal_for_contract(contract, refreshed_at)
-            signals.append(signal)
-        except Exception:
-            continue
-    signals.sort(key=lambda item: (item.is_potential_trade, item.confluence_score), reverse=True)
-    return signals
+    return await _build_index_signals(refreshed_at)
 
 
 @api_router.get("/fno/signals/potential", response_model=List[FNOSignalResponse])
-async def get_potential_index_signals(
-    refresh_nonce: str | None = Query(default=None),
-):
+async def get_potential_index_signals(refresh_nonce: str | None = Query(default=None)):
     _ = refresh_nonce
-    signals = await get_index_fno_signals(refresh_nonce=None)
+    refreshed_at = _utc_now_iso()
+    signals = await _build_index_signals(refreshed_at)
     potential = [signal for signal in signals if signal.is_potential_trade]
     if potential:
         return potential
