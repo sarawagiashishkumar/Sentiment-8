@@ -1,65 +1,104 @@
-# PRD — AI Stock Research: Multibagger & F&O
+# PRD — AI Stock Research Platform (Password + Credits + Admin)
 
-## Original Problem Statement
-Build a minimalist full-stack stock research app (FastAPI + React) for:
-- Multibagger discovery
-- F&O contract signals
-- Custom script signal lookup
-using live market data.
+## Original + Expanded Scope
+Started as a lightweight stock research dashboard (Multibagger + F&O). Expanded to include:
+- Landing page with password-only access
+- Credit-based usage model
+- Admin full CRUD for user credit control
+- On-demand live generation only (no auto-population)
+- SEBI-aligned educational disclaimer
+- Top 4 Best Trade Now sticky panel
 
-## User Choices / Latest Requests
-- Keep reliable live data API intact (no dummy option LTP).
-- Add one-click refresh UX:
-  - **GET NEW MULTIBAGGERS**
-  - **GET NEW SIGNALS**
-- Improve signal quality to avoid weak neutral cards and surface potential profitable trades.
-- Keep implementation lightweight, fast, and low-complexity infra.
+## User Requirements Implemented
+1. **Page flow inspired by reference app** (simple landing + clear dashboard tabs).
+2. **Conflict-free tab/action flow**: each section has its own generate action; no mixed-context trigger confusion.
+3. **Password-based authentication (no username)**:
+   - Password min 6 chars, letters+numbers only.
+   - Same password maps to same user account.
+4. **Credit economy**:
+   - Multibagger generation = 1 credit
+   - F&O generation = 2 credits
+   - Proper insufficient-credit error handling.
+5. **Admin owner rights (CRUD)**:
+   - List users
+   - Create users
+   - Update user credits
+   - Delete users (non-admin)
+6. **Data generation behavior**:
+   - Multibagger and F&O remain empty until user clicks generate.
+   - Live analytics run at click time.
+7. **Top 4 Best Trade Now** sticky panel with entry/SL/targets/confidence rationale.
+8. **SEBI educational disclaimer + personal testing notice** on landing and dashboard.
 
 ## Architecture Decisions
-- Backend remains FastAPI with in-memory lightweight processing (no heavy infra dependencies added).
-- Live data flow preserved via existing reliable providers in `services/market_data.py`.
-- Refresh is implemented via explicit `refresh_nonce` query params + fresh recomputation on demand.
-- Added dedicated potential signals endpoint for trade-focused cards.
+- FastAPI + MongoDB retained for lightweight backend.
+- In-memory session token store (simple, fast) with bearer auth.
+- Live market data stack in `services/market_data.py` preserved intact.
+- Added new generation endpoints while keeping legacy read endpoints for compatibility.
 
-## Implemented (Current)
-- **Backend APIs**
-  - `GET /api/multibagger/candidates?refresh_nonce=...`
-  - `GET /api/fno/signal/{script}?refresh_nonce=...`
-  - `GET /api/fno/signals/index?refresh_nonce=...`
-  - `GET /api/fno/signals/potential?refresh_nonce=...` (new)
-- **Multibagger engine upgrades**
-  - Tier-style analytics proxy logic, tier pass count, PB/PEG estimates, potential flag.
-  - Candidate response now includes `tier_pass_count`, `is_potential_multibagger`, `analysis_refreshed_at`.
-- **F&O signal engine upgrades**
-  - Stronger live confluence/bias model to reduce low-quality neutral outputs.
-  - Added `signal_quality`, `is_potential_trade`, `trigger_factors`, `analysis_refreshed_at`.
-  - Potential endpoint returns high-conviction opportunities first.
-- **Frontend UX upgrades**
-  - Prominent buttons: **GET NEW MULTIBAGGERS** and **GET NEW SIGNALS**.
-  - Refresh timestamps displayed in summary cards.
-  - F&O section now focused on **Potential Profitable Trade Signals**.
-  - Multibagger table now shows tier pass and potential tags.
-  - Custom script lookup still supported with fresh live refresh.
+## Backend: Implemented APIs
+### Auth
+- `POST /api/auth/access`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
 
-## Validation / Testing
-- API smoke tests via curl: passed for all updated endpoints.
-- Pytest regression: **8 passed** (`/app/backend/tests/test_market_endpoints.py`).
-- Browser automation checks: refresh buttons, tab flow, potential signal cards, custom script flow all verified.
+### Credit-charged generation
+- `POST /api/multibagger/generate` (cost 1)
+- `POST /api/fno/generate` (cost 2, optional custom script)
+
+### Admin CRUD
+- `GET /api/admin/users`
+- `POST /api/admin/users`
+- `PATCH /api/admin/users/{user_key}/credits`
+- `DELETE /api/admin/users/{user_key}`
+
+### Existing compatibility endpoints preserved
+- `GET /api/multibagger/candidates`
+- `GET /api/fno/contracts`
+- `GET /api/fno/signal/{script}`
+- `GET /api/fno/signals/index`
+- `GET /api/fno/signals/potential`
+
+## Frontend: Implemented Flows
+- **Landing (protected)**: password input + disclaimer
+- **Dashboard tabs**:
+  - Multibagger Finder (button-driven generation)
+  - F&O Signals (button-driven generation + custom script)
+  - Admin Credits (admin-only CRUD panel)
+- **Top 4 Best Trade Now** sticky panel in F&O view
+- Credits summary + role + user key
+- Compliance disclaimer in dashboard footer
+
+## Testing & Validation
+- Direct API validation with curl:
+  - auth/session ✅
+  - credit deduction ✅
+  - insufficient credits ✅
+  - admin CRUD ✅
+  - generation endpoints ✅
+- Playwright screenshots:
+  - landing gate ✅
+  - dashboard and tabs ✅
+  - generated potential signals + top4 panel ✅
+  - admin CRUD UI ✅
+- Testing agent cycle complete:
+  - `iteration_3.json`
+  - pytest total: **14/14 passed**
 
 ## Prioritized Backlog
 ### P0
-- Add short TTL in-memory caching + stale-while-refresh for faster repeated refresh bursts.
-- Add structured fallback diagnostics in responses (provider and fallback level used).
+- Replace default admin fallback password with explicit secure runtime secret only.
+- Move in-memory sessions to persistent TTL-backed store for stronger reliability.
 
 ### P1
-- Add “Best Trade” ranking panel with top-1 rationale and invalidation conditions.
-- Add richer multibagger explanation columns (which tiers failed/passed).
+- Add cooldown/debounce and tiny TTL cache for faster repeated generation clicks.
+- Add explicit invalidators and richer rationale block per top trade.
 
 ### P2
-- Optional async worker scheduling for periodic snapshots (lightweight cron/apscheduler).
-- Historical signal tracking and downloadable reports.
+- Add auditable credit transaction log (who consumed/got granted when).
+- Add export/report for generated multibagger and F&O sessions.
 
 ## Next Tasks
-1. Introduce lightweight request-throttled cache for frequent refresh clicks.
-2. Expose per-signal invalidators and confidence explanations in UI.
-3. Add compact homepage route with CTA navigation to dashboard (if requested).
+1. Security hardening of admin bootstrap & session persistence.
+2. Credit transaction history endpoint + UI.
+3. Optional analytics explainability panel expansion.
