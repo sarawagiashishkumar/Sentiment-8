@@ -806,7 +806,14 @@ export default function App() {
                 <div className="space-y-3" data-testid="custom-position-list">
                   {customPositions.length ? (
                     customPositions.map((position) => {
-                      const urgent = ["EXIT_URGENT_TIME", "EXIT_URGENT_LOSS", "RISKY_PREMIUM"].includes(position.alert || "");
+                      const urgent = [
+                        "EXIT_URGENT_TIME",
+                        "EXIT_URGENT_LOSS",
+                        "RISKY_PREMIUM",
+                        "EXIT_NOW_HIGH_LOSS",
+                        "EXIT_URGENT_NO_RECOVERY",
+                      ].includes(position.alert || "");
+                      const exitPrice = position.best_exit_price ?? position.projected_exit_price;
                       return (
                         <div
                           key={position.id}
@@ -829,6 +836,7 @@ export default function App() {
                             <p>Live LTP: <span className="font-mono">₹{formatNumber(position.latest_option_ltp)}</span></p>
                             <p>Target1 / Target2: <span className="font-mono">₹{formatNumber(position.target1)} / ₹{formatNumber(position.target2)}</span></p>
                             <p>Expiry in: <span className="font-mono">{position.minutes_to_expiry} min</span></p>
+                            <p>Recovery Potential: <span className="font-mono" data-testid={`custom-position-recovery-${position.id}`}>{position.recovery_potential !== null && position.recovery_potential !== undefined ? `${formatNumber(position.recovery_potential * 100)}%` : "-"}</span></p>
                             <p className="md:col-span-2">Exit Plan: <span className="font-mono">{position.revised_exit_plan}</span></p>
                           </div>
                           {urgent ? (
@@ -837,9 +845,9 @@ export default function App() {
                               URGENT EXIT ALERT — Review this position now
                             </div>
                           ) : null}
-                          {position.alert === "EXIT_URGENT_NO_RECOVERY" && position.projected_exit_price ? (
+                          {(position.alert === "EXIT_NOW_HIGH_LOSS" || position.alert === "EXIT_URGENT_NO_RECOVERY") && exitPrice ? (
                             <p className="mt-2 text-sm font-extrabold text-red-200" data-testid={`custom-position-projected-exit-${position.id}`}>
-                              EXIT AT PROJECTED PRICE: ₹{formatNumber(position.projected_exit_price)}
+                              EXIT AT PROJECTED PRICE: ₹{formatNumber(exitPrice)}
                             </p>
                           ) : null}
                         </div>
@@ -1020,10 +1028,10 @@ export default function App() {
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 <div className="space-y-3">
-                  <p className="text-sm text-slate-200">Upload Portfolio File (.txt, .csv, .xls, .xlsx, .pdf, .jpg, .jpeg, .bmp)</p>
+                  <p className="text-sm text-slate-200">Upload Portfolio File (.txt, .csv, .xls, .xlsx, .pdf, .jpg, .jpeg, .bmp, .png, .webp)</p>
                   <Input
                     type="file"
-                    accept=".txt,.csv,.xls,.xlsx,.pdf,.jpg,.jpeg,.bmp"
+                    accept=".txt,.csv,.xls,.xlsx,.pdf,.jpg,.jpeg,.bmp,.png,.webp"
                     onChange={(event) => setPortfolioFile(event.target.files?.[0] || null)}
                     className="border-slate-700 bg-slate-900 text-slate-100"
                     data-testid="portfolio-file-input"

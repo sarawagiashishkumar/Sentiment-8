@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import difflib
 import io
 import logging
 import os
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Literal
 
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -32,6 +34,11 @@ try:
     import pytesseract
 except Exception:  # pragma: no cover
     pytesseract = None
+
+try:
+    from pdf2image import convert_from_bytes
+except Exception:  # pragma: no cover
+    convert_from_bytes = None
 
 from data.fno_contracts import FNO_CONTRACTS, get_fno_contract
 from data.symbols import MULTIBAGGER_UNIVERSE
@@ -108,6 +115,7 @@ STOCK_FNO_UNIVERSE = [
 ]
 
 SCRIPT_MASTER_LAST_SYNC_DATE: str | None = None
+NSE_SCRIPT_MASTER_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
 SYMBOL_HEADERS = {
     "symbol",
@@ -125,6 +133,11 @@ AVG_HEADERS = {
     "avgcost",
     "buyprice",
     "average",
+    "buy avg price",
+    "avg cost",
+    "avg. price",
+    "purchase price",
+    "avg acquisition",
 }
 QTY_HEADERS = {
     "qty",
@@ -132,6 +145,9 @@ QTY_HEADERS = {
     "qnty",
     "shares",
     "units",
+    "net qty",
+    "holding",
+    "holding qty",
 }
 
 NIFTY_WEIGHT_PROXY = [
@@ -433,6 +449,8 @@ class CustomPositionResponse(BaseModel):
     target1: float | None = None
     target2: float | None = None
     projected_exit_price: float | None = None
+    best_exit_price: float | None = None
+    recovery_potential: float | None = None
     minutes_to_expiry: int
     revised_exit_plan: str
 
@@ -490,6 +508,16 @@ def _to_float(value: object) -> float | None:
         return None
 
 
+def _is_tesseract_ready() -> bool:
+    if pytesseract is None:
+        return False
+    try:
+        _ = pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+
 def _find_column(headers: list[str], aliases: set[str]) -> int | None:
     normalized = [_normalize_header(item) for item in headers]
     alias_normalized = {_normalize_header(alias) for alias in aliases}
@@ -505,16 +533,40 @@ def _normalize_positions_from_rows(rows: list[list[object]], headers: list[str])
     symbol_idx = _find_column(headers, SYMBOL_HEADERS)
     avg_idx = _find_column(headers, AVG_HEADERS)
     qty_idx = _find_column(headers, QTY_HEADERS)
-    if symbol_idx is None or avg_idx is None or qty_idx is None:
-        return []
-
     positions: list[dict] = []
     for row in rows:
-        if max(symbol_idx, avg_idx, qty_idx) >= len(row):
-            continue
-        symbol = str(row[symbol_idx]).strip().upper()
-        avg_price = _to_float(row[avg_idx])
-        quantity = _to_float(row[qty_idx])
+        symbol = ""
+        avg_price = None
+        quantity = None
+
+        if symbol_idx is not None and avg_idx is not None and qty_idx is not None:
+            if max(symbol_idx, avg_idx, qty_idx) >= len(row):
+                continue
+            symbol = str(row[symbol_idx]).strip().upper()
+            avg_price = _to_float(row[avg_idx])
+            quantity = _to_float(row[qty_idx])
+        else:
+            non_empty_cells = [cell for cell in row if str(cell).strip()]
+            if len(non_empty_cells) < 3:
+                continue
+
+            numeric_cells = [_to_float(cell) for cell in non_empty_cells]
+            numeric_indexes = [idx for idx, value in enumerate(numeric_cells) if value is not None]
+            if len(numeric_indexes) < 2:
+                continue
+
+            symbol_candidates = [
+                str(non_empty_cells[idx]).strip().upper()
+                for idx, value in enumerate(numeric_cells)
+                if value is None
+            ]
+            if not symbol_candidates:
+                continue
+
+            symbol = symbol_candidates[0]
+            avg_price = numeric_cells[numeric_indexes[0]]
+            quantity = numeric_cells[numeric_indexes[1]]
+
         if not symbol or avg_price is None or quantity is None or quantity <= 0:
             continue
         positions.append(
@@ -578,6 +630,19 @@ def _parse_positions_from_csv_text(content: str) -> list[dict]:
     normalized_positions = _normalize_positions_from_rows(rows[header_idx + 1 :], headers)
     if normalized_positions:
         return normalized_positions
+
+    try:
+        frame = pd.read_csv(io.StringIO(content))
+        frame = frame.dropna(how="all")
+        if not frame.empty:
+            headers = [str(col).strip() for col in frame.columns]
+            rows = frame.fillna("").values.tolist()
+            normalized_positions = _normalize_positions_from_rows(rows, headers)
+            if normalized_positions:
+                return normalized_positions
+    except Exception:
+        pass
+
     return _extract_positions_from_text_lines(content)
 
 
@@ -592,30 +657,66 @@ def _parse_positions_from_excel_bytes(content: bytes) -> list[dict]:
 
 
 def _parse_positions_from_pdf_bytes(content: bytes) -> list[dict]:
-    if PdfReader is None:
-        return []
-    reader = PdfReader(io.BytesIO(content))
-    text = "\n".join((page.extract_text() or "") for page in reader.pages)
-    return _extract_positions_from_text_lines(text)
+    extracted_rows: list[dict] = []
 
+    if PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(content))
+            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            extracted_rows = _extract_positions_from_text_lines(text)
+        except Exception:
+            extracted_rows = []
 
-def _parse_positions_from_image_bytes(content: bytes) -> list[dict]:
-    if Image is None or pytesseract is None:
+    if extracted_rows:
+        return extracted_rows
+
+    if convert_from_bytes is None or Image is None or not _is_tesseract_ready():
         return []
+
     try:
-        _ = pytesseract.get_tesseract_version()
+        page_images = convert_from_bytes(content, dpi=220, first_page=1, last_page=3)
     except Exception:
         return []
 
-    image = Image.open(io.BytesIO(content))
-    text = pytesseract.image_to_string(image)
-    rows = _extract_positions_from_text_lines(text)
-    if rows:
-        return rows
+    merged_rows: list[dict] = []
+    for image in page_images:
+        try:
+            parsed = _parse_positions_from_image_bytes(_pil_image_to_bytes(image))
+        except Exception:
+            parsed = []
+        if parsed:
+            merged_rows.extend(parsed)
 
-    # fallback OCR parse with image data mode
-    data_text = pytesseract.image_to_data(image, output_type=pytesseract.Output.STRING)
-    return _extract_positions_from_text_lines(data_text)
+    unique: dict[str, dict] = {}
+    for row in merged_rows:
+        unique[row["symbol"]] = row
+    return list(unique.values())
+
+
+def _pil_image_to_bytes(image: "Image.Image") -> bytes:
+    stream = io.BytesIO()
+    image.save(stream, format="PNG")
+    return stream.getvalue()
+
+
+def _parse_positions_from_image_bytes(content: bytes) -> list[dict]:
+    if Image is None or not _is_tesseract_ready():
+        return []
+
+    image = Image.open(io.BytesIO(content)).convert("L")
+    enhanced = image.point(lambda px: 0 if px < 160 else 255, mode="1")
+    candidates = [
+        pytesseract.image_to_string(image, config="--psm 6"),
+        pytesseract.image_to_string(enhanced, config="--psm 6"),
+        pytesseract.image_to_data(enhanced, output_type=pytesseract.Output.STRING),
+    ]
+
+    for text in candidates:
+        rows = _extract_positions_from_text_lines(text)
+        if rows:
+            return rows
+
+    return []
 
 
 async def _parse_positions_from_upload(file: UploadFile) -> list[dict]:
@@ -624,6 +725,12 @@ async def _parse_positions_from_upload(file: UploadFile) -> list[dict]:
     payload = await file.read()
 
     if extension in {"txt", "csv"}:
+        for encoding in ("utf-8", "utf-16", "latin-1"):
+            try:
+                text = payload.decode(encoding)
+                return _parse_positions_from_csv_text(text)
+            except Exception:
+                continue
         text = payload.decode("utf-8", errors="ignore")
         return _parse_positions_from_csv_text(text)
 
@@ -633,7 +740,7 @@ async def _parse_positions_from_upload(file: UploadFile) -> list[dict]:
     if extension == "pdf":
         return _parse_positions_from_pdf_bytes(payload)
 
-    if extension in {"jpg", "jpeg", "bmp"}:
+    if extension in {"jpg", "jpeg", "bmp", "png", "webp"}:
         return _parse_positions_from_image_bytes(payload)
 
     raise HTTPException(status_code=400, detail="Unsupported file format")
@@ -888,55 +995,113 @@ async def _sync_script_master_daily() -> None:
         return
 
     meta = await db.system_meta.find_one({"key": "script_master_sync"}, {"_id": 0})
-    if meta and meta.get("date") == today:
+    if meta and meta.get("date") == today and int(meta.get("updated_count", 0) or 0) >= 500:
         SCRIPT_MASTER_LAST_SYNC_DATE = today
         return
 
-    seed_symbols = sorted(
-        {
-            *MULTIBAGGER_UNIVERSE,
-            *STOCK_FNO_UNIVERSE,
-            *[row["underlying"] for row in FNO_CONTRACTS],
-            "NIFTY",
-            "BANKNIFTY",
-        }
-    )
+    seed_symbols = {
+        *MULTIBAGGER_UNIVERSE,
+        *STOCK_FNO_UNIVERSE,
+        *[row["underlying"] for row in FNO_CONTRACTS],
+        "NIFTY",
+        "BANKNIFTY",
+    }
 
-    updates = 0
+    def _fetch_nse_rows() -> list[tuple[str, str]]:
+        try:
+            response = requests.get(
+                NSE_SCRIPT_MASTER_URL,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=20,
+            )
+            if response.status_code != 200:
+                return []
+            reader = csv.DictReader(io.StringIO(response.text))
+            rows: list[tuple[str, str]] = []
+            for row in reader:
+                symbol = _normalize_symbol_key(str(row.get("SYMBOL", "")).strip())
+                name = str(row.get("NAME OF COMPANY", "")).strip()
+                if symbol:
+                    rows.append((symbol, name or symbol))
+            return rows
+        except Exception as exc:
+            logger.warning("Failed to fetch NSE script master: %s", exc)
+            return []
+
+    nse_rows = await asyncio.to_thread(_fetch_nse_rows)
+    script_records: dict[str, dict] = {}
+
     for symbol in seed_symbols:
         canonical = _normalize_symbol_key(symbol)
         if not canonical:
             continue
+        script_records.setdefault(
+            canonical,
+            {
+                "display_name": symbol,
+                "aliases": {symbol, canonical},
+            },
+        )
 
-        aliases = {symbol, canonical}
-        display_name = symbol
+    for symbol, name in nse_rows:
+        row = script_records.setdefault(
+            symbol,
+            {
+                "display_name": name,
+                "aliases": {symbol},
+            },
+        )
+        row["display_name"] = row.get("display_name") or name
+        row["aliases"].update({symbol, name, name.replace("LIMITED", "LTD")})
 
+    for symbol in sorted(seed_symbols):
+        canonical = _normalize_symbol_key(symbol)
+        if not canonical:
+            continue
         try:
             meta_symbol = await asyncio.to_thread(market_data_client.resolve_symbol_meta, canonical)
         except Exception:
             meta_symbol = None
+        if not meta_symbol:
+            continue
 
-        if meta_symbol:
-            display_name = meta_symbol.get("name") or display_name
-            aliases.update({
+        row = script_records.setdefault(
+            canonical,
+            {
+                "display_name": symbol,
+                "aliases": {symbol, canonical},
+            },
+        )
+        row["display_name"] = meta_symbol.get("name") or row.get("display_name") or symbol
+        row["aliases"].update(
+            {
                 meta_symbol.get("name", ""),
                 meta_symbol.get("id", ""),
                 meta_symbol.get("did", ""),
                 canonical,
-            })
+            }
+        )
 
-        clean_aliases = sorted({alias.strip() for alias in aliases if alias and str(alias).strip()})
-        normalized_aliases = sorted({_normalize_symbol_key(alias) for alias in clean_aliases if _normalize_symbol_key(alias)})
-
+    updates = 0
+    now_iso = _utc_now_iso()
+    for canonical, data in script_records.items():
+        aliases = sorted({str(alias).strip() for alias in data["aliases"] if str(alias).strip()})
+        normalized_aliases = sorted(
+            {
+                _normalize_symbol_key(alias)
+                for alias in aliases
+                if _normalize_symbol_key(alias)
+            }
+        )
         await db.script_master.update_one(
             {"canonical_symbol": canonical},
             {
                 "$set": {
                     "canonical_symbol": canonical,
-                    "display_name": display_name,
-                    "aliases": clean_aliases,
+                    "display_name": data.get("display_name") or canonical,
+                    "aliases": aliases,
                     "normalized_aliases": normalized_aliases,
-                    "updated_at": _utc_now_iso(),
+                    "updated_at": now_iso,
                 }
             },
             upsert=True,
@@ -960,21 +1125,98 @@ async def _sync_script_master_daily() -> None:
 
 async def _resolve_symbol_input(value: str) -> str:
     await _sync_script_master_daily()
-    cleaned = _normalize_symbol_key(value)
+    raw_query = str(value or "").strip()
+    cleaned = _normalize_symbol_key(raw_query)
     if not cleaned:
         return cleaned
+
+    normalized_variants = {cleaned}
+    if cleaned.endswith("LTD"):
+        normalized_variants.add(f"{cleaned[:-3]}LIMITED")
+    if cleaned.endswith("LIMITED"):
+        normalized_variants.add(f"{cleaned[:-7]}LTD")
 
     row = await db.script_master.find_one(
         {
             "$or": [
-                {"canonical_symbol": cleaned},
-                {"normalized_aliases": cleaned},
+                {"canonical_symbol": {"$in": list(normalized_variants)}},
+                {"normalized_aliases": {"$in": list(normalized_variants)}},
             ]
         },
         {"_id": 0, "canonical_symbol": 1},
     )
     if row and row.get("canonical_symbol"):
         return row["canonical_symbol"]
+
+    regex_candidates = await db.script_master.find(
+        {
+            "$or": [
+                {
+                    "normalized_aliases": {
+                        "$regex": "|".join(re.escape(item) for item in normalized_variants)
+                    }
+                },
+                {"display_name": {"$regex": re.escape(raw_query), "$options": "i"}},
+            ]
+        },
+        {"_id": 0, "canonical_symbol": 1, "display_name": 1, "normalized_aliases": 1},
+    ).to_list(250)
+    if regex_candidates:
+        def _candidate_sort_key(item: dict) -> tuple[int, int]:
+            normalized_aliases = item.get("normalized_aliases", [])
+            exact = 1 if any(candidate in normalized_aliases for candidate in normalized_variants) else 0
+            starts_with = 1 if any(
+                str(alias).startswith(candidate)
+                for alias in normalized_aliases
+                for candidate in normalized_variants
+            ) else 0
+            score = (exact * 100) + (starts_with * 50)
+            display = _normalize_symbol_key(str(item.get("display_name", "")))
+            similarity = int(difflib.SequenceMatcher(None, cleaned, display).ratio() * 100)
+            return (score, similarity)
+
+        best = sorted(regex_candidates, key=_candidate_sort_key, reverse=True)[0]
+        candidate = best.get("canonical_symbol")
+        if candidate:
+            return candidate
+
+    try:
+        meta = await asyncio.to_thread(market_data_client.resolve_symbol_meta, raw_query.upper())
+    except Exception:
+        meta = None
+    if meta:
+        discovered = _normalize_symbol_key(meta.get("did") or meta.get("id") or cleaned)
+        if discovered:
+            aliases = {
+                raw_query,
+                cleaned,
+                meta.get("name", ""),
+                meta.get("id", ""),
+                meta.get("did", ""),
+            }
+            aliases = {str(alias).strip() for alias in aliases if str(alias).strip()}
+            normalized_aliases = sorted(
+                {
+                    _normalize_symbol_key(alias)
+                    for alias in aliases
+                    if _normalize_symbol_key(alias)
+                }
+            )
+            await db.script_master.update_one(
+                {"canonical_symbol": discovered},
+                {
+                    "$set": {
+                        "canonical_symbol": discovered,
+                        "display_name": meta.get("name") or discovered,
+                        "aliases": sorted(aliases),
+                        "normalized_aliases": normalized_aliases,
+                        "updated_at": _utc_now_iso(),
+                    }
+                },
+                upsert=True,
+            )
+            return discovered
+
     return cleaned
 
 
@@ -1739,6 +1981,8 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
         target1=position.get("target1"),
         target2=position.get("target2"),
         projected_exit_price=position.get("projected_exit_price"),
+        best_exit_price=position.get("best_exit_price"),
+        recovery_potential=position.get("recovery_potential"),
         minutes_to_expiry=int(position.get("minutes_to_expiry", 0)),
         revised_exit_plan=position.get("revised_exit_plan", ""),
     )
@@ -1794,14 +2038,24 @@ async def _refresh_open_position(position: dict) -> dict:
     revised_target1 = round(max(buy_price * 1.12, latest_option_ltp * 1.05), 2)
     revised_target2 = round(max(buy_price * 1.5, latest_option_ltp * 1.2), 2)
     projected_exit_price = None
+    raw_recovery_potential = ((revised_target1 - latest_option_ltp) / max(latest_option_ltp, 0.01)) if latest_option_ltp > 0 else 0.0
+    if minutes_to_expiry <= 120:
+        max_recoverable_pct = 0.08
+    elif minutes_to_expiry <= 360:
+        max_recoverable_pct = 0.10
+    else:
+        max_recoverable_pct = 0.14
+    recovery_potential = max(0.0, min(raw_recovery_potential, max_recoverable_pct))
+    best_exit_price = None
 
     alert = None
     revised_exit_plan = "Hold with trailing stop once target1 hits"
-    if pnl_pct <= -0.35 and latest_option_ltp < (0.9 * revised_target1):
-        alert = "EXIT_URGENT_NO_RECOVERY"
+    if pnl_pct <= -0.35 and recovery_potential <= 0.14:
+        alert = "EXIT_NOW_HIGH_LOSS"
         projected_exit_price = round(max(latest_option_ltp * 1.03, latest_option_ltp + 1.0), 2)
+        best_exit_price = projected_exit_price
         revised_exit_plan = (
-            f"URGENT EXIT: Recovery probability is very low. Exit near projected max price ₹{projected_exit_price}"
+            f"URGENT EXIT: Loss >35% and recovery potential is weak ({recovery_potential * 100:.1f}%). Exit near ₹{projected_exit_price}."
         )
     elif minutes_to_expiry <= 15:
         alert = "EXIT_URGENT_TIME"
@@ -1823,6 +2077,8 @@ async def _refresh_open_position(position: dict) -> dict:
                 "minutes_to_expiry": minutes_to_expiry,
                 "alert": alert,
                 "projected_exit_price": projected_exit_price,
+                "best_exit_price": best_exit_price,
+                "recovery_potential": round(recovery_potential, 4),
                 "last_update": _utc_now_iso(),
                 "revised_exit_plan": revised_exit_plan,
             }
@@ -2222,6 +2478,8 @@ async def create_custom_position(
         "target1": round(float(payload.buy_price) * 1.12, 2),
         "target2": round(float(payload.buy_price) * 1.5, 2),
         "projected_exit_price": None,
+        "best_exit_price": None,
+        "recovery_potential": None,
         "minutes_to_expiry": minutes_to_expiry,
         "revised_exit_plan": "Hold with trailing stop once target1 hits",
     }
@@ -2307,11 +2565,21 @@ async def analyze_portfolio_upload(
     current_user: dict = Depends(get_current_user),
 ):
     extension = (file.filename or "").split(".")[-1].lower() if "." in (file.filename or "") else ""
-    allowed = {"txt", "csv", "xls", "xlsx", "pdf", "jpg", "jpeg", "bmp"}
+    allowed = {"txt", "csv", "xls", "xlsx", "pdf", "jpg", "jpeg", "bmp", "png", "webp"}
     if extension not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
     positions = await _parse_positions_from_upload(file)
+    if not positions:
+        ocr_hint = "enabled" if _is_tesseract_ready() else "not available"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No valid rows could be parsed from uploaded file. "
+                "Use columns like Symbol/Name, Avg Price, Quantity. "
+                f"OCR engine status: {ocr_hint}."
+            ),
+        )
     analysis = await _analyze_portfolio_positions(positions)
     cost = round(0.2 * analysis.parsed_positions_count, 2)
     updated_user, charged = await _consume_credits(current_user, cost)
