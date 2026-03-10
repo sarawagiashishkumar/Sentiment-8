@@ -316,6 +316,7 @@ class FNOSignalResponse(BaseModel):
     is_potential_trade: bool
     minutes_to_expiry: int
     expiry_risk: Literal["LOW", "MEDIUM", "HIGH"]
+    data_source: Literal["LIVE_OPTION_CHAIN", "MODELED_FROM_SPOT"]
     analysis_refreshed_at: str
 
 
@@ -1596,11 +1597,12 @@ def build_fno_signal(
         is_potential_trade=is_potential_trade,
         minutes_to_expiry=minutes_to_expiry,
         expiry_risk=_expiry_risk_bucket(minutes_to_expiry),
+        data_source="LIVE_OPTION_CHAIN",
         analysis_refreshed_at=refreshed_at,
     )
 
 
-async def _get_nearest_expiry(underlying: str) -> str:
+async def _get_nearest_expiry(underlying: str, prefer_monthly: bool = False) -> str:
     instrument_id = ""
     if underlying == "NIFTY":
         instrument_id = "9"
@@ -1619,10 +1621,31 @@ async def _get_nearest_expiry(underlying: str) -> str:
         return "2026-03-10"
 
     now_ist = datetime.now(IST)
+    future_expiries = []
     for expiry in expiries:
         expiry_dt = datetime.combine(expiry.date(), time(15, 30, tzinfo=IST))
         if expiry_dt > now_ist:
-            return expiry.strftime("%Y-%m-%d")
+            future_expiries.append(expiry)
+
+    if not future_expiries:
+        return expiries[-1].strftime("%Y-%m-%d")
+
+    if prefer_monthly and underlying not in {"NIFTY", "BANKNIFTY"}:
+        monthly_candidates: list[datetime] = []
+        bucket: dict[tuple[int, int], list[datetime]] = defaultdict(list)
+        for expiry in future_expiries:
+            bucket[(expiry.year, expiry.month)].append(expiry)
+
+        for _, values in bucket.items():
+            monthly_candidates.append(max(values))
+
+        monthly_candidates.sort()
+        if monthly_candidates:
+            return monthly_candidates[0].strftime("%Y-%m-%d")
+
+    for expiry in future_expiries:
+        return expiry.strftime("%Y-%m-%d")
+
     return expiries[-1].strftime("%Y-%m-%d")
 
 
@@ -1631,8 +1654,13 @@ def _format_script(underlying: str, expiry: str, strike: float, option_type: str
     return f"{underlying}{date_obj.strftime('%d%b').upper()}{int(strike)}{option_type}"
 
 
-async def _build_contract(underlying: str, strike: float, option_type: Literal["CE", "PE"]) -> FNOContract:
-    expiry = await _get_nearest_expiry(underlying)
+async def _build_contract(
+    underlying: str,
+    strike: float,
+    option_type: Literal["CE", "PE"],
+    prefer_monthly: bool = False,
+) -> FNOContract:
+    expiry = await _get_nearest_expiry(underlying, prefer_monthly=prefer_monthly)
     script = _format_script(underlying, expiry, strike, option_type)
     lot_size = LOT_SIZE_MAP.get(underlying, 1)
     return FNOContract(
@@ -1697,6 +1725,7 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
     minutes_to_expiry = get_minutes_to_expiry(contract)
     _validate_expiry_guard(minutes_to_expiry)
     stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
+    data_source: Literal["LIVE_OPTION_CHAIN", "MODELED_FROM_SPOT"] = "LIVE_OPTION_CHAIN"
     try:
         option_ltp = await asyncio.to_thread(
             market_data_client.fetch_option_ltp_for_contract,
@@ -1722,7 +1751,22 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
             )
         except Exception:
             option_ltp = _estimate_option_ltp(stock_data.ltp, contract.strike, contract.option_type)
-    return build_fno_signal(contract, stock_data, option_ltp, refreshed_at, minutes_to_expiry)
+            data_source = "MODELED_FROM_SPOT"
+    signal = build_fno_signal(
+        contract,
+        stock_data,
+        option_ltp,
+        refreshed_at,
+        minutes_to_expiry,
+    )
+    if data_source == "MODELED_FROM_SPOT":
+        signal = signal.model_copy(
+            update={
+                "data_source": "MODELED_FROM_SPOT",
+                "trigger_factors": [*signal.trigger_factors, "OptionLTP=MODELED"],
+            }
+        )
+    return signal
 
 
 async def _safe_signal(contract: FNOContract, refreshed_at: str, sem: asyncio.Semaphore) -> FNOSignalResponse | None:
@@ -1821,15 +1865,20 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                 continue
             option_ltp = _estimate_option_ltp(stock.ltp, float(strike), option_type)
             try:
-                rows.append(
-                    build_fno_signal(
-                        contract,
-                        stock,
-                        option_ltp,
-                        refreshed_at,
-                        minutes_to_expiry,
-                    )
+                signal = build_fno_signal(
+                    contract,
+                    stock,
+                    option_ltp,
+                    refreshed_at,
+                    minutes_to_expiry,
                 )
+                signal = signal.model_copy(
+                    update={
+                        "data_source": "MODELED_FROM_SPOT",
+                        "trigger_factors": [*signal.trigger_factors, "OptionLTP=MODELED"],
+                    }
+                )
+                rows.append(signal)
             except HTTPException:
                 continue
 
@@ -1886,40 +1935,82 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     )
 
 
+def _infer_stock_option_type(core: StockCoreNormalized) -> Literal["CE", "PE"] | None:
+    if core.ltp is None:
+        return None
+
+    pos = _position_in_range(core.ltp, core.year_low, core.year_high)
+    day_change_pct = (
+        ((core.ltp - core.prev_close) / core.prev_close) * 100
+        if core.prev_close is not None and core.prev_close > 0
+        else 0.0
+    )
+    intraday_change_pct = (
+        ((core.ltp - core.open) / core.open) * 100
+        if core.open is not None and core.open > 0
+        else 0.0
+    )
+
+    bias_score = (0.65 * day_change_pct) + (0.35 * intraday_change_pct)
+    if pos is not None:
+        bias_score += (pos - 0.5) * 1.2
+
+    if bias_score >= 0.15:
+        return "CE"
+    if bias_score <= -0.15:
+        return "PE"
+    return None
+
+
 async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]:
     symbols = STOCK_FNO_UNIVERSE
-    results: list[FNOSignalResponse] = []
-    default_expiry = (datetime.now(IST) + timedelta(days=7)).strftime("%Y-%m-%d")
     cores = await asyncio.gather(*[get_stock_core(symbol) for symbol in symbols])
-    for idx, symbol in enumerate(symbols):
-        core = StockCoreNormalized(**cores[idx])
+    normalized_cores = [StockCoreNormalized(**row) for row in cores]
+    semaphore = asyncio.Semaphore(8)
+
+    async def _build_for_symbol(symbol: str, core: StockCoreNormalized) -> FNOSignalResponse | None:
         if core.ltp is None:
-            continue
+            return None
+
+        option_type = _infer_stock_option_type(core)
+        if option_type is None:
+            return None
 
         step = 20 if core.ltp > 400 else 10
         strike = round(core.ltp / step) * step
-        for option_type in ["CE", "PE"]:
-            contract = FNOContract(
-                script=_format_script(symbol, default_expiry, strike, option_type),
-                underlying=symbol,
-                expiry=default_expiry,
-                expiry_time_ist="15:30",
-                strike=float(strike),
-                option_type=option_type,
-                exchange="NFO",
-                lot_size=LOT_SIZE_MAP.get(symbol, 1),
-            )
+
+        async with semaphore:
+            contract = await _build_contract(symbol, strike, option_type, prefer_monthly=True)
             minutes_to_expiry = get_minutes_to_expiry(contract)
             if minutes_to_expiry <= 15:
-                continue
-            option_ltp = _estimate_option_ltp(core.ltp, float(strike), option_type)
-            try:
-                signal = build_fno_signal(contract, core, option_ltp, refreshed_at, minutes_to_expiry)
-                if signal.is_potential_trade and signal.confluence_score >= 72:
-                    results.append(signal)
-            except HTTPException:
-                continue
+                return None
 
+            try:
+                option_ltp = await asyncio.to_thread(
+                    market_data_client.fetch_option_ltp_for_contract,
+                    contract.model_dump(),
+                )
+            except Exception:
+                return None
+
+            if option_ltp is None or option_ltp <= 0:
+                return None
+
+            try:
+                signal = build_fno_signal(contract, core, float(option_ltp), refreshed_at, minutes_to_expiry)
+            except HTTPException:
+                return None
+            return signal
+
+    built = await asyncio.gather(*[_build_for_symbol(symbol, normalized_cores[idx]) for idx, symbol in enumerate(symbols)])
+    results = [
+        item
+        for item in built
+        if item is not None
+        and item.direction != "NEUTRAL"
+        and item.confluence_score >= 65
+        and item.risk_reward_target2 >= 1.5
+    ]
     results.sort(key=lambda row: row.confluence_score, reverse=True)
     return results
 
