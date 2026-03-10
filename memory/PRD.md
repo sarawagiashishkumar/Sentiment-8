@@ -1,115 +1,82 @@
-# PRD — Trading Dashboard Upgrades & Conflict Resolution
+# PRD — Final Trading Dashboard (Contrast + Expiry-Aware F&O + Sticky Custom Projections)
 
-## Original Request (Latest)
-Upgrade the trading platform to include:
-- Landing dashboard with two modules: Multibagger and F&O Projections
-- Unified aesthetics aligned with login page + persistent navigation
-- Username-based auth (no public registration), admin/sub-admin/basic RBAC
-- Owner full CRUD, sub-admin limited user creation quota
-- Admin exemption from credit billing
-- F&O conflict logic fixes (directional vs non-directional), strike filter ±500
-- Consolidated/without-consolidated analysis reports
-- Custom script “Script not supported” issue fix
-- Bottom stock F&O opportunities panel
-- Multibagger table with RSI, GTT Buy, duration targets and ROI
-- Top 4 Best Trade sticky panel and SEBI educational disclaimer
+## What was upgraded in this iteration
+1. **Global contrast/hover fix across all result areas**
+   - Applied high-contrast text and hover inversion (light background + dark text) across Multibagger, F&O, Top-4, and Admin result components.
+   - Added consistent result styling classes and hover-safe behavior.
 
-## Key User Choices Applied
-- Owner username: `@shish123`
-- Multibagger projections: model-based live projections enabled
-- Sub-admin quota policy: fixed quota (default 10), editable by Owner
+2. **Expiry-aware and realistic F&O logic**
+   - Added IST-based expiry-time logic (`15:30 IST`) and `minutes_to_expiry` computation.
+   - Added hard guards:
+     - expired contracts blocked
+     - <=15 min to expiry blocked for safe projections
+   - Added confidence downgrades when expiry is near.
+   - Added response fields: `minutes_to_expiry`, `expiry_risk`.
 
-## Architecture Decisions
-- Keep existing reliable live market ingestion in backend (`market_data.py`) intact.
-- Keep stack lightweight: FastAPI + MongoDB + in-memory sessions.
-- Introduced username-credential auth while preserving minimal legacy compatibility in API payload.
-- Modularized F&O generation into index projections + conflict resolver + stock opportunity generator.
+3. **Sticky live custom projections (MongoDB per user)**
+   - Added persistent custom positions endpoints:
+     - `POST /api/fno/custom-position`
+     - `GET /api/fno/custom-positions`
+     - `POST /api/fno/custom-position/{id}/close`
+   - Stored per logged-in user in MongoDB and refreshed in polling loop.
+   - Added urgent alert conditions and revised exit-plan updates.
+   - Frontend now renders sticky custom cards under custom input, above index projections.
 
-## Implemented Backend
-### Auth / RBAC / Admin
-- `POST /api/auth/access` (username login only for existing users; no public registration)
-- `GET /api/auth/me`, `POST /api/auth/logout`
-- Roles: `owner`, `sub_admin`, `user`
-- Admin CRUD:
-  - `GET /api/admin/users`
-  - `POST /api/admin/users`
-  - `PATCH /api/admin/users/{user_ref}/credits`
-  - `PATCH /api/admin/users/{user_ref}/quota` (Owner only)
-  - `DELETE /api/admin/users/{user_ref}`
-- Sub-admin quota enforcement implemented.
-- Owner/sub-admin credit exemption implemented.
+## Existing major platform capabilities retained
+- Username-based secure access with Owner/Sub-Admin/Basic User RBAC.
+- Owner full CRUD + Sub-Admin quota controls.
+- Admin exemption from credit billing.
+- Multibagger button-driven generation only.
+- F&O Projections dual-pane (NIFTY/BANKNIFTY), conflict separation for non-directional strategy.
+- Top 4 Best Trade sticky panel.
+- Personal testing + SEBI educational disclaimer.
 
-### Multibagger
-- On-demand endpoint: `POST /api/multibagger/generate` (cost 1 for basic user; 0 for exempt roles)
-- Output includes:
-  - Stock + sector
-  - RSI proxy
-  - GTT buy price
-  - Targeted upside prices for 1W/1M/3M/6M/9M/1Y
-  - Matching ROI (%) row data
+## Testing status
+- Backend regression tests: **25/25 passed**.
+- Frontend sanity verified via screenshot automation for login, multibagger, F&O projections, custom sticky card, hover contrast.
 
-### F&O Projections
-- On-demand endpoint: `POST /api/fno/generate` (cost 2 for basic user; 0 for exempt roles)
-- Dual index projections:
-  - `nifty_projection` and `banknifty_projection`
-  - Spot shown in headers
-  - Strike filter hard-bounded within ±500 points
-- Conflict resolution:
-  - CE+PE profitable on same strike => moved to `non_directional_strategies` as straddle classification
-  - Directional assured signals kept separate
-- Reports:
-  - `with_consolidated_report` (weighted constituent analysis)
-  - `without_consolidated_report` (equal constituent analysis)
-- Custom script support improved with dynamic parser (`/api/fno/signal/{script}` + generate custom input)
-- Added script search endpoint: `GET /api/fno/scripts/search`
-- Added stock opportunity panel signals (`RELIANCE`, `BDL`, `SBIN`, `TCS`)
+## Rebuild Prompt Template (copy-paste)
+"""
+Build a full-stack trading dashboard using React + FastAPI + MongoDB with:
 
-### Compatibility Endpoints Retained
-- `GET /api/multibagger/candidates`
-- `GET /api/fno/contracts`
-- `GET /api/fno/signal/{script}`
-- `GET /api/fno/signals/index`
-- `GET /api/fno/signals/potential`
+1) Secure username-only login (no public registration), RBAC roles: owner/sub_admin/user.
+2) Owner full CRUD of users, sub-admin quota-based user creation, admin credit exemption.
+3) Credit model for basic users: multibagger generation cost 1, F&O generation cost 2.
+4) Landing dashboard with two primary modules: Multibagger and F&O Projections.
+5) Persistent navigation across Home, Multibagger, F&O Projections, Admin.
+6) Multibagger generation on button click only; no preloaded results.
+7) Multibagger table must include:
+   - Stock name, sector
+   - RSI level
+   - GTT buy price
+   - Targeted upside prices for 1W/1M/3M/6M/9M/1Y
+   - Corresponding % profit row for each duration.
+8) F&O Projections generation on button click only; no preloaded results.
+9) F&O dual-pane layout: NIFTY left, BANKNIFTY right with live spot headers.
+10) Strike filter for projection candidates: within ±500 points of current spot.
+11) Conflict rule: If same strike CE and PE both qualify, classify as non-directional strategy (straddle), not directional assured signals.
+12) Provide two reports per index: with consolidated analysis and without consolidated analysis.
+13) Add a full-width bottom panel for profitable individual stock F&O projections.
+14) Add sticky Top 4 Best Trade panel with entry/SL/targets/confidence rationale.
+15) Add custom sticky positions system (persist in MongoDB):
+    - create custom position with script + buy price
+    - list active positions with live updates every 5s
+    - close position manually
+    - include urgent red alert conditions.
+16) Make F&O logic expiry-aware:
+    - expiry date + expiry time IST
+    - compute minutes_to_expiry
+    - block expired and <=15 min cases
+    - downgrade confidence near expiry.
+17) Add strong UI contrast rules globally:
+    - result text visible on dark background
+    - hover state switches to light background + dark text.
+18) Include personal testing + SEBI educational disclaimer on login and dashboard.
+19) Keep all core market data fetchers centralized and reusable.
+20) Include data-testid attributes for all interactive and critical display elements.
+"""
 
-## Implemented Frontend
-- New dark/cyan aesthetic across login + internal screens (style unified)
-- Persistent nav: Home / Multibagger / F&O Projections / Admin
-- Home landing dashboard with two module cards (center-left and center-right)
-- Username login page with registration-disabled messaging
-- Multibagger page:
-  - Empty state until button click
-  - Generate button + slider + 2-row per stock projection table
-- F&O page:
-  - Empty state until button click
-  - Dual pane NIFTY/BANKNIFTY with spot, assured + non-directional sections, reports
-  - Full-width stock signals bottom panel
-  - Sticky “Top 4 Best Trade Now” panel
-  - Custom script projection runner
-- Admin page:
-  - User creation, role assignment, credit updates, quota updates, deletion controls
-  - Credential display as `username as role`
-- SEBI personal testing educational disclaimer shown prominently.
-
-## Testing & Validation
-- Backend test suite updated and passed: **21/21** (`pytest -q /app/backend/tests`)
-- Playwright UI flows validated:
-  - Login, landing modules, multibagger generation, F&O generation, admin panel
-- Testing agent iteration completed with no blocking functional defects.
-
-## Prioritized Backlog
-### P0
-- Persist session store with TTL backend (Redis) for stronger reliability across restarts.
-- Add unique DB index on `username` with migration cleanup for historical legacy rows.
-
-### P1
-- Add pagination/virtualization for very large signal tables.
-- Add explicit “strategy invalidators” section on each signal card.
-
-### P2
-- Add audit log timeline for user CRUD and credit changes.
-- Add export/download for multibagger and F&O projection snapshots.
-
-## Next Tasks
-1. DB hardening: unique username index + migration script.
-2. Session hardening: persistent token store with expiry.
-3. Signal explainability enhancement (invalidators + concise rationale cards).
+## Next tasks
+- Add unique username DB index migration + cleanup legacy rows.
+- Add session TTL persistence (Redis) for hardening.
+- Add richer invalidator cards for each custom projection.

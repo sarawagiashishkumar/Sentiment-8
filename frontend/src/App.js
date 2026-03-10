@@ -274,8 +274,8 @@ export default function App() {
         { headers: authHeaders },
       );
       await loadCustomPositions();
-    } catch {
-      // ignore close errors silently
+    } catch (error) {
+      setCustomPositionError(error?.response?.data?.detail || "Unable to close custom projection.");
     }
   };
 

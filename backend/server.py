@@ -339,6 +339,16 @@ def _safe_ratio(numerator: float | None, denominator: float | None) -> float | N
     return numerator / denominator
 
 
+def _estimate_option_ltp(underlying_ltp: float, strike: float, option_type: str) -> float:
+    intrinsic = (
+        max(underlying_ltp - strike, 0)
+        if option_type == "CE"
+        else max(strike - underlying_ltp, 0)
+    )
+    time_value = max(underlying_ltp * 0.002, 5)
+    return round(intrinsic + time_value, 2)
+
+
 def _position_in_range(ltp: float | None, year_low: float | None, year_high: float | None) -> float | None:
     if ltp is None or year_low is None or year_high is None or year_high <= year_low:
         return None
@@ -867,7 +877,7 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
             market_data_client.fetch_option_ltp_for_contract,
             contract.model_dump(),
         )
-    except ValueError:
+    except Exception:
         if stock_data.ltp is None:
             raise
         if contract.underlying == "NIFTY":
@@ -886,13 +896,7 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
                 fallback_contract.model_dump(),
             )
         except Exception:
-            intrinsic = (
-                max(stock_data.ltp - contract.strike, 0)
-                if contract.option_type == "CE"
-                else max(contract.strike - stock_data.ltp, 0)
-            )
-            time_value = max(stock_data.ltp * 0.002, 5)
-            option_ltp = round(intrinsic + time_value, 2)
+            option_ltp = _estimate_option_ltp(stock_data.ltp, contract.strike, contract.option_type)
     return build_fno_signal(contract, stock_data, option_ltp, refreshed_at, minutes_to_expiry)
 
 
@@ -1140,7 +1144,21 @@ async def _refresh_open_position(position: dict) -> dict:
         )
         return updated
 
-    latest_option_ltp = await asyncio.to_thread(market_data_client.fetch_option_ltp_for_contract, contract.model_dump())
+    try:
+        latest_option_ltp = await asyncio.to_thread(
+            market_data_client.fetch_option_ltp_for_contract,
+            contract.model_dump(),
+        )
+    except Exception:
+        spot_row = StockCoreNormalized(**(await get_stock_core(position["underlying"])))
+        if spot_row.ltp is not None:
+            latest_option_ltp = _estimate_option_ltp(
+                spot_row.ltp,
+                float(position["strike"]),
+                str(position["option_type"]),
+            )
+        else:
+            latest_option_ltp = float(position.get("latest_option_ltp") or position["buy_price"])
     buy_price = float(position["buy_price"])
     pnl_pct = ((latest_option_ltp - buy_price) / buy_price) if buy_price > 0 else 0.0
     revised_target1 = round(max(buy_price * 1.12, latest_option_ltp * 1.05), 2)
@@ -1491,7 +1509,14 @@ async def list_custom_positions(current_user: dict = Depends(get_current_user)):
             updated = await _refresh_open_position(row)
             if updated and updated.get("status") == "OPEN":
                 refreshed.append(_position_to_response(updated))
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to refresh custom position %s: %s", row.get("id"), exc)
+            fallback = {
+                **row,
+                "alert": row.get("alert") or "REFRESH_ERROR",
+                "revised_exit_plan": row.get("revised_exit_plan") or "Temporary refresh issue; retry in a moment",
+            }
+            refreshed.append(_position_to_response(fallback))
             continue
 
     refreshed.sort(key=lambda item: item.created_at, reverse=True)
