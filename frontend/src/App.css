@@ -1,3 +1,9 @@
+.dashboard-dark-bg {
+    --headingTextColor: #dbeafe;
+    --resultTextColor: #fde68a;
+    --hoverTextSafeColor: #0f172a;
+}
+
 .dashboard-grid-overlay {
     position: fixed;
     inset: 0;
@@ -15,8 +21,16 @@
 
 .result-card {
     background: rgba(15, 23, 42, 0.88);
-    color: #fef9c3;
+    color: var(--resultTextColor);
     border-color: rgba(56, 189, 248, 0.35) !important;
+}
+
+.heading-text-color {
+    color: var(--headingTextColor) !important;
+}
+
+.result-text-color {
+    color: var(--resultTextColor) !important;
 }
 
 .result-card p,
@@ -31,6 +45,8 @@
 .result-hover,
 [data-testid="multibagger-table"] tbody tr,
 [data-testid="admin-users-table"] tbody tr,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"],
+[data-testid="portfolio-page"] tbody tr,
 [data-testid="fno-page"] [data-testid*="top4-trade-"],
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"] {
     transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
@@ -39,19 +55,23 @@
 .result-hover:hover,
 [data-testid="multibagger-table"] tbody tr:hover,
 [data-testid="admin-users-table"] tbody tr:hover,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover,
+[data-testid="portfolio-page"] tbody tr:hover,
 [data-testid="fno-page"] [data-testid*="top4-trade-"]:hover,
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover {
     background: #f8fafc !important;
     border-color: #38bdf8 !important;
-    color: #0f172a !important;
+    color: var(--hoverTextSafeColor) !important;
 }
 
 .result-hover:hover *,
 [data-testid="multibagger-table"] tbody tr:hover *,
 [data-testid="admin-users-table"] tbody tr:hover *,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover *,
+[data-testid="portfolio-page"] tbody tr:hover *,
 [data-testid="fno-page"] [data-testid*="top4-trade-"]:hover *,
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover * {
-    color: #0f172a !important;
+    color: var(--hoverTextSafeColor) !important;
 }
 
 [data-testid="multibagger-table"] thead tr,
@@ -63,27 +83,61 @@
 [data-testid="multibagger-table"] td,
 [data-testid="admin-users-table"] th,
 [data-testid="admin-users-table"] td {
-    color: #fef9c3 !important;
+    color: var(--resultTextColor) !important;
+}
+
+[data-testid="portfolio-page"] th,
+[data-testid="portfolio-page"] td {
+    color: var(--resultTextColor) !important;
 }
 
 [data-testid="fno-page"] .rounded-md,
 [data-testid="fno-page"] .rounded-lg,
 [data-testid="fno-page"] .rounded-xl,
+[data-testid="portfolio-page"] .rounded-md,
+[data-testid="portfolio-page"] .rounded-lg,
+[data-testid="portfolio-page"] .rounded-xl,
 [data-testid="multibagger-page"] .rounded-md,
 [data-testid="multibagger-page"] .rounded-lg,
 [data-testid="admin-page"] .rounded-md,
 [data-testid="admin-page"] .rounded-lg {
-    color: #fef9c3;
+    color: var(--resultTextColor);
 }
 
 [data-testid="fno-page"] .rounded-md:hover,
 [data-testid="fno-page"] .rounded-lg:hover,
 [data-testid="fno-page"] .rounded-xl:hover,
+[data-testid="portfolio-page"] .rounded-md:hover,
+[data-testid="portfolio-page"] .rounded-lg:hover,
+[data-testid="portfolio-page"] .rounded-xl:hover,
 [data-testid="multibagger-page"] .rounded-md:hover,
 [data-testid="multibagger-page"] .rounded-lg:hover,
 [data-testid="admin-page"] .rounded-md:hover,
 [data-testid="admin-page"] .rounded-lg:hover {
-    color: #0f172a;
+    color: var(--hoverTextSafeColor);
+}
+
+.dashboard-dark-bg h1,
+.dashboard-dark-bg h2,
+.dashboard-dark-bg h3,
+.dashboard-dark-bg h4,
+.dashboard-dark-bg h5,
+.dashboard-dark-bg h6,
+.dashboard-dark-bg th,
+.dashboard-dark-bg label,
+.dashboard-dark-bg [data-testid*="title"],
+.dashboard-dark-bg [data-testid*="subtitle"],
+.dashboard-dark-bg [data-testid*="label"],
+.dashboard-dark-bg [data-testid*="note"] {
+    color: var(--headingTextColor) !important;
+}
+
+.dashboard-dark-bg .font-mono,
+.dashboard-dark-bg [data-testid*="value"],
+.dashboard-dark-bg [data-testid*="score"],
+.dashboard-dark-bg [data-testid*="price"],
+.dashboard-dark-bg [data-testid*="pnl"] {
+    color: var(--resultTextColor);
 }
 
 .urgent-alert-card {

@@ -1,0 +1,56 @@
+{
+  "summary": "Executed backend + frontend regression for structured changes (contrast visibility, F&O stock signal expansion behavior, portfolio manual/upload analysis, and core auth/admin/credits). Portfolio and contrast upgrades are working; F&O generate/custom-script flows are failing with 502 on public endpoint.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/fno/generate",
+        "issue": "Returns 502 consistently for both normal generate and custom_script payloads, breaking dual-pane/top4/stock-signals output.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "F&O generate + top4 + custom script result",
+        "issue": "UI waits ~60s then shows 'Unable to generate F&O projections'; no Top 4 cards rendered because /api/fno/generate returns 502.",
+        "affected_selectors": [
+          "[data-testid='fno-generate-button']",
+          "[data-testid='fno-error']",
+          "[data-testid^='top4-trade-']"
+        ]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_upgrade_dashboard_flows.py",
+    "/app/backend/tests/test_structured_changes_portfolio_fno.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix /api/fno/generate 502 on public preview URL (normal and custom_script path).",
+    "After F&O fix, retest end-to-end: generate -> dual panes -> stock opportunities count -> top4 -> custom script result card.",
+    "Keep portfolio upload parser coverage (csv/txt/xlsx alias headers) and dynamic stock-signal non-cap regression test in CI."
+  ],
+  "critical_code_review_comments": [
+    "F&O endpoint likely overloaded/externally fragile: /api/fno/generate performs three heavy async builds (NIFTY pane, BANKNIFTY pane, stock universe) in a single request and currently surfaces 502 at ingress/client.",
+    "UI correctly surfaces generic F&O failure but does not show backend detail; adding surfaced error detail/code would speed RCA during outages."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_upgrade_dashboard_flows.py",
+    "/app/backend/tests/test_structured_changes_portfolio_fno.py",
+    "/app/test_reports/iteration_6.json"
+  ],
+  "success_rate": {
+    "backend": "87%",
+    "frontend": "83%"
+  },
+  "seed_data_creation": "Created temporary users/positions via existing regression tests; cleanup fixture executed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Latest pytest run: 13 passed, 2 failed (both /api/fno/generate related). New structured test file validates manual portfolio horizons (1W/1M/3M/6M/9M/1Y), upload parsing for txt/csv/xlsx flexible headers, and method-level dynamic stock F&O signal list not hard-capped to 3.",
+  "rca of the issue": "Repro: login owner (@shish123) -> POST /api/fno/generate {} or {custom_script:'NIFTY10MAR24050PE'} -> HTTP 502 from public endpoint. UI repro: F&O page -> Generate button remains 'Generating...' for ~60s, then shows 'Unable to generate F&O projections', with zero top4 cards. Supporting evidence: Playwright console captured network error 502 on /api/fno/generate. Mitigation direction: add timing instrumentation around _build_index_projection/_build_stock_fno_signals + upstream market-data calls, then reduce latency/failure blast radius (timeouts/fallbacks/circuit-breaker/partial response strategy)."
+}

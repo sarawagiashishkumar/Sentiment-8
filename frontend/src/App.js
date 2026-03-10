@@ -3,10 +3,13 @@ import axios from "axios";
 import {
   AlertTriangle,
   BarChart3,
+  FileUp,
   GaugeCircle,
   Home,
   KeyRound,
   LogOut,
+  Minus,
+  Plus,
   RefreshCw,
   Shield,
   Sparkles,
@@ -96,6 +99,14 @@ export default function App() {
   const [customPositionLoading, setCustomPositionLoading] = useState(false);
   const [customPositionError, setCustomPositionError] = useState("");
   const [customPositions, setCustomPositions] = useState([]);
+
+  const [portfolioFile, setPortfolioFile] = useState(null);
+  const [portfolioRows, setPortfolioRows] = useState([
+    { symbol: "", avg_price: "", quantity: "" },
+  ]);
+  const [portfolioData, setPortfolioData] = useState(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState("");
 
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminError, setAdminError] = useState("");
@@ -202,6 +213,8 @@ export default function App() {
     setFnoData(null);
     setAdminUsers([]);
     setCustomPositions([]);
+    setPortfolioData(null);
+    setPortfolioFile(null);
   };
 
   const generateMultibagger = async () => {
@@ -276,6 +289,79 @@ export default function App() {
       await loadCustomPositions();
     } catch (error) {
       setCustomPositionError(error?.response?.data?.detail || "Unable to close custom projection.");
+    }
+  };
+
+  const updatePortfolioRow = (index, field, value) => {
+    setPortfolioRows((prev) =>
+      prev.map((row, idx) => (idx === index ? { ...row, [field]: value } : row)),
+    );
+  };
+
+  const addPortfolioRow = () => {
+    setPortfolioRows((prev) => [...prev, { symbol: "", avg_price: "", quantity: "" }]);
+  };
+
+  const removePortfolioRow = (index) => {
+    setPortfolioRows((prev) => {
+      if (prev.length === 1) return prev;
+      return prev.filter((_, idx) => idx !== index);
+    });
+  };
+
+  const submitManualPortfolio = async (event) => {
+    event.preventDefault();
+    setPortfolioError("");
+    const payloadRows = portfolioRows
+      .map((row) => ({
+        symbol: row.symbol.trim().toUpperCase(),
+        avg_price: Number(row.avg_price),
+        quantity: Number(row.quantity),
+      }))
+      .filter((row) => row.symbol && row.avg_price > 0 && row.quantity > 0);
+
+    if (!payloadRows.length) {
+      setPortfolioError("Please add at least one valid portfolio row.");
+      return;
+    }
+
+    setPortfolioLoading(true);
+    try {
+      const response = await axios.post(
+        `${API}/portfolio/analyze`,
+        { positions: payloadRows },
+        { headers: authHeaders },
+      );
+      setPortfolioData(response.data);
+    } catch (error) {
+      setPortfolioError(error?.response?.data?.detail || "Unable to analyze portfolio.");
+    } finally {
+      setPortfolioLoading(false);
+    }
+  };
+
+  const submitUploadedPortfolio = async () => {
+    setPortfolioError("");
+    if (!portfolioFile) {
+      setPortfolioError("Please choose a portfolio file first.");
+      return;
+    }
+
+    setPortfolioLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", portfolioFile);
+      const response = await axios.post(`${API}/portfolio/analyze-upload`, formData, {
+        headers: {
+          ...authHeaders,
+          "Content-Type": "multipart/form-data",
+        },
+      });
+      setPortfolioData(response.data);
+    } catch (error) {
+      setPortfolioError(error?.response?.data?.detail || "Unable to parse uploaded file.");
+    } finally {
+      setPortfolioLoading(false);
     }
   };
 
@@ -469,6 +555,14 @@ export default function App() {
           >
             <TrendingUp size={16} /> F&O Projections
           </Button>
+          <Button
+            type="button"
+            onClick={() => setCurrentPage("portfolio")}
+            className={currentPage === "portfolio" ? "bg-cyan-500 text-slate-900 hover:bg-cyan-400" : "border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"}
+            data-testid="nav-portfolio"
+          >
+            <FileUp size={16} /> Portfolio
+          </Button>
           {isAdmin ? (
             <Button
               type="button"
@@ -487,7 +581,7 @@ export default function App() {
         {currentPage === "home" ? (
           <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6" data-testid="home-landing-dashboard">
             <h2 className="mb-6 text-2xl font-bold text-white">Landing Dashboard</h2>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
               <Card
                 className="cursor-pointer border-cyan-500/30 bg-slate-900/70 transition-colors hover:border-cyan-400"
                 onClick={() => setCurrentPage("multibagger")}
@@ -518,6 +612,23 @@ export default function App() {
                 <CardContent>
                   <p className="text-sm text-slate-300">
                     Run live NIFTY/BANKNIFTY projections with assured vs non-directional strategy separation.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card
+                className="cursor-pointer border-cyan-500/30 bg-slate-900/70 transition-colors hover:border-cyan-400"
+                onClick={() => setCurrentPage("portfolio")}
+                data-testid="home-module-portfolio"
+              >
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-cyan-300">
+                    <FileUp size={18} /> Portfolio Analysis
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-300">
+                    Upload holdings or enter manually to get per-stock upside/downside horizon analysis.
                   </p>
                 </CardContent>
               </Card>
@@ -888,6 +999,154 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {currentPage === "portfolio" ? (
+          <section className="space-y-6" data-testid="portfolio-page">
+            <Card className="result-card border-slate-800 bg-slate-950/70">
+              <CardHeader>
+                <CardTitle className="text-white">Portfolio Analysis</CardTitle>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-200">Upload Portfolio File (.txt, .csv, .xls, .xlsx, .pdf, .jpg, .jpeg, .bmp)</p>
+                  <Input
+                    type="file"
+                    accept=".txt,.csv,.xls,.xlsx,.pdf,.jpg,.jpeg,.bmp"
+                    onChange={(event) => setPortfolioFile(event.target.files?.[0] || null)}
+                    className="border-slate-700 bg-slate-900 text-slate-100"
+                    data-testid="portfolio-file-input"
+                  />
+                  <Button
+                    type="button"
+                    onClick={submitUploadedPortfolio}
+                    className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+                    data-testid="portfolio-upload-submit"
+                  >
+                    <FileUp size={16} /> Analyze Uploaded Portfolio
+                  </Button>
+                </div>
+
+                <form className="space-y-3" onSubmit={submitManualPortfolio} data-testid="portfolio-manual-form">
+                  <p className="text-sm text-slate-200">Manual Portfolio Entry</p>
+                  {portfolioRows.map((row, index) => (
+                    <div key={`portfolio-row-${index}`} className="grid grid-cols-12 gap-2" data-testid={`portfolio-manual-row-${index}`}>
+                      <Input
+                        value={row.symbol}
+                        onChange={(event) => updatePortfolioRow(index, "symbol", event.target.value.toUpperCase())}
+                        placeholder="Symbol"
+                        className="col-span-4 border-slate-700 bg-slate-900 text-slate-100"
+                        data-testid={`portfolio-row-symbol-${index}`}
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={row.avg_price}
+                        onChange={(event) => updatePortfolioRow(index, "avg_price", event.target.value)}
+                        placeholder="Avg Price"
+                        className="col-span-3 border-slate-700 bg-slate-900 text-slate-100"
+                        data-testid={`portfolio-row-avg-${index}`}
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={row.quantity}
+                        onChange={(event) => updatePortfolioRow(index, "quantity", event.target.value)}
+                        placeholder="Qty"
+                        className="col-span-3 border-slate-700 bg-slate-900 text-slate-100"
+                        data-testid={`portfolio-row-qty-${index}`}
+                      />
+                      <div className="col-span-2 flex gap-1">
+                        <Button
+                          type="button"
+                          onClick={addPortfolioRow}
+                          className="h-10 w-10 bg-cyan-500 p-0 text-slate-900 hover:bg-cyan-400"
+                          data-testid={`portfolio-row-add-${index}`}
+                        >
+                          <Plus size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => removePortfolioRow(index)}
+                          className="h-10 w-10 border border-rose-600 bg-transparent p-0 text-rose-300 hover:bg-rose-500/20"
+                          data-testid={`portfolio-row-remove-${index}`}
+                        >
+                          <Minus size={14} />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="submit"
+                    className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+                    data-testid="portfolio-manual-submit"
+                  >
+                    Submit Portfolio
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+            {portfolioError ? (
+              <p className="text-sm text-rose-400" data-testid="portfolio-error">{portfolioError}</p>
+            ) : null}
+            {portfolioLoading ? (
+              <p className="text-sm text-cyan-300" data-testid="portfolio-loading">Analyzing portfolio...</p>
+            ) : null}
+
+            {portfolioData?.stocks?.length ? (
+              <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="portfolio-results-card">
+                <CardHeader>
+                  <CardTitle className="text-white">Portfolio Analysis Results</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {portfolioData.stocks.map((stock) => (
+                    <div key={stock.symbol} className="result-hover rounded-lg border border-slate-800 bg-slate-900/70 p-4" data-testid={`portfolio-stock-${stock.symbol.toLowerCase()}`}>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-mono text-base text-cyan-200">{stock.symbol} — {stock.company_name}</p>
+                        <Badge className={`border ${stock.recommendation.includes("High risk") ? "bg-rose-600 text-white" : "bg-cyan-500 text-slate-900"}`}>
+                          {stock.recommendation}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-slate-200">Sector: {stock.sector} | LTP: ₹{formatNumber(stock.ltp)} | Avg: ₹{formatNumber(stock.avg_price)} | Qty: {formatNumber(stock.quantity, 0)} | Allocation: {formatNumber(stock.allocation_pct)}% | PnL: {formatNumber(stock.pnl_pct)}%</p>
+                      <p className="mt-1 text-xs text-slate-200">Value: {stock.value_flag} | Price Zone: {stock.price_zone} | Momentum: {stock.momentum_proxy} | Quality: {stock.quality_proxy}</p>
+
+                      <div className="mt-3 overflow-auto">
+                        <Table data-testid={`portfolio-horizon-table-${stock.symbol.toLowerCase()}`}>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Horizon</TableHead>
+                              <TableHead>Upside %</TableHead>
+                              <TableHead>Downside %</TableHead>
+                              <TableHead>Flag</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {Object.entries(stock.expected_ranges || {}).map(([horizon, values]) => (
+                              <TableRow key={`${stock.symbol}-${horizon}`}>
+                                <TableCell>{horizon}</TableCell>
+                                <TableCell className="font-mono text-emerald-300">{formatNumber(values.upside_pct)}%</TableCell>
+                                <TableCell className="font-mono text-rose-300">{formatNumber(values.downside_pct)}%</TableCell>
+                                <TableCell>
+                                  <Badge className={`border ${values.flag === "GREEN" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}>
+                                    {values.flag}
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <p className="mt-2 text-xs text-yellow-200">{stock.comments}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
             ) : null}
           </section>
         ) : null}

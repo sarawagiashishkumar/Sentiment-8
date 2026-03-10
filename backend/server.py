@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import logging
 import os
 import re
@@ -8,12 +10,28 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Literal
 
+import pandas as pd
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
 from pymongo import ReturnDocument
 from starlette.middleware.cors import CORSMiddleware
+
+try:
+    from pypdf import PdfReader
+except Exception:  # pragma: no cover
+    PdfReader = None
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover
+    Image = None
+
+try:
+    import pytesseract
+except Exception:  # pragma: no cover
+    pytesseract = None
 
 from data.fno_contracts import FNO_CONTRACTS, get_fno_contract
 from data.symbols import MULTIBAGGER_UNIVERSE
@@ -64,6 +82,54 @@ LOT_SIZE_MAP = {
     "BDL": 1350,
     "SBIN": 750,
     "TCS": 175,
+}
+
+STOCK_FNO_UNIVERSE = [
+    "RELIANCE",
+    "TCS",
+    "SBIN",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INFY",
+    "LT",
+    "ITC",
+    "AXISBANK",
+    "KOTAKBANK",
+    "HDFCLIFE",
+    "SBILIFE",
+    "ULTRACEMCO",
+    "BAJFINANCE",
+    "SUNPHARMA",
+    "MARUTI",
+    "ADANIPORTS",
+    "TATAMOTORS",
+    "WIPRO",
+    "TECHM",
+]
+
+SYMBOL_HEADERS = {
+    "symbol",
+    "tradingsymbol",
+    "stock",
+    "name",
+    "security",
+    "instrument",
+}
+AVG_HEADERS = {
+    "avg_price",
+    "average_price",
+    "avgprice",
+    "buy_price",
+    "avgcost",
+    "buyprice",
+    "average",
+}
+QTY_HEADERS = {
+    "qty",
+    "quantity",
+    "qnty",
+    "shares",
+    "units",
 }
 
 NIFTY_WEIGHT_PROXY = [
@@ -290,6 +356,50 @@ class FNOGenerateResponse(BaseModel):
     stock_signals: List[FNOSignalResponse]
 
 
+class PortfolioPositionInput(BaseModel):
+    symbol: str
+    avg_price: float
+    quantity: float
+
+
+class PortfolioAnalyzeRequest(BaseModel):
+    positions: List[PortfolioPositionInput]
+
+
+class PortfolioHorizonRange(BaseModel):
+    upside_pct: float
+    downside_pct: float
+    flag: Literal["GREEN", "RED"]
+
+
+class PortfolioStockAnalysis(BaseModel):
+    symbol: str
+    company_name: str
+    sector: str
+    ltp: float
+    market_cap: float | None = None
+    pe_ratio: float | None = None
+    year_high: float | None = None
+    year_low: float | None = None
+    eps: float | None = None
+    avg_price: float
+    quantity: float
+    allocation_pct: float
+    pnl_pct: float
+    value_flag: Literal["Attractive", "Fair", "Expensive"]
+    price_zone: Literal["Near 52W low", "Mid range", "Near 52W high"]
+    momentum_proxy: Literal["Positive trend", "Flat", "Negative trend"]
+    quality_proxy: Literal["Stable quality", "Speculative", "Moderate"]
+    expected_ranges: dict[str, PortfolioHorizonRange]
+    recommendation: str
+    comments: str
+
+
+class PortfolioAnalyzeResponse(BaseModel):
+    parsed_positions_count: int
+    stocks: List[PortfolioStockAnalysis]
+
+
 class CustomPositionCreateRequest(BaseModel):
     script: str
     buy_price: float
@@ -347,6 +457,316 @@ def _estimate_option_ltp(underlying_ltp: float, strike: float, option_type: str)
     )
     time_value = max(underlying_ltp * 0.002, 5)
     return round(intrinsic + time_value, 2)
+
+
+def _normalize_header(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+def _to_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    raw = str(value).strip().replace(",", "")
+    if raw in {"", "-", "--", "na", "n/a", "none", "null"}:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _find_column(headers: list[str], aliases: set[str]) -> int | None:
+    normalized = [_normalize_header(item) for item in headers]
+    alias_normalized = {_normalize_header(alias) for alias in aliases}
+    for idx, item in enumerate(normalized):
+        if item in alias_normalized:
+            return idx
+    return None
+
+
+def _normalize_positions_from_rows(rows: list[list[object]], headers: list[str]) -> list[dict]:
+    if not headers:
+        return []
+    symbol_idx = _find_column(headers, SYMBOL_HEADERS)
+    avg_idx = _find_column(headers, AVG_HEADERS)
+    qty_idx = _find_column(headers, QTY_HEADERS)
+    if symbol_idx is None or avg_idx is None or qty_idx is None:
+        return []
+
+    positions: list[dict] = []
+    for row in rows:
+        if max(symbol_idx, avg_idx, qty_idx) >= len(row):
+            continue
+        symbol = str(row[symbol_idx]).strip().upper()
+        avg_price = _to_float(row[avg_idx])
+        quantity = _to_float(row[qty_idx])
+        if not symbol or avg_price is None or quantity is None or quantity <= 0:
+            continue
+        positions.append(
+            {
+                "symbol": re.sub(r"[^A-Z0-9]", "", symbol),
+                "avg_price": round(avg_price, 4),
+                "quantity": round(quantity, 4),
+            }
+        )
+    return positions
+
+
+def _extract_positions_from_text_lines(text: str) -> list[dict]:
+    positions: list[dict] = []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    pattern = re.compile(r"([A-Za-z0-9&.-]{2,})\s+([0-9,.]+)\s+([0-9,.]+)")
+    for line in lines:
+        match = pattern.search(line)
+        if not match:
+            continue
+        symbol, avg_txt, qty_txt = match.groups()
+        avg_price = _to_float(avg_txt)
+        quantity = _to_float(qty_txt)
+        if avg_price is None or quantity is None or quantity <= 0:
+            continue
+        cleaned = re.sub(r"[^A-Z0-9]", "", symbol.upper())
+        if len(cleaned) < 2:
+            continue
+        positions.append({"symbol": cleaned, "avg_price": avg_price, "quantity": quantity})
+
+    # remove duplicates by symbol keeping latest line
+    unique: dict[str, dict] = {}
+    for item in positions:
+        unique[item["symbol"]] = item
+    return list(unique.values())
+
+
+def _parse_positions_from_csv_text(content: str) -> list[dict]:
+    reader = csv.reader(io.StringIO(content))
+    rows = [row for row in reader if row]
+    if not rows:
+        return []
+    headers = [str(value).strip() for value in rows[0]]
+    return _normalize_positions_from_rows(rows[1:], headers)
+
+
+def _parse_positions_from_excel_bytes(content: bytes) -> list[dict]:
+    frame = pd.read_excel(io.BytesIO(content), sheet_name=0)
+    frame = frame.dropna(how="all")
+    if frame.empty:
+        return []
+    headers = [str(col).strip() for col in frame.columns]
+    rows = frame.fillna("").values.tolist()
+    return _normalize_positions_from_rows(rows, headers)
+
+
+def _parse_positions_from_pdf_bytes(content: bytes) -> list[dict]:
+    if PdfReader is None:
+        return []
+    reader = PdfReader(io.BytesIO(content))
+    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    return _extract_positions_from_text_lines(text)
+
+
+def _parse_positions_from_image_bytes(content: bytes) -> list[dict]:
+    if Image is None or pytesseract is None:
+        return []
+    image = Image.open(io.BytesIO(content))
+    text = pytesseract.image_to_string(image)
+    return _extract_positions_from_text_lines(text)
+
+
+async def _parse_positions_from_upload(file: UploadFile) -> list[dict]:
+    filename = file.filename or ""
+    extension = filename.split(".")[-1].lower() if "." in filename else ""
+    payload = await file.read()
+
+    if extension in {"txt", "csv"}:
+        text = payload.decode("utf-8", errors="ignore")
+        return _parse_positions_from_csv_text(text)
+
+    if extension in {"xlsx", "xls"}:
+        return _parse_positions_from_excel_bytes(payload)
+
+    if extension == "pdf":
+        return _parse_positions_from_pdf_bytes(payload)
+
+    if extension in {"jpg", "jpeg", "bmp"}:
+        return _parse_positions_from_image_bytes(payload)
+
+    raise HTTPException(status_code=400, detail="Unsupported file format")
+
+
+def _portfolio_horizon_ranges(
+    value_flag: str,
+    price_zone: str,
+    pnl_pct: float,
+) -> dict[str, PortfolioHorizonRange]:
+    if value_flag == "Attractive" and price_zone == "Near 52W low":
+        base_up, base_down = 20.0, 8.0
+    elif value_flag == "Expensive" and price_zone == "Near 52W high":
+        base_up, base_down = 8.0, 20.0
+    elif value_flag == "Expensive":
+        base_up, base_down = 10.0, 16.0
+    elif value_flag == "Attractive":
+        base_up, base_down = 16.0, 10.0
+    else:
+        base_up, base_down = 12.0, 12.0
+
+    overbought_penalty = 3 if pnl_pct > 20 else 0
+    oversold_bonus = 3 if pnl_pct < -10 else 0
+
+    horizons = {
+        "1W": 0.25,
+        "1M": 0.45,
+        "3M": 0.8,
+        "6M": 1.0,
+        "9M": 1.2,
+        "1Y": 1.35,
+    }
+    response: dict[str, PortfolioHorizonRange] = {}
+    for horizon, multiplier in horizons.items():
+        upside = max(1.0, (base_up + oversold_bonus - overbought_penalty) * multiplier)
+        downside = max(1.0, (base_down + overbought_penalty - oversold_bonus) * multiplier)
+        flag: Literal["GREEN", "RED"] = "GREEN" if upside >= downside * 1.15 else "RED"
+        response[horizon] = PortfolioHorizonRange(
+            upside_pct=round(upside, 2),
+            downside_pct=round(-downside, 2),
+            flag=flag,
+        )
+    return response
+
+
+async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyzeResponse:
+    normalized_positions = []
+    for row in positions:
+        symbol = re.sub(r"[^A-Z0-9]", "", str(row.get("symbol", "")).upper())
+        avg_price = _to_float(row.get("avg_price"))
+        quantity = _to_float(row.get("quantity"))
+        if not symbol or avg_price is None or quantity is None or quantity <= 0:
+            continue
+        normalized_positions.append(
+            {
+                "symbol": symbol,
+                "avg_price": float(avg_price),
+                "quantity": float(quantity),
+            }
+        )
+
+    if not normalized_positions:
+        raise HTTPException(status_code=400, detail="No valid portfolio positions found")
+
+    cores = await asyncio.gather(*[get_stock_core(item["symbol"]) for item in normalized_positions])
+    stock_rows: list[dict] = []
+    total_current_value = 0.0
+    for idx, core in enumerate(cores):
+        stock = StockCoreNormalized(**core)
+        if stock.ltp is None:
+            continue
+        pos = normalized_positions[idx]
+        cost = pos["avg_price"] * pos["quantity"]
+        current_value = stock.ltp * pos["quantity"]
+        pnl_pct = ((stock.ltp - pos["avg_price"]) / pos["avg_price"]) * 100 if pos["avg_price"] > 0 else 0.0
+
+        total_current_value += current_value
+        stock_rows.append(
+            {
+                "core": stock,
+                "avg_price": pos["avg_price"],
+                "quantity": pos["quantity"],
+                "cost": cost,
+                "current_value": current_value,
+                "pnl_pct": pnl_pct,
+            }
+        )
+
+    if not stock_rows:
+        raise HTTPException(status_code=400, detail="No live data available for provided symbols")
+
+    analyses: list[PortfolioStockAnalysis] = []
+    for row in stock_rows:
+        stock = row["core"]
+        pe = stock.pe_ratio
+        if pe is None:
+            value_flag: Literal["Attractive", "Fair", "Expensive"] = "Fair"
+        elif pe <= 18:
+            value_flag = "Attractive"
+        elif pe <= 35:
+            value_flag = "Fair"
+        else:
+            value_flag = "Expensive"
+
+        position = _position_in_range(stock.ltp, stock.year_low, stock.year_high)
+        if position is None:
+            price_zone: Literal["Near 52W low", "Mid range", "Near 52W high"] = "Mid range"
+        elif position <= 0.25:
+            price_zone = "Near 52W low"
+        elif position >= 0.75:
+            price_zone = "Near 52W high"
+        else:
+            price_zone = "Mid range"
+
+        day_change = 0.0
+        if stock.prev_close is not None and stock.prev_close > 0:
+            day_change = ((stock.ltp - stock.prev_close) / stock.prev_close) * 100
+        if day_change > 0.5:
+            momentum_proxy: Literal["Positive trend", "Flat", "Negative trend"] = "Positive trend"
+        elif day_change < -0.5:
+            momentum_proxy = "Negative trend"
+        else:
+            momentum_proxy = "Flat"
+
+        if (stock.eps or 0) > 0 and (pe or 0) <= 30:
+            quality_proxy: Literal["Stable quality", "Speculative", "Moderate"] = "Stable quality"
+        elif (stock.eps or 0) <= 0 or (pe or 0) > 45:
+            quality_proxy = "Speculative"
+        else:
+            quality_proxy = "Moderate"
+
+        expected_ranges = _portfolio_horizon_ranges(value_flag, price_zone, row["pnl_pct"])
+
+        if value_flag == "Attractive" and price_zone != "Near 52W high":
+            recommendation = "Accumulate on dips"
+            comments = "Reasonably valued with favorable upside profile across medium horizons."
+        elif value_flag == "Expensive" and price_zone == "Near 52W high":
+            recommendation = "Consider partial profit booking"
+            comments = "Valuation is stretched near highs; downside risk dominates in near terms."
+        elif quality_proxy == "Speculative":
+            recommendation = "High risk – consider reducing exposure"
+            comments = "Signal quality is speculative due to weak earnings/valuation balance."
+        else:
+            recommendation = "Strong Hold"
+            comments = "Balanced profile; hold and monitor trend confirmations on declines."
+
+        allocation_pct = (row["current_value"] / total_current_value) * 100 if total_current_value > 0 else 0.0
+        analyses.append(
+            PortfolioStockAnalysis(
+                symbol=stock.symbol,
+                company_name=stock.company_name,
+                sector=stock.sector,
+                ltp=round(stock.ltp, 2),
+                market_cap=stock.market_cap,
+                pe_ratio=stock.pe_ratio,
+                year_high=stock.year_high,
+                year_low=stock.year_low,
+                eps=stock.eps,
+                avg_price=round(row["avg_price"], 2),
+                quantity=round(row["quantity"], 2),
+                allocation_pct=round(allocation_pct, 2),
+                pnl_pct=round(row["pnl_pct"], 2),
+                value_flag=value_flag,
+                price_zone=price_zone,
+                momentum_proxy=momentum_proxy,
+                quality_proxy=quality_proxy,
+                expected_ranges=expected_ranges,
+                recommendation=recommendation,
+                comments=comments,
+            )
+        )
+
+    analyses.sort(key=lambda row: row.allocation_pct, reverse=True)
+    return PortfolioAnalyzeResponse(
+        parsed_positions_count=len(analyses),
+        stocks=analyses,
+    )
 
 
 def _position_in_range(ltp: float | None, year_low: float | None, year_high: float | None) -> float | None:
@@ -1030,7 +1450,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
 
 
 async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]:
-    symbols = ["RELIANCE", "BDL", "SBIN", "TCS"]
+    symbols = STOCK_FNO_UNIVERSE
     results: list[FNOSignalResponse] = []
 
     for symbol in symbols:
@@ -1045,11 +1465,14 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
 
         ce_signal = await _safe_signal(ce_contract, refreshed_at, asyncio.Semaphore(1))
         pe_signal = await _safe_signal(pe_contract, refreshed_at, asyncio.Semaphore(1))
-        chosen = sorted([item for item in [ce_signal, pe_signal] if item], key=lambda row: row.confluence_score, reverse=True)
-        if chosen:
-            results.append(chosen[0])
+        qualifying = [
+            item
+            for item in [ce_signal, pe_signal]
+            if item and item.is_potential_trade and item.confluence_score >= 72
+        ]
+        results.extend(qualifying)
 
-    results.sort(key=lambda row: (row.is_potential_trade, row.confluence_score), reverse=True)
+    results.sort(key=lambda row: row.confluence_score, reverse=True)
     return results
 
 
@@ -1544,6 +1967,31 @@ async def close_custom_position(position_id: str, current_user: dict = Depends(g
     if not updated:
         raise HTTPException(status_code=404, detail="Custom position not found")
     return {"closed": True, "id": position_id}
+
+
+@api_router.post("/portfolio/analyze", response_model=PortfolioAnalyzeResponse)
+async def analyze_portfolio_manual(
+    payload: PortfolioAnalyzeRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    _ = current_user
+    normalized = [item.model_dump() for item in payload.positions]
+    return await _analyze_portfolio_positions(normalized)
+
+
+@api_router.post("/portfolio/analyze-upload", response_model=PortfolioAnalyzeResponse)
+async def analyze_portfolio_upload(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    _ = current_user
+    extension = (file.filename or "").split(".")[-1].lower() if "." in (file.filename or "") else ""
+    allowed = {"txt", "csv", "xls", "xlsx", "pdf", "jpg", "jpeg", "bmp"}
+    if extension not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported file format")
+
+    positions = await _parse_positions_from_upload(file)
+    return await _analyze_portfolio_positions(positions)
 
 
 @api_router.get("/fno/scripts/search", response_model=ScriptSearchResult)

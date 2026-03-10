@@ -133,6 +133,7 @@ def test_fno_generate_returns_dual_pane_reports_top4_and_stock_panel(api_client,
     assert isinstance(data['top_trades'], list)
     assert len(data['top_trades']) <= 4
     assert isinstance(data.get('stock_signals', []), list)
+    assert all(row['underlying'] not in {'NIFTY', 'BANKNIFTY'} for row in data.get('stock_signals', []))
 
 
 def test_custom_script_dynamic_parse_does_not_return_not_supported(api_client, api_base_url):
@@ -290,3 +291,70 @@ def test_fno_signal_has_expiry_risk_and_minutes_to_expiry(api_client, api_base_u
     data = response.json()
     assert isinstance(data['minutes_to_expiry'], int)
     assert data['expiry_risk'] in {'LOW', 'MEDIUM', 'HIGH'}
+
+
+def test_portfolio_manual_analysis_returns_expected_ranges(api_client, api_base_url, created_users):
+    owner = _login(api_client, api_base_url, OWNER_USERNAME)
+    owner_headers = _auth_headers(owner['token'])
+
+    username = f'port{uuid.uuid4().hex[:8]}1'
+    user = _create_user(
+        api_client,
+        api_base_url,
+        owner_headers,
+        created_users,
+        username=username,
+        role='user',
+        initial_credits=5,
+    )
+    login = _login(api_client, api_base_url, user['username'])
+    headers = _auth_headers(login['token'])
+
+    response = api_client.post(
+        f'{api_base_url}/portfolio/analyze',
+        json={
+            'positions': [
+                {'symbol': 'RELIANCE', 'avg_price': 1200, 'quantity': 10},
+                {'symbol': 'TCS', 'avg_price': 3000, 'quantity': 5},
+            ]
+        },
+        headers=headers,
+        timeout=180,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data['parsed_positions_count'] >= 1
+    first = data['stocks'][0]
+    assert 'expected_ranges' in first
+    for horizon in ['1W', '1M', '3M', '6M', '9M', '1Y']:
+        assert horizon in first['expected_ranges']
+
+
+def test_portfolio_upload_csv_analysis(api_client, api_base_url, created_users):
+    owner = _login(api_client, api_base_url, OWNER_USERNAME)
+    owner_headers = _auth_headers(owner['token'])
+
+    username = f'port{uuid.uuid4().hex[:8]}2'
+    user = _create_user(
+        api_client,
+        api_base_url,
+        owner_headers,
+        created_users,
+        username=username,
+        role='user',
+        initial_credits=5,
+    )
+    login = _login(api_client, api_base_url, user['username'])
+    headers = _auth_headers(login['token'])
+
+    csv_content = 'Symbol,Average_Price,Quantity\nRELIANCE,1200,10\nINFY,1500,8\n'
+    files = {'file': ('Holding(1).csv', csv_content, 'text/csv')}
+    response = requests.post(
+        f'{api_base_url}/portfolio/analyze-upload',
+        files=files,
+        headers={'Authorization': headers['Authorization']},
+        timeout=180,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data['parsed_positions_count'] >= 1

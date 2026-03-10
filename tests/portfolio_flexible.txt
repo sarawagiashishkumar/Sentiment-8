@@ -1,0 +1,3 @@
+symbol,avg_price,qty
+RELIANCE,1200,10
+TCS,3000,5
