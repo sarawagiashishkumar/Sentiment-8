@@ -1,82 +1,72 @@
-# PRD — Final Trading Dashboard (Contrast + Expiry-Aware F&O + Sticky Custom Projections)
+# PRD — Final Trading Dashboard (Structured Upgrade)
 
-## What was upgraded in this iteration
-1. **Global contrast/hover fix across all result areas**
-   - Applied high-contrast text and hover inversion (light background + dark text) across Multibagger, F&O, Top-4, and Admin result components.
-   - Added consistent result styling classes and hover-safe behavior.
+## Latest User Request Implemented
+A) Global text/hover visibility rules with separate heading/result color roles.
+B) Expanded dynamic “Profitable F&O Signals – Individual Stocks” universe (not hard-capped).
+C) New Portfolio Analysis module with:
+- File upload (.txt/.csv/.xls/.xlsx/.pdf/.jpg/.jpeg/.bmp)
+- Manual dynamic row entry (+/- rows)
+- Deep per-stock analysis output with horizons and recommendation/comments.
 
-2. **Expiry-aware and realistic F&O logic**
-   - Added IST-based expiry-time logic (`15:30 IST`) and `minutes_to_expiry` computation.
-   - Added hard guards:
-     - expired contracts blocked
-     - <=15 min to expiry blocked for safe projections
-   - Added confidence downgrades when expiry is near.
-   - Added response fields: `minutes_to_expiry`, `expiry_risk`.
+## What Was Built
+### 1) Text & Hover Visibility (Global)
+- Added distinct text roles:
+  - `headingTextColor` (fixed headings/labels)
+  - `resultTextColor` (dynamic values/numbers/scores)
+- Applied safe contrast rules across Multibagger, F&O, Portfolio, Admin.
+- Added explicit hover-safe text color for result rows/cards/tables to avoid invisible text.
 
-3. **Sticky live custom projections (MongoDB per user)**
-   - Added persistent custom positions endpoints:
-     - `POST /api/fno/custom-position`
-     - `GET /api/fno/custom-positions`
-     - `POST /api/fno/custom-position/{id}/close`
-   - Stored per logged-in user in MongoDB and refreshed in polling loop.
-   - Added urgent alert conditions and revised exit-plan updates.
-   - Frontend now renders sticky custom cards under custom input, above index projections.
+### 2) F&O Individual Stock Signals (Expanded & Dynamic)
+- Extended stock F&O universe to liquid names (10–20 set).
+- Stock-only opportunities now use the same confluence/risk/expiry-aware filters.
+- UI renders all qualifying stock signals returned by backend (no forced limit to 3).
 
-## Existing major platform capabilities retained
-- Username-based secure access with Owner/Sub-Admin/Basic User RBAC.
-- Owner full CRUD + Sub-Admin quota controls.
-- Admin exemption from credit billing.
-- Multibagger button-driven generation only.
-- F&O Projections dual-pane (NIFTY/BANKNIFTY), conflict separation for non-directional strategy.
-- Top 4 Best Trade sticky panel.
-- Personal testing + SEBI educational disclaimer.
+### 3) Portfolio Analysis
+#### Backend
+- `POST /api/portfolio/analyze`
+  - Manual JSON input: `positions[{symbol, avg_price, quantity}]`
+- `POST /api/portfolio/analyze-upload`
+  - Upload parser for txt/csv/xls/xlsx/pdf/jpg/jpeg/bmp
+  - Flexible header alias detection for symbol/avg price/quantity
+  - OCR/PDF text heuristic extraction support where parser data is available
+- Deep per-stock output includes:
+  - live/fundamental fields
+  - position metrics (`pnl_pct`, `allocation_pct`)
+  - `value_flag`, `price_zone`, `momentum_proxy`, `quality_proxy`
+  - `expected_ranges` for 1W/1M/3M/6M/9M/1Y with GREEN/RED flags
+  - `recommendation`, `comments`
 
-## Testing status
-- Backend regression tests: **25/25 passed**.
-- Frontend sanity verified via screenshot automation for login, multibagger, F&O projections, custom sticky card, hover contrast.
+#### Frontend
+- New Portfolio page in persistent navigation and landing module.
+- Left: upload flow.
+- Right: manual dynamic table with + / - row controls and submit.
+- Results render per-stock cards + mini horizon table + recommendation/comments.
 
-## Rebuild Prompt Template (copy-paste)
-"""
-Build a full-stack trading dashboard using React + FastAPI + MongoDB with:
+## Existing Capabilities Preserved
+- Username login with RBAC (owner/sub_admin/user)
+- Owner CRUD + sub-admin quotas
+- Admin credit exemption
+- Expiry-aware F&O logic and custom sticky projections in MongoDB
+- Top 4 Best Trade sticky panel
+- SEBI educational/personal testing disclaimers
 
-1) Secure username-only login (no public registration), RBAC roles: owner/sub_admin/user.
-2) Owner full CRUD of users, sub-admin quota-based user creation, admin credit exemption.
-3) Credit model for basic users: multibagger generation cost 1, F&O generation cost 2.
-4) Landing dashboard with two primary modules: Multibagger and F&O Projections.
-5) Persistent navigation across Home, Multibagger, F&O Projections, Admin.
-6) Multibagger generation on button click only; no preloaded results.
-7) Multibagger table must include:
-   - Stock name, sector
-   - RSI level
-   - GTT buy price
-   - Targeted upside prices for 1W/1M/3M/6M/9M/1Y
-   - Corresponding % profit row for each duration.
-8) F&O Projections generation on button click only; no preloaded results.
-9) F&O dual-pane layout: NIFTY left, BANKNIFTY right with live spot headers.
-10) Strike filter for projection candidates: within ±500 points of current spot.
-11) Conflict rule: If same strike CE and PE both qualify, classify as non-directional strategy (straddle), not directional assured signals.
-12) Provide two reports per index: with consolidated analysis and without consolidated analysis.
-13) Add a full-width bottom panel for profitable individual stock F&O projections.
-14) Add sticky Top 4 Best Trade panel with entry/SL/targets/confidence rationale.
-15) Add custom sticky positions system (persist in MongoDB):
-    - create custom position with script + buy price
-    - list active positions with live updates every 5s
-    - close position manually
-    - include urgent red alert conditions.
-16) Make F&O logic expiry-aware:
-    - expiry date + expiry time IST
-    - compute minutes_to_expiry
-    - block expired and <=15 min cases
-    - downgrade confidence near expiry.
-17) Add strong UI contrast rules globally:
-    - result text visible on dark background
-    - hover state switches to light background + dark text.
-18) Include personal testing + SEBI educational disclaimer on login and dashboard.
-19) Keep all core market data fetchers centralized and reusable.
-20) Include data-testid attributes for all interactive and critical display elements.
-"""
+## Validation Status
+- Regression via testing agent iteration_7: PASS
+- Backend tests executed by testing agent: 15 passed for requested scope
+- Frontend browser automation validated:
+  - F&O generate (dual panes + top4 + stock cards)
+  - Portfolio upload/manual flows
+  - hover contrast visibility
+- No API flow mocked
 
-## Next tasks
-- Add unique username DB index migration + cleanup legacy rows.
-- Add session TTL persistence (Redis) for hardening.
-- Add richer invalidator cards for each custom projection.
+## Next Tasks (P0/P1/P2)
+### P0
+- Add robust OCR fallback package detection messaging for unsupported image/PDF environments.
+- Add file-level parse diagnostics (which rows parsed/skipped).
+
+### P1
+- Add downloadable portfolio analysis report (CSV/PDF).
+- Add per-horizon confidence score visualization.
+
+### P2
+- Split large `server.py` into modules (`auth`, `fno`, `portfolio`, `admin`, `parsers`) for maintainability.
