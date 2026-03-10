@@ -93,29 +93,15 @@ LOT_SIZE_MAP = {
 
 STOCK_FNO_UNIVERSE = [
     "RELIANCE",
-    "TCS",
     "SBIN",
-    "HDFCBANK",
-    "ICICIBANK",
-    "INFY",
-    "LT",
-    "ITC",
-    "AXISBANK",
-    "KOTAKBANK",
-    "HDFCLIFE",
-    "SBILIFE",
-    "ULTRACEMCO",
-    "BAJFINANCE",
-    "SUNPHARMA",
-    "MARUTI",
-    "ADANIPORTS",
-    "TATAMOTORS",
-    "WIPRO",
-    "TECHM",
+    "TCS",
 ]
 
 SCRIPT_MASTER_LAST_SYNC_DATE: str | None = None
 NSE_SCRIPT_MASTER_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+ANGEL_SCRIPT_MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+KITE_SCRIPT_MASTER_URL = "https://api.kite.trade/instruments"
+DHAN_SCRIPT_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 
 SYMBOL_HEADERS = {
     "symbol",
@@ -989,14 +975,14 @@ def _normalize_symbol_key(value: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 
 
-async def _sync_script_master_daily() -> None:
+async def _sync_script_master_daily(force: bool = False) -> None:
     global SCRIPT_MASTER_LAST_SYNC_DATE
     today = datetime.now(IST).date().isoformat()
-    if SCRIPT_MASTER_LAST_SYNC_DATE == today:
+    if not force and SCRIPT_MASTER_LAST_SYNC_DATE == today:
         return
 
     meta = await db.system_meta.find_one({"key": "script_master_sync"}, {"_id": 0})
-    if meta and meta.get("date") == today and int(meta.get("updated_count", 0) or 0) >= 500:
+    if (not force) and meta and meta.get("date") == today and int(meta.get("updated_count", 0) or 0) >= 500:
         SCRIPT_MASTER_LAST_SYNC_DATE = today
         return
 
@@ -1007,6 +993,13 @@ async def _sync_script_master_daily() -> None:
         "NIFTY",
         "BANKNIFTY",
     }
+
+    def _clean_source_symbol(value: str) -> str:
+        raw = str(value or "").upper().strip()
+        raw = raw.replace("-EQ", "")
+        raw = raw.replace(" EQ", "")
+        raw = raw.replace(".EQ", "")
+        return _normalize_symbol_key(raw)
 
     def _fetch_nse_rows() -> list[tuple[str, str]]:
         try:
@@ -1029,7 +1022,98 @@ async def _sync_script_master_daily() -> None:
             logger.warning("Failed to fetch NSE script master: %s", exc)
             return []
 
-    nse_rows = await asyncio.to_thread(_fetch_nse_rows)
+    def _fetch_angel_rows() -> list[tuple[str, str]]:
+        try:
+            response = requests.get(ANGEL_SCRIPT_MASTER_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            if response.status_code != 200:
+                return []
+            payload = response.json()
+            rows: list[tuple[str, str]] = []
+            for item in payload if isinstance(payload, list) else []:
+                exch = str(item.get("exch_seg", "")).upper().strip()
+                instrument_type = str(item.get("instrumenttype", "")).upper().strip()
+                if exch not in {"NSE", "BSE"}:
+                    continue
+                if instrument_type and instrument_type not in {"EQ", "AMXIDX", "INDEX"}:
+                    continue
+                raw_symbol = str(item.get("symbol") or item.get("name") or "").strip()
+                raw_name = str(item.get("name") or item.get("symbol") or "").strip()
+                symbol = _clean_source_symbol(raw_symbol)
+                if not symbol:
+                    symbol = _clean_source_symbol(raw_name)
+                if symbol.endswith(("FUT", "CE", "PE")):
+                    continue
+                if symbol:
+                    rows.append((symbol, raw_name or symbol))
+            return rows
+        except Exception as exc:
+            logger.warning("Failed to fetch Angel script master: %s", exc)
+            return []
+
+    def _fetch_kite_rows() -> list[tuple[str, str]]:
+        try:
+            response = requests.get(KITE_SCRIPT_MASTER_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            if response.status_code != 200:
+                return []
+            reader = csv.DictReader(io.StringIO(response.text))
+            rows: list[tuple[str, str]] = []
+            for item in reader:
+                exchange = str(item.get("exchange", "")).upper().strip()
+                segment = str(item.get("segment", "")).upper().strip()
+                instrument_type = str(item.get("instrument_type", "")).upper().strip()
+                if exchange not in {"NSE", "BSE"}:
+                    continue
+                if segment not in {"NSE", "BSE"}:
+                    continue
+                if instrument_type not in {"EQ", ""}:
+                    continue
+                raw_symbol = str(item.get("tradingsymbol", "")).strip()
+                raw_name = str(item.get("name", "")).strip()
+                symbol = _normalize_symbol_key(raw_symbol)
+                if symbol:
+                    rows.append((symbol, raw_name or raw_symbol or symbol))
+            return rows
+        except Exception as exc:
+            logger.warning("Failed to fetch Kite script master: %s", exc)
+            return []
+
+    def _fetch_dhan_rows() -> list[tuple[str, str]]:
+        try:
+            response = requests.get(DHAN_SCRIPT_MASTER_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            if response.status_code != 200:
+                return []
+            reader = csv.DictReader(io.StringIO(response.text))
+            rows: list[tuple[str, str]] = []
+            for item in reader:
+                exchange = str(item.get("SEM_EXM_EXCH_ID", "")).upper().strip()
+                instrument_name = str(item.get("SEM_INSTRUMENT_NAME", "")).upper().strip()
+                symbol_name = str(item.get("SM_SYMBOL_NAME", "")).strip()
+                trading_symbol = str(item.get("SEM_TRADING_SYMBOL", "")).strip()
+                custom_symbol = str(item.get("SEM_CUSTOM_SYMBOL", "")).strip()
+                if exchange not in {"NSE", "BSE"}:
+                    continue
+                if instrument_name not in {"EQUITY", "INDEX"}:
+                    continue
+                raw_symbol = trading_symbol or symbol_name or custom_symbol
+                raw_name = custom_symbol or symbol_name or trading_symbol
+                symbol = _clean_source_symbol(raw_symbol)
+                if symbol.endswith(("FUT", "CE", "PE")):
+                    continue
+                if symbol:
+                    rows.append((symbol, raw_name or symbol))
+            return rows
+        except Exception as exc:
+            logger.warning("Failed to fetch Dhan script master: %s", exc)
+            return []
+
+    nse_rows, angel_rows, kite_rows, dhan_rows = await asyncio.gather(
+        asyncio.to_thread(_fetch_nse_rows),
+        asyncio.to_thread(_fetch_angel_rows),
+        asyncio.to_thread(_fetch_kite_rows),
+        asyncio.to_thread(_fetch_dhan_rows),
+    )
+
+    source_rows = [*nse_rows, *angel_rows, *kite_rows, *dhan_rows]
     script_records: dict[str, dict] = {}
 
     for symbol in seed_symbols:
@@ -1044,7 +1128,7 @@ async def _sync_script_master_daily() -> None:
             },
         )
 
-    for symbol, name in nse_rows:
+    for symbol, name in source_rows:
         row = script_records.setdefault(
             symbol,
             {
@@ -1083,9 +1167,9 @@ async def _sync_script_master_daily() -> None:
             }
         )
 
-    updates = 0
     now_iso = _utc_now_iso()
-    for canonical, data in script_records.items():
+    docs: list[dict] = []
+    for canonical, data in sorted(script_records.items()):
         aliases = sorted({str(alias).strip() for alias in data["aliases"] if str(alias).strip()})
         normalized_aliases = sorted(
             {
@@ -1094,20 +1178,45 @@ async def _sync_script_master_daily() -> None:
                 if _normalize_symbol_key(alias)
             }
         )
-        await db.script_master.update_one(
-            {"canonical_symbol": canonical},
+        docs.append(
             {
-                "$set": {
-                    "canonical_symbol": canonical,
-                    "display_name": data.get("display_name") or canonical,
-                    "aliases": aliases,
-                    "normalized_aliases": normalized_aliases,
-                    "updated_at": now_iso,
-                }
-            },
-            upsert=True,
+                "canonical_symbol": canonical,
+                "display_name": data.get("display_name") or canonical,
+                "aliases": aliases,
+                "normalized_aliases": normalized_aliases,
+                "updated_at": now_iso,
+            }
         )
-        updates += 1
+
+    if len(docs) < 500:
+        logger.warning("Script master refresh skipped: insufficient compiled rows (%s)", len(docs))
+        return
+
+    staging = db.script_master_staging
+    await staging.drop()
+    for start in range(0, len(docs), 5000):
+        await staging.insert_many(docs[start : start + 5000], ordered=False)
+
+    db_name = os.environ["DB_NAME"]
+    try:
+        await client.admin.command(
+            "renameCollection",
+            f"{db_name}.script_master_staging",
+            to=f"{db_name}.script_master",
+            dropTarget=True,
+        )
+    except Exception:
+        await db.script_master.delete_many({})
+        cursor = staging.find({}, {"_id": 0})
+        batch: list[dict] = []
+        async for row in cursor:
+            batch.append(row)
+            if len(batch) >= 5000:
+                await db.script_master.insert_many(batch, ordered=False)
+                batch = []
+        if batch:
+            await db.script_master.insert_many(batch, ordered=False)
+        await staging.drop()
 
     await db.system_meta.update_one(
         {"key": "script_master_sync"},
@@ -1115,7 +1224,7 @@ async def _sync_script_master_daily() -> None:
             "$set": {
                 "key": "script_master_sync",
                 "date": today,
-                "updated_count": updates,
+                "updated_count": len(docs),
                 "updated_at": _utc_now_iso(),
             }
         },
@@ -1966,51 +2075,67 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
     symbols = STOCK_FNO_UNIVERSE
     cores = await asyncio.gather(*[get_stock_core(symbol) for symbol in symbols])
     normalized_cores = [StockCoreNormalized(**row) for row in cores]
-    semaphore = asyncio.Semaphore(8)
+    semaphore = asyncio.Semaphore(4)
 
     async def _build_for_symbol(symbol: str, core: StockCoreNormalized) -> FNOSignalResponse | None:
         if core.ltp is None:
-            return None
-
-        option_type = _infer_stock_option_type(core)
-        if option_type is None:
             return None
 
         step = 20 if core.ltp > 400 else 10
         strike = round(core.ltp / step) * step
 
         async with semaphore:
-            contract = await _build_contract(symbol, strike, option_type, prefer_monthly=True)
-            minutes_to_expiry = get_minutes_to_expiry(contract)
-            if minutes_to_expiry <= 15:
-                return None
-
-            try:
-                option_ltp = await asyncio.to_thread(
-                    market_data_client.fetch_option_ltp_for_contract,
-                    contract.model_dump(),
+            expiry = await _get_nearest_expiry(symbol, prefer_monthly=True)
+            symbol_rows: list[FNOSignalResponse] = []
+            for option_type in ["CE", "PE"]:
+                contract = FNOContract(
+                    script=_format_script(symbol, expiry, strike, option_type),
+                    underlying=symbol,
+                    expiry=expiry,
+                    expiry_time_ist="15:30",
+                    strike=float(strike),
+                    option_type=option_type,
+                    exchange="NFO",
+                    lot_size=LOT_SIZE_MAP.get(symbol, 1),
                 )
-            except Exception:
+                minutes_to_expiry = get_minutes_to_expiry(contract)
+                if minutes_to_expiry <= 15:
+                    continue
+
+                try:
+                    option_ltp = await asyncio.to_thread(
+                        market_data_client.fetch_option_ltp_for_contract,
+                        contract.model_dump(),
+                    )
+                except Exception:
+                    option_ltp = _estimate_option_ltp(core.ltp, float(strike), option_type)
+
+                if option_ltp is None or option_ltp <= 0:
+                    continue
+
+                try:
+                    signal = build_fno_signal(contract, core, float(option_ltp), refreshed_at, minutes_to_expiry)
+                except HTTPException:
+                    continue
+
+                if signal.direction != "NEUTRAL":
+                    symbol_rows.append(signal)
+
+            if not symbol_rows:
                 return None
 
-            if option_ltp is None or option_ltp <= 0:
-                return None
+            potential = [
+                row for row in symbol_rows if row.is_potential_trade and row.confluence_score >= 72
+            ]
+            if potential:
+                potential.sort(key=lambda row: row.confluence_score, reverse=True)
+                return potential[0]
 
-            try:
-                signal = build_fno_signal(contract, core, float(option_ltp), refreshed_at, minutes_to_expiry)
-            except HTTPException:
-                return None
-            return signal
+            symbol_rows.sort(key=lambda row: (row.confluence_score, row.risk_reward_target2), reverse=True)
+            return symbol_rows[0]
 
     built = await asyncio.gather(*[_build_for_symbol(symbol, normalized_cores[idx]) for idx, symbol in enumerate(symbols)])
-    results = [
-        item
-        for item in built
-        if item is not None
-        and item.direction != "NEUTRAL"
-        and item.confluence_score >= 65
-        and item.risk_reward_target2 >= 1.5
-    ]
+    results = [item for item in built if item is not None]
     results.sort(key=lambda row: row.confluence_score, reverse=True)
     return results
 
@@ -2271,7 +2396,7 @@ async def script_master_refresh(owner_user: dict = Depends(get_owner_user)):
     _ = owner_user
     global SCRIPT_MASTER_LAST_SYNC_DATE
     SCRIPT_MASTER_LAST_SYNC_DATE = None
-    await _sync_script_master_daily()
+    await _sync_script_master_daily(force=True)
     return {"refreshed": True, "date": datetime.now(IST).date().isoformat()}
 
 

@@ -901,7 +901,6 @@ export default function App() {
                                       <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                                     </div>
                                     <p>Expiry: {signal.expiry}</p>
-                                    <p>Source: {signal.data_source === "LIVE_OPTION_CHAIN" ? "Live option chain" : "Modeled fallback from spot"}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
                                   </div>
@@ -960,9 +959,6 @@ export default function App() {
                               <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                             </div>
                             <p data-testid={`stock-fno-signal-expiry-${signal.script.toLowerCase()}`}>Expiry: {signal.expiry} (monthly stock contract)</p>
-                            <p data-testid={`stock-fno-signal-source-${signal.script.toLowerCase()}`}>
-                              Source: {signal.data_source === "LIVE_OPTION_CHAIN" ? "Live option chain" : "Modeled fallback from spot"}
-                            </p>
                             <p>Entry: ₹{formatNumber(signal.entry_price)}</p>
                             <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
                             <p>T1/T2: ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
@@ -994,7 +990,6 @@ export default function App() {
                               <p>SL: ₹{formatNumber(trade.stop_loss)}</p>
                               <p>T1/T2: ₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</p>
                               <p>Confidence: {trade.confluence_score} | {trade.direction}</p>
-                              <p>Source: {trade.data_source === "LIVE_OPTION_CHAIN" ? "Live option chain" : "Modeled fallback from spot"}</p>
                               <p className="text-slate-400">{(trade.trigger_factors || []).slice(0, 2).join(" | ")}</p>
                             </div>
                           ))
@@ -1012,7 +1007,6 @@ export default function App() {
                         <CardContent className="space-y-1 text-xs">
                           <p className="font-mono text-cyan-200">{fnoData.custom_signal.script}</p>
                           <p>Direction: {fnoData.custom_signal.direction}</p>
-                          <p>Source: {fnoData.custom_signal.data_source === "LIVE_OPTION_CHAIN" ? "Live option chain" : "Modeled fallback from spot"}</p>
                           <p>Entry/SL/T1/T2: ₹{formatNumber(fnoData.custom_signal.entry_price)} / ₹{formatNumber(fnoData.custom_signal.stop_loss)} / ₹{formatNumber(fnoData.custom_signal.target1)} / ₹{formatNumber(fnoData.custom_signal.target2)}</p>
                           <p>Confluence: {fnoData.custom_signal.confluence_score}</p>
                         </CardContent>
@@ -1030,9 +1024,6 @@ export default function App() {
             <Card className="result-card border-slate-800 bg-slate-950/70">
               <CardHeader>
                 <CardTitle className="text-white">Portfolio Analysis</CardTitle>
-                <p className="text-xs text-slate-300" data-testid="script-master-link-note">
-                  Script Master Lookup: <a className="text-cyan-300 underline" href={`${BACKEND_URL}/api/script-master/lookup?q=RELIANCE`} target="_blank" rel="noreferrer">Open Reference Link</a>
-                </p>
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 <div className="space-y-3">
