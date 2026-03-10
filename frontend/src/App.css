@@ -64,14 +64,43 @@
     color: var(--hoverTextSafeColor) !important;
 }
 
-.result-hover:hover *,
-[data-testid="multibagger-table"] tbody tr:hover *,
-[data-testid="admin-users-table"] tbody tr:hover *,
-[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover *,
-[data-testid="portfolio-page"] tbody tr:hover *,
-[data-testid="fno-page"] [data-testid*="top4-trade-"]:hover *,
-[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover * {
+.result-hover:hover p,
+.result-hover:hover span,
+.result-hover:hover td,
+.result-hover:hover th,
+.result-hover:hover label,
+.result-hover:hover small,
+[data-testid="multibagger-table"] tbody tr:hover p,
+[data-testid="multibagger-table"] tbody tr:hover span,
+[data-testid="multibagger-table"] tbody tr:hover td,
+[data-testid="multibagger-table"] tbody tr:hover th,
+[data-testid="admin-users-table"] tbody tr:hover p,
+[data-testid="admin-users-table"] tbody tr:hover span,
+[data-testid="admin-users-table"] tbody tr:hover td,
+[data-testid="admin-users-table"] tbody tr:hover th,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover p,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover span,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover td,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover th,
+[data-testid="portfolio-page"] tbody tr:hover p,
+[data-testid="portfolio-page"] tbody tr:hover span,
+[data-testid="portfolio-page"] tbody tr:hover td,
+[data-testid="portfolio-page"] tbody tr:hover th,
+[data-testid="fno-page"] [data-testid*="top4-trade-"]:hover p,
+[data-testid="fno-page"] [data-testid*="top4-trade-"]:hover span,
+[data-testid="fno-page"] [data-testid*="top4-trade-"]:hover td,
+[data-testid="fno-page"] [data-testid*="top4-trade-"]:hover th,
+[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover p,
+[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover span,
+[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover td,
+[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover th {
     color: var(--hoverTextSafeColor) !important;
+}
+
+[data-testid="admin-users-table"] tbody tr:hover button,
+[data-testid="portfolio-page"] tbody tr:hover button,
+.result-hover:hover button {
+    color: inherit !important;
 }
 
 [data-testid="multibagger-table"] thead tr,

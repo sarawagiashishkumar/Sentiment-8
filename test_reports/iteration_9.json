@@ -1,0 +1,50 @@
+{
+  "summary": "Executed targeted backend + frontend regression for iteration-8 follow-up. Pricing contracts and portfolio signal formatting remain intact, but admin table row-hover still makes action button labels low-contrast and unreadable.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Admin users table action buttons",
+        "issue": "On row hover, button text inherits dark row text color while button background stays dark, causing unreadable labels.",
+        "selector": "[data-testid=\"admin-users-table\"] tbody tr:hover button",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Admin page",
+        "issues": [
+          "Measured contrast for hovered 'Update Credits' button text vs background was ~1.22:1 (fails readability expectations)."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_pricing_and_portfolio_contracts.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix admin hover cascade so button labels keep high contrast on hovered table rows (do not inherit dark row text into dark buttons).",
+    "Re-run targeted UI regression for admin hover + pricing labels + portfolio horizon formatting after CSS fix."
+  ],
+  "critical_code_review_comments": [
+    "App.css has conflicting rules: row hover forces dark text globally and button rule sets color: inherit, which directly causes dark-on-dark button text.",
+    "backend/server.py remains a large monolith (>700 lines guideline), increasing regression risk for targeted changes."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_9.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "75%"
+  },
+  "seed_data_creation": "No explicit seed file created. API tests created temporary user data and cleaned up user via admin delete in test finally block.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression file passed all 3 tests on public endpoint (multibagger=2, fno=2, custom-position=1, portfolio signed horizons). Frontend confirms pricing labels and portfolio formatting are intact. Remaining failure is admin hover button contrast on first row (computed fg rgb(15,23,42) on bg rgb(30,41,59), contrast ~1.22:1).",
+  "rca of the issue": "Repro: login as owner -> Admin tab -> hover any user row -> action button text becomes very dark. Root cause: App.css hover cascade sets row text to --hoverTextSafeColor and '[data-testid=\"admin-users-table\"] tbody tr:hover button { color: inherit !important; }' forces buttons to inherit same dark color while their background stays slate-800. Mitigation: override hovered action button text to a light color (e.g. text-slate-100) or remove inherit for buttons in hovered admin rows."
+}
