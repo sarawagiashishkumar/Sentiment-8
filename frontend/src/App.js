@@ -355,7 +355,6 @@ export default function App() {
       const response = await axios.post(`${API}/portfolio/analyze-upload`, formData, {
         headers: {
           ...authHeaders,
-          "Content-Type": "multipart/form-data",
         },
       });
       setPortfolioData(response.data);
@@ -838,6 +837,11 @@ export default function App() {
                               URGENT EXIT ALERT — Review this position now
                             </div>
                           ) : null}
+                          {position.alert === "EXIT_URGENT_NO_RECOVERY" && position.projected_exit_price ? (
+                            <p className="mt-2 text-sm font-extrabold text-red-200" data-testid={`custom-position-projected-exit-${position.id}`}>
+                              EXIT AT PROJECTED PRICE: ₹{formatNumber(position.projected_exit_price)}
+                            </p>
+                          ) : null}
                         </div>
                       );
                     })
@@ -1010,6 +1014,9 @@ export default function App() {
             <Card className="result-card border-slate-800 bg-slate-950/70">
               <CardHeader>
                 <CardTitle className="text-white">Portfolio Analysis</CardTitle>
+                <p className="text-xs text-slate-300" data-testid="script-master-link-note">
+                  Script Master Lookup: <a className="text-cyan-300 underline" href={`${BACKEND_URL}/api/script-master/lookup?q=RELIANCE`} target="_blank" rel="noreferrer">Open Reference Link</a>
+                </p>
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 <div className="space-y-3">

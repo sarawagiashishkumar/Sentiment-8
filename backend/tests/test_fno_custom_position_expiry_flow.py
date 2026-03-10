@@ -118,7 +118,7 @@ def test_custom_position_create_list_close_credit_deduction_and_alerts(api_clien
         assert isinstance(listed_row['minutes_to_expiry'], int)
         assert isinstance(listed_row['revised_exit_plan'], str)
         assert 'latest_option_ltp' in listed_row
-        assert listed_row.get('alert') in {None, 'EXIT_URGENT_TIME', 'EXIT_URGENT_LOSS', 'RISKY_PREMIUM'}
+        assert listed_row.get('alert') in {None, 'EXIT_URGENT_TIME', 'EXIT_URGENT_LOSS', 'RISKY_PREMIUM', 'EXIT_URGENT_NO_RECOVERY'}
         assert listed_row.get('alert') == 'EXIT_URGENT_LOSS'
 
         close = api_client.post(

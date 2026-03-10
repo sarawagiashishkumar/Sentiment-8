@@ -107,6 +107,8 @@ STOCK_FNO_UNIVERSE = [
     "TECHM",
 ]
 
+SCRIPT_MASTER_LAST_SYNC_DATE: str | None = None
+
 SYMBOL_HEADERS = {
     "symbol",
     "tradingsymbol",
@@ -430,6 +432,7 @@ class CustomPositionResponse(BaseModel):
     latest_option_ltp: float | None = None
     target1: float | None = None
     target2: float | None = None
+    projected_exit_price: float | None = None
     minutes_to_expiry: int
     revised_exit_plan: str
 
@@ -550,12 +553,32 @@ def _extract_positions_from_text_lines(text: str) -> list[dict]:
 
 
 def _parse_positions_from_csv_text(content: str) -> list[dict]:
-    reader = csv.reader(io.StringIO(content))
-    rows = [row for row in reader if row]
+    sample = content[:4096]
+    delimiter = ","
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        delimiter = dialect.delimiter
+    except Exception:
+        delimiter = ","
+
+    reader = csv.reader(io.StringIO(content), delimiter=delimiter)
+    rows = [row for row in reader if row and any(str(cell).strip() for cell in row)]
     if not rows:
         return []
-    headers = [str(value).strip() for value in rows[0]]
-    return _normalize_positions_from_rows(rows[1:], headers)
+
+    # detect header row flexibly
+    header_idx = 0
+    for idx, row in enumerate(rows[:5]):
+        normalized = {_normalize_header(str(item)) for item in row}
+        if normalized.intersection({_normalize_header(x) for x in SYMBOL_HEADERS}) and normalized.intersection({_normalize_header(x) for x in AVG_HEADERS}):
+            header_idx = idx
+            break
+
+    headers = [str(value).strip() for value in rows[header_idx]]
+    normalized_positions = _normalize_positions_from_rows(rows[header_idx + 1 :], headers)
+    if normalized_positions:
+        return normalized_positions
+    return _extract_positions_from_text_lines(content)
 
 
 def _parse_positions_from_excel_bytes(content: bytes) -> list[dict]:
@@ -579,9 +602,20 @@ def _parse_positions_from_pdf_bytes(content: bytes) -> list[dict]:
 def _parse_positions_from_image_bytes(content: bytes) -> list[dict]:
     if Image is None or pytesseract is None:
         return []
+    try:
+        _ = pytesseract.get_tesseract_version()
+    except Exception:
+        return []
+
     image = Image.open(io.BytesIO(content))
     text = pytesseract.image_to_string(image)
-    return _extract_positions_from_text_lines(text)
+    rows = _extract_positions_from_text_lines(text)
+    if rows:
+        return rows
+
+    # fallback OCR parse with image data mode
+    data_text = pytesseract.image_to_data(image, output_type=pytesseract.Output.STRING)
+    return _extract_positions_from_text_lines(data_text)
 
 
 async def _parse_positions_from_upload(file: UploadFile) -> list[dict]:
@@ -648,7 +682,8 @@ def _portfolio_horizon_ranges(
 async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyzeResponse:
     normalized_positions = []
     for row in positions:
-        symbol = re.sub(r"[^A-Z0-9]", "", str(row.get("symbol", "")).upper())
+        raw_symbol = str(row.get("symbol", "")).strip()
+        symbol = await _resolve_symbol_input(raw_symbol)
         avg_price = _to_float(row.get("avg_price"))
         quantity = _to_float(row.get("quantity"))
         if not symbol or avg_price is None or quantity is None or quantity <= 0:
@@ -840,6 +875,107 @@ def _validate_username(username: str) -> str:
     if not any(char.isalpha() for char in value) or not any(char.isdigit() for char in value):
         raise HTTPException(status_code=400, detail="Username must include at least one letter and one number")
     return value
+
+
+def _normalize_symbol_key(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+
+
+async def _sync_script_master_daily() -> None:
+    global SCRIPT_MASTER_LAST_SYNC_DATE
+    today = datetime.now(IST).date().isoformat()
+    if SCRIPT_MASTER_LAST_SYNC_DATE == today:
+        return
+
+    meta = await db.system_meta.find_one({"key": "script_master_sync"}, {"_id": 0})
+    if meta and meta.get("date") == today:
+        SCRIPT_MASTER_LAST_SYNC_DATE = today
+        return
+
+    seed_symbols = sorted(
+        {
+            *MULTIBAGGER_UNIVERSE,
+            *STOCK_FNO_UNIVERSE,
+            *[row["underlying"] for row in FNO_CONTRACTS],
+            "NIFTY",
+            "BANKNIFTY",
+        }
+    )
+
+    updates = 0
+    for symbol in seed_symbols:
+        canonical = _normalize_symbol_key(symbol)
+        if not canonical:
+            continue
+
+        aliases = {symbol, canonical}
+        display_name = symbol
+
+        try:
+            meta_symbol = await asyncio.to_thread(market_data_client.resolve_symbol_meta, canonical)
+        except Exception:
+            meta_symbol = None
+
+        if meta_symbol:
+            display_name = meta_symbol.get("name") or display_name
+            aliases.update({
+                meta_symbol.get("name", ""),
+                meta_symbol.get("id", ""),
+                meta_symbol.get("did", ""),
+                canonical,
+            })
+
+        clean_aliases = sorted({alias.strip() for alias in aliases if alias and str(alias).strip()})
+        normalized_aliases = sorted({_normalize_symbol_key(alias) for alias in clean_aliases if _normalize_symbol_key(alias)})
+
+        await db.script_master.update_one(
+            {"canonical_symbol": canonical},
+            {
+                "$set": {
+                    "canonical_symbol": canonical,
+                    "display_name": display_name,
+                    "aliases": clean_aliases,
+                    "normalized_aliases": normalized_aliases,
+                    "updated_at": _utc_now_iso(),
+                }
+            },
+            upsert=True,
+        )
+        updates += 1
+
+    await db.system_meta.update_one(
+        {"key": "script_master_sync"},
+        {
+            "$set": {
+                "key": "script_master_sync",
+                "date": today,
+                "updated_count": updates,
+                "updated_at": _utc_now_iso(),
+            }
+        },
+        upsert=True,
+    )
+    SCRIPT_MASTER_LAST_SYNC_DATE = today
+
+
+async def _resolve_symbol_input(value: str) -> str:
+    await _sync_script_master_daily()
+    cleaned = _normalize_symbol_key(value)
+    if not cleaned:
+        return cleaned
+
+    row = await db.script_master.find_one(
+        {
+            "$or": [
+                {"canonical_symbol": cleaned},
+                {"normalized_aliases": cleaned},
+            ]
+        },
+        {"_id": 0, "canonical_symbol": 1},
+    )
+    if row and row.get("canonical_symbol"):
+        return row["canonical_symbol"]
+    return cleaned
 
 
 async def _ensure_owner_exists() -> dict:
@@ -1303,13 +1439,14 @@ async def _resolve_contract_from_input(raw_script: str) -> FNOContract:
             lot_size=LOT_SIZE_MAP.get(underlying, 1),
         )
 
-    if script in {"NIFTY", "BANKNIFTY", "RELIANCE", "BDL", "SBIN", "TCS"}:
-        stock = StockCoreNormalized(**(await get_stock_core(script)))
+    resolved_symbol = await _resolve_symbol_input(script)
+    if resolved_symbol:
+        stock = StockCoreNormalized(**(await get_stock_core(resolved_symbol)))
         if stock.ltp is None:
             raise HTTPException(status_code=404, detail="Script not supported")
-        step = 50 if script == "NIFTY" else (100 if script == "BANKNIFTY" else (20 if stock.ltp > 300 else 10))
+        step = 50 if resolved_symbol == "NIFTY" else (100 if resolved_symbol == "BANKNIFTY" else (20 if stock.ltp > 300 else 10))
         strike = round(stock.ltp / step) * step
-        return await _build_contract(script, strike, "CE")
+        return await _build_contract(resolved_symbol, strike, "CE")
 
     raise HTTPException(status_code=404, detail="Script not supported")
 
@@ -1601,6 +1738,7 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
         latest_option_ltp=position.get("latest_option_ltp"),
         target1=position.get("target1"),
         target2=position.get("target2"),
+        projected_exit_price=position.get("projected_exit_price"),
         minutes_to_expiry=int(position.get("minutes_to_expiry", 0)),
         revised_exit_plan=position.get("revised_exit_plan", ""),
     )
@@ -1655,10 +1793,17 @@ async def _refresh_open_position(position: dict) -> dict:
     pnl_pct = ((latest_option_ltp - buy_price) / buy_price) if buy_price > 0 else 0.0
     revised_target1 = round(max(buy_price * 1.12, latest_option_ltp * 1.05), 2)
     revised_target2 = round(max(buy_price * 1.5, latest_option_ltp * 1.2), 2)
+    projected_exit_price = None
 
     alert = None
     revised_exit_plan = "Hold with trailing stop once target1 hits"
-    if minutes_to_expiry <= 15:
+    if pnl_pct <= -0.35 and latest_option_ltp < (0.9 * revised_target1):
+        alert = "EXIT_URGENT_NO_RECOVERY"
+        projected_exit_price = round(max(latest_option_ltp * 1.03, latest_option_ltp + 1.0), 2)
+        revised_exit_plan = (
+            f"URGENT EXIT: Recovery probability is very low. Exit near projected max price ₹{projected_exit_price}"
+        )
+    elif minutes_to_expiry <= 15:
         alert = "EXIT_URGENT_TIME"
         revised_exit_plan = "URGENT EXIT: Less than 15 minutes to expiry"
     elif pnl_pct <= -0.12:
@@ -1677,6 +1822,7 @@ async def _refresh_open_position(position: dict) -> dict:
                 "target2": revised_target2,
                 "minutes_to_expiry": minutes_to_expiry,
                 "alert": alert,
+                "projected_exit_price": projected_exit_price,
                 "last_update": _utc_now_iso(),
                 "revised_exit_plan": revised_exit_plan,
             }
@@ -1745,6 +1891,41 @@ async def auth_me(current_user: dict = Depends(get_current_user)):
         username=current_user["username"],
         admin_exempt=_is_credit_exempt(current_user),
     )
+
+
+@api_router.get("/script-master/lookup")
+async def script_master_lookup(q: str = Query(default="")):
+    query = q.strip()
+    if not query:
+        return {"query": query, "matches": []}
+
+    await _sync_script_master_daily()
+    resolved = await _resolve_symbol_input(query)
+    row = await db.script_master.find_one(
+        {"canonical_symbol": resolved},
+        {"_id": 0, "canonical_symbol": 1, "display_name": 1, "aliases": 1},
+    )
+    if not row:
+        return {"query": query, "matches": []}
+    return {
+        "query": query,
+        "matches": [
+            {
+                "symbol": row.get("canonical_symbol"),
+                "display_name": row.get("display_name"),
+                "aliases": row.get("aliases", []),
+            }
+        ],
+    }
+
+
+@api_router.post("/script-master/refresh")
+async def script_master_refresh(owner_user: dict = Depends(get_owner_user)):
+    _ = owner_user
+    global SCRIPT_MASTER_LAST_SYNC_DATE
+    SCRIPT_MASTER_LAST_SYNC_DATE = None
+    await _sync_script_master_daily()
+    return {"refreshed": True, "date": datetime.now(IST).date().isoformat()}
 
 
 @api_router.get("/admin/users", response_model=List[AdminUserView])
@@ -2009,7 +2190,16 @@ async def create_custom_position(
     _validate_expiry_guard(minutes_to_expiry)
 
     updated_user, charged = await _consume_credits(current_user, 1.0)
-    latest_option_ltp = await asyncio.to_thread(market_data_client.fetch_option_ltp_for_contract, contract.model_dump())
+    try:
+        latest_option_ltp = await asyncio.to_thread(
+            market_data_client.fetch_option_ltp_for_contract,
+            contract.model_dump(),
+        )
+    except Exception:
+        core = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
+        if core.ltp is None:
+            raise HTTPException(status_code=502, detail="Unable to fetch live option LTP")
+        latest_option_ltp = _estimate_option_ltp(core.ltp, contract.strike, contract.option_type)
 
     position_id = str(uuid.uuid4())
     now_iso = _utc_now_iso()
@@ -2031,6 +2221,7 @@ async def create_custom_position(
         "latest_option_ltp": round(float(latest_option_ltp), 2),
         "target1": round(float(payload.buy_price) * 1.12, 2),
         "target2": round(float(payload.buy_price) * 1.5, 2),
+        "projected_exit_price": None,
         "minutes_to_expiry": minutes_to_expiry,
         "revised_exit_plan": "Hold with trailing stop once target1 hits",
     }
@@ -2220,6 +2411,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_tasks():
+    await _ensure_owner_exists()
+    await _sync_script_master_daily()
 
 
 @app.on_event("shutdown")
