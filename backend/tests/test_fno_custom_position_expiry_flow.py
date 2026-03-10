@@ -96,13 +96,13 @@ def test_custom_position_create_list_close_credit_deduction_and_alerts(api_clien
         assert create.status_code == 200
         created = create.json()
         position_id = created['position']['id']
-        assert created['cost_charged'] == 2
+        assert created['cost_charged'] == 1
         assert created['position']['status'] == 'OPEN'
         assert isinstance(created['position']['minutes_to_expiry'], int)
         assert created['position']['minutes_to_expiry'] > 0
 
         after_credits = api_client.get(f'{api_base_url}/auth/me', headers=user_headers, timeout=30).json()['credits']
-        assert before_credits - after_credits == 2
+        assert before_credits - after_credits == 1
 
         # Poll list endpoint to validate sticky projection lifecycle + urgent alert behavior
         listed_row = None

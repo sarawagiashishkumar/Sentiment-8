@@ -181,7 +181,7 @@ class AccessRequest(BaseModel):
 class AccessResponse(BaseModel):
     token: str
     role: Literal["owner", "sub_admin", "user"]
-    credits: int
+    credits: float
     user_key: str
     username: str
     admin_exempt: bool
@@ -189,7 +189,7 @@ class AccessResponse(BaseModel):
 
 class MeResponse(BaseModel):
     role: Literal["owner", "sub_admin", "user"]
-    credits: int
+    credits: float
     user_key: str
     username: str
     admin_exempt: bool
@@ -199,7 +199,7 @@ class AdminUserView(BaseModel):
     user_key: str
     username: str
     role: Literal["owner", "sub_admin", "user"]
-    credits: int
+    credits: float
     created_at: str
     created_by: str
     quota_limit: int
@@ -211,12 +211,12 @@ class AdminCreateUserRequest(BaseModel):
     username: str | None = None
     password: str | None = None
     role: Literal["sub_admin", "user"] = "user"
-    initial_credits: int = 0
+    initial_credits: float = 0
     quota_limit: int = 10
 
 
 class AdminSetCreditsRequest(BaseModel):
-    credits: int
+    credits: float
 
 
 class AdminSetQuotaRequest(BaseModel):
@@ -332,8 +332,8 @@ class IndexProjectionPane(BaseModel):
 
 
 class MultibaggerGenerateResponse(BaseModel):
-    cost_charged: int
-    credits_remaining: int
+    cost_charged: float
+    credits_remaining: float
     analysis_refreshed_at: str
     candidates: List[MultibaggerCandidate]
     potential_count: int
@@ -344,8 +344,8 @@ class FNOGenerateRequest(BaseModel):
 
 
 class FNOGenerateResponse(BaseModel):
-    cost_charged: int
-    credits_remaining: int
+    cost_charged: float
+    credits_remaining: float
     analysis_refreshed_at: str
     signals: List[FNOSignalResponse]
     potential_signals: List[FNOSignalResponse]
@@ -372,6 +372,13 @@ class PortfolioHorizonRange(BaseModel):
     flag: Literal["GREEN", "RED"]
 
 
+class PortfolioExpectedSignal(BaseModel):
+    max_expected_price: float
+    amount_signal: str
+    percent_signal: str
+    direction: Literal["PROFIT", "LOSS"]
+
+
 class PortfolioStockAnalysis(BaseModel):
     symbol: str
     company_name: str
@@ -391,11 +398,14 @@ class PortfolioStockAnalysis(BaseModel):
     momentum_proxy: Literal["Positive trend", "Flat", "Negative trend"]
     quality_proxy: Literal["Stable quality", "Speculative", "Moderate"]
     expected_ranges: dict[str, PortfolioHorizonRange]
+    expected_signals: dict[str, PortfolioExpectedSignal]
     recommendation: str
     comments: str
 
 
 class PortfolioAnalyzeResponse(BaseModel):
+    cost_charged: float
+    credits_remaining: float
     parsed_positions_count: int
     stocks: List[PortfolioStockAnalysis]
 
@@ -425,8 +435,8 @@ class CustomPositionResponse(BaseModel):
 
 
 class CustomPositionCreateResponse(BaseModel):
-    cost_charged: int
-    credits_remaining: int
+    cost_charged: float
+    credits_remaining: float
     position: CustomPositionResponse
 
 
@@ -722,6 +732,19 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
             quality_proxy = "Moderate"
 
         expected_ranges = _portfolio_horizon_ranges(value_flag, price_zone, row["pnl_pct"])
+        expected_signals: dict[str, PortfolioExpectedSignal] = {}
+        for horizon, hr in expected_ranges.items():
+            max_expected_price = round(stock.ltp * (1 + (hr.upside_pct / 100)), 2)
+            delta_amount = max_expected_price - row["avg_price"]
+            delta_pct = (delta_amount / row["avg_price"]) * 100 if row["avg_price"] > 0 else 0.0
+            amount_signal = f"{delta_amount:+.2f}"
+            percent_signal = f"{delta_pct:+.2f}%"
+            expected_signals[horizon] = PortfolioExpectedSignal(
+                max_expected_price=max_expected_price,
+                amount_signal=amount_signal,
+                percent_signal=percent_signal,
+                direction="PROFIT" if delta_amount >= 0 else "LOSS",
+            )
 
         if value_flag == "Attractive" and price_zone != "Near 52W high":
             recommendation = "Accumulate on dips"
@@ -757,6 +780,7 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
                 momentum_proxy=momentum_proxy,
                 quality_proxy=quality_proxy,
                 expected_ranges=expected_ranges,
+                expected_signals=expected_signals,
                 recommendation=recommendation,
                 comments=comments,
             )
@@ -764,6 +788,8 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
 
     analyses.sort(key=lambda row: row.allocation_pct, reverse=True)
     return PortfolioAnalyzeResponse(
+        cost_charged=0.0,
+        credits_remaining=0.0,
         parsed_positions_count=len(analyses),
         stocks=analyses,
     )
@@ -865,10 +891,10 @@ def _is_credit_exempt(user: dict) -> bool:
     return user.get("role") in {"owner", "sub_admin"}
 
 
-async def _consume_credits(user: dict, cost: int) -> tuple[dict, int]:
+async def _consume_credits(user: dict, cost: float) -> tuple[dict, float]:
     if _is_credit_exempt(user):
         latest = await _get_user_by_key(user["user_key"])
-        return latest or user, 0
+        return latest or user, 0.0
 
     updated = await db.app_users.find_one_and_update(
         {"user_key": user["user_key"], "credits": {"$gte": cost}},
@@ -878,12 +904,12 @@ async def _consume_credits(user: dict, cost: int) -> tuple[dict, int]:
     )
     if not updated:
         latest = await _get_user_by_key(user["user_key"])
-        current = int(latest.get("credits", 0)) if latest else 0
+        current = float(latest.get("credits", 0)) if latest else 0.0
         raise HTTPException(
             status_code=402,
-            detail=f"Insufficient credits. Required {cost}, available {current}",
+            detail=f"Insufficient credits. Required {round(cost,2)}, available {round(current,2)}",
         )
-    return updated, cost
+    return updated, float(cost)
 
 
 def _map_user_view(user: dict) -> AdminUserView:
@@ -897,7 +923,7 @@ def _map_user_view(user: dict) -> AdminUserView:
         user_key=user.get("user_key", str(uuid.uuid4())),
         username=username,
         role=role,
-        credits=int(user.get("credits", 0)),
+        credits=round(float(user.get("credits", 0)), 2),
         created_at=user.get("created_at", ""),
         created_by=user.get("created_by", "SYSTEM"),
         quota_limit=int(user.get("quota_limit", 0)),
@@ -1691,7 +1717,7 @@ async def auth_access(payload: AccessRequest):
     return AccessResponse(
         token=token,
         role=user["role"],
-        credits=int(user.get("credits", 0)),
+        credits=round(float(user.get("credits", 0)), 2),
         user_key=user["user_key"],
         username=user["username"],
         admin_exempt=_is_credit_exempt(user),
@@ -1714,7 +1740,7 @@ async def auth_logout(
 async def auth_me(current_user: dict = Depends(get_current_user)):
     return MeResponse(
         role=current_user["role"],
-        credits=int(current_user.get("credits", 0)),
+        credits=round(float(current_user.get("credits", 0)), 2),
         user_key=current_user["user_key"],
         username=current_user["username"],
         admin_exempt=_is_credit_exempt(current_user),
@@ -1771,7 +1797,7 @@ async def admin_create_user(payload: AdminCreateUserRequest, admin_user: dict = 
         "user_key": str(uuid.uuid4()),
         "username": username,
         "role": role,
-        "credits": max(0, int(payload.initial_credits)),
+        "credits": max(0.0, float(payload.initial_credits)),
         "created_at": _utc_now_iso(),
         "created_by": admin_user["username"],
         "quota_limit": max(1, int(payload.quota_limit)) if role == "sub_admin" else 0,
@@ -1806,7 +1832,7 @@ async def admin_set_credits(
 
     updated = await db.app_users.find_one_and_update(
         {"user_key": target["user_key"]},
-        {"$set": {"credits": max(0, int(payload.credits))}},
+        {"$set": {"credits": max(0.0, float(payload.credits))}},
         projection={"_id": 0},
         return_document=ReturnDocument.AFTER,
     )
@@ -1856,13 +1882,13 @@ async def admin_delete_user(user_ref: str, admin_user: dict = Depends(get_admin_
 
 @api_router.post("/multibagger/generate", response_model=MultibaggerGenerateResponse)
 async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
-    updated_user, charged = await _consume_credits(current_user, 1)
+    updated_user, charged = await _consume_credits(current_user, 2.0)
     refreshed_at = _utc_now_iso()
     candidates = await _build_multibagger_candidates(refreshed_at)
     potential_count = len([row for row in candidates if row.is_potential_multibagger])
     return MultibaggerGenerateResponse(
         cost_charged=charged,
-        credits_remaining=int(updated_user.get("credits", 0)),
+        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
         analysis_refreshed_at=refreshed_at,
         candidates=candidates,
         potential_count=potential_count,
@@ -1958,7 +1984,7 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
 
     return FNOGenerateResponse(
         cost_charged=charged,
-        credits_remaining=int(updated_user.get("credits", 0)),
+        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
         analysis_refreshed_at=refreshed_at,
         signals=signals,
         potential_signals=[row for row in signals if row.is_potential_trade],
@@ -1982,7 +2008,7 @@ async def create_custom_position(
     minutes_to_expiry = get_minutes_to_expiry(contract)
     _validate_expiry_guard(minutes_to_expiry)
 
-    updated_user, charged = await _consume_credits(current_user, 2)
+    updated_user, charged = await _consume_credits(current_user, 1.0)
     latest_option_ltp = await asyncio.to_thread(market_data_client.fetch_option_ltp_for_contract, contract.model_dump())
 
     position_id = str(uuid.uuid4())
@@ -2012,7 +2038,7 @@ async def create_custom_position(
     await db.custom_positions.insert_one(doc)
     return CustomPositionCreateResponse(
         cost_charged=charged,
-        credits_remaining=int(updated_user.get("credits", 0)),
+        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
         position=_position_to_response(doc),
     )
 
@@ -2072,9 +2098,16 @@ async def analyze_portfolio_manual(
     payload: PortfolioAnalyzeRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    _ = current_user
     normalized = [item.model_dump() for item in payload.positions]
-    return await _analyze_portfolio_positions(normalized)
+    analysis = await _analyze_portfolio_positions(normalized)
+    cost = round(0.2 * analysis.parsed_positions_count, 2)
+    updated_user, charged = await _consume_credits(current_user, cost)
+    return PortfolioAnalyzeResponse(
+        cost_charged=charged,
+        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
+        parsed_positions_count=analysis.parsed_positions_count,
+        stocks=analysis.stocks,
+    )
 
 
 @api_router.post("/portfolio/analyze-upload", response_model=PortfolioAnalyzeResponse)
@@ -2082,14 +2115,21 @@ async def analyze_portfolio_upload(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    _ = current_user
     extension = (file.filename or "").split(".")[-1].lower() if "." in (file.filename or "") else ""
     allowed = {"txt", "csv", "xls", "xlsx", "pdf", "jpg", "jpeg", "bmp"}
     if extension not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
     positions = await _parse_positions_from_upload(file)
-    return await _analyze_portfolio_positions(positions)
+    analysis = await _analyze_portfolio_positions(positions)
+    cost = round(0.2 * analysis.parsed_positions_count, 2)
+    updated_user, charged = await _consume_credits(current_user, cost)
+    return PortfolioAnalyzeResponse(
+        cost_charged=charged,
+        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
+        parsed_positions_count=analysis.parsed_positions_count,
+        stocks=analysis.stocks,
+    )
 
 
 @api_router.get("/fno/scripts/search", response_model=ScriptSearchResult)

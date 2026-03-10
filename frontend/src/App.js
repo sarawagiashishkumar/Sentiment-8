@@ -333,6 +333,7 @@ export default function App() {
         { headers: authHeaders },
       );
       setPortfolioData(response.data);
+      syncCredits(response.data.credits_remaining);
     } catch (error) {
       setPortfolioError(error?.response?.data?.detail || "Unable to analyze portfolio.");
     } finally {
@@ -358,6 +359,7 @@ export default function App() {
         },
       });
       setPortfolioData(response.data);
+      syncCredits(response.data.credits_remaining);
     } catch (error) {
       setPortfolioError(error?.response?.data?.detail || "Unable to parse uploaded file.");
     } finally {
@@ -525,7 +527,7 @@ export default function App() {
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3" data-testid="summary-cost-note">
               <p className="text-xs text-slate-400">Generation Cost</p>
-              <p className="font-mono text-sm text-cyan-300">Multibagger:1 | F&O:2</p>
+              <p className="font-mono text-sm text-cyan-300">Multibagger:2 | F&O:2 | Custom F&O:1 | Portfolio:0.2/stock</p>
             </div>
           </div>
         </header>
@@ -648,7 +650,7 @@ export default function App() {
                   data-testid="multibagger-generate-button"
                 >
                   <RefreshCw size={16} className={multibaggerLoading ? "animate-spin" : ""} />
-                  {multibaggerLoading ? "Finding..." : "Find Multibagger"}
+                  {multibaggerLoading ? "Finding..." : "Find Multibagger (-2)"}
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -668,7 +670,7 @@ export default function App() {
                 {multibaggerError ? <p className="text-sm text-rose-400" data-testid="multibagger-error">{multibaggerError}</p> : null}
                 {!multibaggerData ? (
                   <p className="text-sm text-slate-400" data-testid="multibagger-empty-note">
-                    Nothing shown yet. Click <strong>Find Multibagger</strong> to run live analysis.
+                    Nothing shown yet. Click <strong>Find Multibagger (-2)</strong> to run live analysis.
                   </p>
                 ) : (
                   <p className="text-xs text-slate-400" data-testid="multibagger-refreshed-at">
@@ -765,7 +767,7 @@ export default function App() {
                   data-testid="fno-generate-button"
                 >
                   <RefreshCw size={16} className={fnoLoading ? "animate-spin" : ""} />
-                  {fnoLoading ? "Generating..." : "Generate F&O Projections"}
+                  {fnoLoading ? "Generating..." : "Generate F&O Projections (-2)"}
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -796,7 +798,7 @@ export default function App() {
                     className="border border-slate-700 bg-slate-900 text-yellow-200 hover:bg-yellow-200 hover:text-slate-900"
                     data-testid="fno-custom-script-submit"
                   >
-                    {customPositionLoading ? "Saving..." : "RUN CUSTOM PROJECTION"}
+                    {customPositionLoading ? "Saving..." : "RUN CUSTOM PROJECTION (-1)"}
                   </Button>
                 </form>
                 {customPositionError ? (
@@ -848,7 +850,7 @@ export default function App() {
                 {fnoError ? <p className="text-sm text-rose-400" data-testid="fno-error">{fnoError}</p> : null}
                 {!fnoData ? (
                   <p className="text-sm text-slate-400" data-testid="fno-empty-note">
-                    Nothing shown yet. Click <strong>Generate F&O Projections</strong> for live analysis.
+                    Nothing shown yet. Click <strong>Generate F&O Projections (-2)</strong> for live analysis.
                   </p>
                 ) : (
                   <p className="text-xs text-slate-400" data-testid="fno-refreshed-at">
@@ -1025,7 +1027,7 @@ export default function App() {
                     className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
                     data-testid="portfolio-upload-submit"
                   >
-                    <FileUp size={16} /> Analyze Uploaded Portfolio
+                    <FileUp size={16} /> Analyze Uploaded Portfolio (0.2 per parsed stock)
                   </Button>
                 </div>
 
@@ -1086,7 +1088,7 @@ export default function App() {
                     className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
                     data-testid="portfolio-manual-submit"
                   >
-                    Submit Portfolio
+                    Submit Portfolio (0.2 per stock)
                   </Button>
                 </form>
               </CardContent>
@@ -1097,6 +1099,11 @@ export default function App() {
             ) : null}
             {portfolioLoading ? (
               <p className="text-sm text-cyan-300" data-testid="portfolio-loading">Analyzing portfolio...</p>
+            ) : null}
+            {portfolioData ? (
+              <p className="text-xs text-slate-300" data-testid="portfolio-charge-info">
+                Charged: {portfolioData.cost_charged} | Credits Remaining: {portfolioData.credits_remaining}
+              </p>
             ) : null}
 
             {portfolioData?.stocks?.length ? (
@@ -1121,20 +1128,22 @@ export default function App() {
                           <TableHeader>
                             <TableRow>
                               <TableHead>Horizon</TableHead>
-                              <TableHead>Upside %</TableHead>
-                              <TableHead>Downside %</TableHead>
-                              <TableHead>Flag</TableHead>
+                              <TableHead>Max Expected Price</TableHead>
+                              <TableHead>Amount (+/-)</TableHead>
+                              <TableHead>Percent (+/-)</TableHead>
+                              <TableHead>Signal</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {Object.entries(stock.expected_ranges || {}).map(([horizon, values]) => (
+                            {Object.entries(stock.expected_signals || {}).map(([horizon, values]) => (
                               <TableRow key={`${stock.symbol}-${horizon}`}>
                                 <TableCell>{horizon}</TableCell>
-                                <TableCell className="font-mono text-emerald-300">{formatNumber(values.upside_pct)}%</TableCell>
-                                <TableCell className="font-mono text-rose-300">{formatNumber(values.downside_pct)}%</TableCell>
+                                <TableCell className="font-mono">₹{formatNumber(values.max_expected_price)}</TableCell>
+                                <TableCell className={`font-mono ${values.direction === "PROFIT" ? "text-emerald-300" : "text-rose-300"}`}>{values.amount_signal}</TableCell>
+                                <TableCell className={`font-mono ${values.direction === "PROFIT" ? "text-emerald-300" : "text-rose-300"}`}>{values.percent_signal}</TableCell>
                                 <TableCell>
-                                  <Badge className={`border ${values.flag === "GREEN" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}>
-                                    {values.flag}
+                                  <Badge className={`border ${values.direction === "PROFIT" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}>
+                                    {values.direction}
                                   </Badge>
                                 </TableCell>
                               </TableRow>

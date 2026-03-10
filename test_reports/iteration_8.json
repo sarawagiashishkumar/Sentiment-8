@@ -1,0 +1,47 @@
+{
+  "summary": "Executed backend + frontend regression for revised pricing, portfolio expected signals, expanded stock F&O output, and core login/admin/custom-position flows. Functional coverage passed; one hover readability design regression observed in Admin table action controls.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Admin page user table (row hover state)",
+        "issues": [
+          "Global hover rule forces dark text on all descendants; inside dark action buttons (e.g., Update Credits), text contrast becomes very low and hard to read."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_pricing_and_portfolio_contracts.py",
+    "/app/backend/tests/test_structured_changes_portfolio_fno.py",
+    "/app/backend/tests/test_upgrade_dashboard_flows.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Adjust hover CSS specificity so button text inside hovered result rows remains readable (exclude button descendants or define button text color override).",
+    "Keep iteration-8 pricing/portfolio contract tests in CI regression suite."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py remains a 2200+ line monolith (>700 guideline) and should be split into auth/admin/fno/portfolio modules to reduce regression risk and improve maintainability.",
+    "FastAPI shutdown event uses deprecated on_event API; migrate to lifespan handlers.",
+    "Broad CSS selector '.result-hover:hover *' is high-risk and caused contrast regression in nested controls."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8_pricing_and_portfolio_contracts.py",
+    "/app/test_reports/iteration_8.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "96%"
+  },
+  "seed_data_creation": "Temporary users/custom positions created during tests; pytest cleanup removed API-created test users. UI run also created/deleted a temporary user.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "18 backend tests passed on public endpoint. Pricing observed: multibagger=2, fno=2, custom-position=1, portfolio=0.2 x parsed_positions_count with credit delta matching expected spend. F&O UI generated 16 stock cards and 4 top trades in this run.",
+  "rca of the issue": "Design RCA: App.css hover rule '.result-hover:hover * { color: var(--hoverTextSafeColor)!important; }' overrides child button typography indiscriminately. When row background changes but button background stays dark, text becomes dark-on-dark and unreadable. Mitigation: scope hover text override to non-interactive descendants or set explicit contrasting button text color on row hover."
+}

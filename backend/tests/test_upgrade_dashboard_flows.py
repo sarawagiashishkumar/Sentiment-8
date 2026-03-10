@@ -235,7 +235,7 @@ def test_credits_deduct_for_basic_user_but_not_for_owner_or_sub_admin(api_client
     basic_after = api_client.get(f'{api_base_url}/auth/me', headers=basic_headers, timeout=30).json()['credits']
     sub_after = api_client.get(f'{api_base_url}/auth/me', headers=sub_headers, timeout=30).json()['credits']
 
-    assert basic_before - basic_after == 1
+    assert basic_before - basic_after == 2
     assert sub_before == sub_after
 
 
@@ -265,7 +265,7 @@ def test_custom_position_create_list_close_and_alert_fields(api_client, api_base
     )
     assert create.status_code == 200
     payload = create.json()
-    assert payload['cost_charged'] == 2
+    assert payload['cost_charged'] == 1
     assert payload['position']['status'] == 'OPEN'
     assert payload['position']['minutes_to_expiry'] > 0
     position_id = payload['position']['id']
