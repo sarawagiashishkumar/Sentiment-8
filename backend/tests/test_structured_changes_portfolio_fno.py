@@ -155,19 +155,15 @@ def test_stock_signal_builder_is_not_hard_capped_to_three(monkeypatch):
             "sector": "TEST",
         }
 
-    async def fake_build_contract(symbol, strike, option_type):
-        return {"symbol": symbol, "strike": strike, "option_type": option_type}
-
-    async def fake_safe_signal(contract, refreshed_at, sem):
-        return DummySignal(
-            script=f"{contract['symbol']}-{contract['option_type']}",
-            score=80,
-        )
+    def fake_build_fno_signal(contract, stock_core, option_ltp, refreshed_at, minutes_to_expiry):
+        _ = stock_core, option_ltp, refreshed_at, minutes_to_expiry
+        return DummySignal(script=f"{contract.underlying}-{contract.option_type}", score=80)
 
     monkeypatch.setattr(server, "STOCK_FNO_UNIVERSE", ["A", "B", "C", "D"])
     monkeypatch.setattr(server, "get_stock_core", fake_get_stock_core)
-    monkeypatch.setattr(server, "_build_contract", fake_build_contract)
-    monkeypatch.setattr(server, "_safe_signal", fake_safe_signal)
+    monkeypatch.setattr(server, "build_fno_signal", fake_build_fno_signal)
+    monkeypatch.setattr(server, "get_minutes_to_expiry", lambda contract: 300)
+    monkeypatch.setattr(server, "_estimate_option_ltp", lambda ltp, strike, option_type: 100.0)
 
     rows = asyncio.run(server._build_stock_fno_signals("2026-02-01T00:00:00Z"))
     assert len(rows) == 8

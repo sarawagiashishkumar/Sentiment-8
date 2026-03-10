@@ -1332,13 +1332,22 @@ async def _build_report(index_name: Literal["NIFTY", "BANKNIFTY"], weighted: boo
     weight_source = NIFTY_WEIGHT_PROXY if index_name == "NIFTY" else BANKNIFTY_WEIGHT_PROXY
     symbols = [symbol for symbol, _ in weight_source]
     rows = await asyncio.gather(*[get_stock_core(symbol) for symbol in symbols])
+    normalized_rows = [StockCoreNormalized(**row) for row in rows]
+    return _compute_report_from_rows(index_name, weight_source, normalized_rows, weighted)
+
+
+def _compute_report_from_rows(
+    index_name: Literal["NIFTY", "BANKNIFTY"],
+    weight_source: list[tuple[str, float]],
+    rows: list[StockCoreNormalized],
+    weighted: bool,
+) -> IndexAnalysisReport:
 
     contributions: list[tuple[str, float]] = []
     bullish_count = 0
     total_weight = 0.0
     total_momentum = 0.0
-    for idx, row in enumerate(rows):
-        stock = StockCoreNormalized(**row)
+    for idx, stock in enumerate(rows):
         day_change = 0.0
         if stock.ltp is not None and stock.prev_close is not None and stock.prev_close > 0:
             day_change = ((stock.ltp - stock.prev_close) / stock.prev_close) * 100
@@ -1386,16 +1395,38 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     atm = round(stock.ltp / step) * step
     strike_range_min = atm - 500
     strike_range_max = atm + 500
+    expiry = await _get_nearest_expiry(index_name)
 
     strikes = list(range(int(strike_range_min), int(strike_range_max) + step, step))
-    contracts: list[FNOContract] = []
+    rows: list[FNOSignalResponse] = []
     for strike in strikes:
-        contracts.append(await _build_contract(index_name, strike, "CE"))
-        contracts.append(await _build_contract(index_name, strike, "PE"))
-
-    sem = asyncio.Semaphore(12)
-    tasks = [_safe_signal(contract, refreshed_at, sem) for contract in contracts]
-    rows = [item for item in await asyncio.gather(*tasks) if item is not None]
+        for option_type in ["CE", "PE"]:
+            contract = FNOContract(
+                script=_format_script(index_name, expiry, strike, option_type),
+                underlying=index_name,
+                expiry=expiry,
+                expiry_time_ist="15:30",
+                strike=float(strike),
+                option_type=option_type,
+                exchange="NFO",
+                lot_size=LOT_SIZE_MAP.get(index_name, 1),
+            )
+            minutes_to_expiry = get_minutes_to_expiry(contract)
+            if minutes_to_expiry <= 15:
+                continue
+            option_ltp = _estimate_option_ltp(stock.ltp, float(strike), option_type)
+            try:
+                rows.append(
+                    build_fno_signal(
+                        contract,
+                        stock,
+                        option_ltp,
+                        refreshed_at,
+                        minutes_to_expiry,
+                    )
+                )
+            except HTTPException:
+                continue
 
     potential = [item for item in rows if item.is_potential_trade]
     by_strike: dict[float, list[FNOSignalResponse]] = defaultdict(list)
@@ -1432,10 +1463,11 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
-    with_report, without_report = await asyncio.gather(
-        _build_report(index_name, weighted=True),
-        _build_report(index_name, weighted=False),
-    )
+    weight_source = NIFTY_WEIGHT_PROXY if index_name == "NIFTY" else BANKNIFTY_WEIGHT_PROXY
+    report_rows = await asyncio.gather(*[get_stock_core(symbol) for symbol, _ in weight_source])
+    normalized_report_rows = [StockCoreNormalized(**row) for row in report_rows]
+    with_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=True)
+    without_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=False)
 
     return IndexProjectionPane(
         index_name=index_name,
@@ -1452,25 +1484,36 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
 async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]:
     symbols = STOCK_FNO_UNIVERSE
     results: list[FNOSignalResponse] = []
-
-    for symbol in symbols:
-        core = StockCoreNormalized(**(await get_stock_core(symbol)))
+    default_expiry = (datetime.now(IST) + timedelta(days=7)).strftime("%Y-%m-%d")
+    cores = await asyncio.gather(*[get_stock_core(symbol) for symbol in symbols])
+    for idx, symbol in enumerate(symbols):
+        core = StockCoreNormalized(**cores[idx])
         if core.ltp is None:
             continue
 
         step = 20 if core.ltp > 400 else 10
         strike = round(core.ltp / step) * step
-        ce_contract = await _build_contract(symbol, strike, "CE")
-        pe_contract = await _build_contract(symbol, strike, "PE")
-
-        ce_signal = await _safe_signal(ce_contract, refreshed_at, asyncio.Semaphore(1))
-        pe_signal = await _safe_signal(pe_contract, refreshed_at, asyncio.Semaphore(1))
-        qualifying = [
-            item
-            for item in [ce_signal, pe_signal]
-            if item and item.is_potential_trade and item.confluence_score >= 72
-        ]
-        results.extend(qualifying)
+        for option_type in ["CE", "PE"]:
+            contract = FNOContract(
+                script=_format_script(symbol, default_expiry, strike, option_type),
+                underlying=symbol,
+                expiry=default_expiry,
+                expiry_time_ist="15:30",
+                strike=float(strike),
+                option_type=option_type,
+                exchange="NFO",
+                lot_size=LOT_SIZE_MAP.get(symbol, 1),
+            )
+            minutes_to_expiry = get_minutes_to_expiry(contract)
+            if minutes_to_expiry <= 15:
+                continue
+            option_ltp = _estimate_option_ltp(core.ltp, float(strike), option_type)
+            try:
+                signal = build_fno_signal(contract, core, option_ltp, refreshed_at, minutes_to_expiry)
+                if signal.is_potential_trade and signal.confluence_score >= 72:
+                    results.append(signal)
+            except HTTPException:
+                continue
 
     results.sort(key=lambda row: row.confluence_score, reverse=True)
     return results
@@ -1831,11 +1874,66 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
     updated_user, charged = await _consume_credits(current_user, 2)
     refreshed_at = _utc_now_iso()
 
-    nifty_projection, banknifty_projection, stock_signals = await asyncio.gather(
-        _build_index_projection("NIFTY", refreshed_at),
-        _build_index_projection("BANKNIFTY", refreshed_at),
-        _build_stock_fno_signals(refreshed_at),
-    )
+    try:
+        nifty_projection = await asyncio.wait_for(_build_index_projection("NIFTY", refreshed_at), timeout=25)
+    except Exception:
+        nifty_projection = IndexProjectionPane(
+            index_name="NIFTY",
+            spot=0,
+            strike_range_min=0,
+            strike_range_max=0,
+            assured_signals=[],
+            non_directional_strategies=[],
+            with_consolidated_report=IndexAnalysisReport(
+                report_type="with_consolidated",
+                breadth_score=0,
+                momentum_score=0,
+                bias="NEUTRAL",
+                top_contributors=[],
+                summary="NIFTY projection temporarily unavailable",
+            ),
+            without_consolidated_report=IndexAnalysisReport(
+                report_type="without_consolidated",
+                breadth_score=0,
+                momentum_score=0,
+                bias="NEUTRAL",
+                top_contributors=[],
+                summary="NIFTY projection temporarily unavailable",
+            ),
+        )
+
+    try:
+        banknifty_projection = await asyncio.wait_for(_build_index_projection("BANKNIFTY", refreshed_at), timeout=25)
+    except Exception:
+        banknifty_projection = IndexProjectionPane(
+            index_name="BANKNIFTY",
+            spot=0,
+            strike_range_min=0,
+            strike_range_max=0,
+            assured_signals=[],
+            non_directional_strategies=[],
+            with_consolidated_report=IndexAnalysisReport(
+                report_type="with_consolidated",
+                breadth_score=0,
+                momentum_score=0,
+                bias="NEUTRAL",
+                top_contributors=[],
+                summary="BANKNIFTY projection temporarily unavailable",
+            ),
+            without_consolidated_report=IndexAnalysisReport(
+                report_type="without_consolidated",
+                breadth_score=0,
+                momentum_score=0,
+                bias="NEUTRAL",
+                top_contributors=[],
+                summary="BANKNIFTY projection temporarily unavailable",
+            ),
+        )
+
+    try:
+        stock_signals = await asyncio.wait_for(_build_stock_fno_signals(refreshed_at), timeout=20)
+    except Exception:
+        stock_signals = []
 
     potential_signals = [
         *nifty_projection.assured_signals,
