@@ -4,7 +4,7 @@ import os
 import re
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Literal
 
@@ -40,6 +40,7 @@ LEGACY_OWNER_ALIAS = os.environ.get("LEGACY_OWNER_ALIAS", "owner123")
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9@._-]{6,}$")
 SCRIPT_PATTERN = re.compile(r"^([A-Z]+)(\d{1,2})([A-Z]{3})(\d+)(CE|PE)$")
 SESSION_STORE: Dict[str, dict] = {}
+IST = timezone(timedelta(hours=5, minutes=30))
 
 MONTH_MAP = {
     "JAN": 1,
@@ -200,6 +201,7 @@ class FNOContract(BaseModel):
     script: str
     underlying: str
     expiry: str
+    expiry_time_ist: str = "15:30"
     strike: float
     option_type: Literal["CE", "PE"]
     exchange: str
@@ -228,6 +230,8 @@ class FNOSignalResponse(BaseModel):
     confluence_score: int
     signal_quality: Literal["HIGH", "MEDIUM", "LOW"]
     is_potential_trade: bool
+    minutes_to_expiry: int
+    expiry_risk: Literal["LOW", "MEDIUM", "HIGH"]
     analysis_refreshed_at: str
 
 
@@ -286,6 +290,36 @@ class FNOGenerateResponse(BaseModel):
     stock_signals: List[FNOSignalResponse]
 
 
+class CustomPositionCreateRequest(BaseModel):
+    script: str
+    buy_price: float
+
+
+class CustomPositionResponse(BaseModel):
+    id: str
+    script: str
+    underlying: str
+    expiry_date: str
+    expiry_time_ist: str
+    lot_size: int
+    buy_price: float
+    created_at: str
+    last_update: str
+    status: Literal["OPEN", "CLOSED", "EXPIRED"]
+    alert: str | None = None
+    latest_option_ltp: float | None = None
+    target1: float | None = None
+    target2: float | None = None
+    minutes_to_expiry: int
+    revised_exit_plan: str
+
+
+class CustomPositionCreateResponse(BaseModel):
+    cost_charged: int
+    credits_remaining: int
+    position: CustomPositionResponse
+
+
 class ScriptSearchResult(BaseModel):
     query: str
     suggestions: List[str]
@@ -309,6 +343,35 @@ def _position_in_range(ltp: float | None, year_low: float | None, year_high: flo
     if ltp is None or year_low is None or year_high is None or year_high <= year_low:
         return None
     return clamp((ltp - year_low) / (year_high - year_low), 0.0, 1.0)
+
+
+def get_minutes_to_expiry(contract: FNOContract | dict) -> int:
+    expiry_date_str = contract["expiry"] if isinstance(contract, dict) else contract.expiry
+    expiry_time_str = (
+        contract.get("expiry_time_ist", "15:30")
+        if isinstance(contract, dict)
+        else contract.expiry_time_ist
+    )
+    expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
+    hh, mm = map(int, expiry_time_str.split(":"))
+    expiry_dt = datetime.combine(expiry_date, time(hh, mm, tzinfo=IST))
+    now = datetime.now(IST)
+    return int((expiry_dt - now).total_seconds() / 60)
+
+
+def _expiry_risk_bucket(minutes_to_expiry: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
+    if minutes_to_expiry < 180:
+        return "HIGH"
+    if minutes_to_expiry < 1440:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _validate_expiry_guard(minutes_to_expiry: int) -> None:
+    if minutes_to_expiry <= 0:
+        raise HTTPException(status_code=400, detail="Contract expired. No projections available.")
+    if minutes_to_expiry <= 15:
+        raise HTTPException(status_code=400, detail="Too close to expiry for safe projections.")
 
 
 def _validate_username(username: str) -> str:
@@ -587,6 +650,7 @@ def build_fno_signal(
     stock_core: StockCoreNormalized,
     option_ltp: float,
     refreshed_at: str,
+    minutes_to_expiry: int,
 ) -> FNOSignalResponse:
     underlying_ltp = stock_core.ltp
     if underlying_ltp is None:
@@ -635,9 +699,17 @@ def build_fno_signal(
         direction = "NEUTRAL"
 
     entry_price = round(option_ltp, 2)
-    stop_loss = round(entry_price * 0.6, 2)
-    target1 = round(entry_price * 1.5, 2)
-    target2 = round(entry_price * 2.0, 2)
+    stop_loss = round(entry_price * 0.75, 2)
+    target1 = round(entry_price * 1.12, 2)
+    target2 = round(entry_price * 1.5, 2)
+
+    if minutes_to_expiry < 60 and entry_price > 0:
+        required_gain = (target1 - entry_price) / entry_price
+        if required_gain > 0.12:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient time to expiry for this upside. No projections shown.",
+            )
 
     risk = max(entry_price - stop_loss, 0.01)
     risk_reward_target1 = round((target1 - entry_price) / risk, 2)
@@ -649,6 +721,12 @@ def build_fno_signal(
         confluence += 8
     if option_ltp < 1:
         confluence -= 8
+    if minutes_to_expiry < 60:
+        confluence -= 30
+        trigger_factors.append("ExpiryWindow=<60m")
+    elif minutes_to_expiry < 180:
+        confluence -= 15
+        trigger_factors.append("ExpiryWindow=<180m")
 
     confluence_score = int(clamp(round(confluence), 0, 100))
     signal_quality = _get_signal_quality(confluence_score)
@@ -682,6 +760,8 @@ def build_fno_signal(
         confluence_score=confluence_score,
         signal_quality=signal_quality,
         is_potential_trade=is_potential_trade,
+        minutes_to_expiry=minutes_to_expiry,
+        expiry_risk=_expiry_risk_bucket(minutes_to_expiry),
         analysis_refreshed_at=refreshed_at,
     )
 
@@ -703,7 +783,13 @@ async def _get_nearest_expiry(underlying: str) -> str:
     expiries = await asyncio.to_thread(market_data_client.get_option_expiries, instrument_id)
     if not expiries:
         return "2026-03-10"
-    return expiries[0].strftime("%Y-%m-%d")
+
+    now_ist = datetime.now(IST)
+    for expiry in expiries:
+        expiry_dt = datetime.combine(expiry.date(), time(15, 30, tzinfo=IST))
+        if expiry_dt > now_ist:
+            return expiry.strftime("%Y-%m-%d")
+    return expiries[-1].strftime("%Y-%m-%d")
 
 
 def _format_script(underlying: str, expiry: str, strike: float, option_type: str) -> str:
@@ -719,6 +805,7 @@ async def _build_contract(underlying: str, strike: float, option_type: Literal["
         script=script,
         underlying=underlying,
         expiry=expiry,
+        expiry_time_ist="15:30",
         strike=float(strike),
         option_type=option_type,
         exchange="NFO",
@@ -740,19 +827,20 @@ async def _resolve_contract_from_input(raw_script: str) -> FNOContract:
             raise HTTPException(status_code=404, detail="Script not supported")
 
         day = int(day_txt)
-        now = datetime.now(timezone.utc)
-        year = now.year
+        now_ist = datetime.now(IST)
+        year = now_ist.year
         try:
-            candidate = datetime(year, month, day, tzinfo=timezone.utc)
+            candidate = datetime(year, month, day, 15, 30, tzinfo=IST)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail="Script not supported") from exc
-        if candidate.date() < now.date():
-            candidate = datetime(year + 1, month, day, tzinfo=timezone.utc)
+        if candidate <= now_ist:
+            candidate = datetime(year + 1, month, day, 15, 30, tzinfo=IST)
 
         return FNOContract(
             script=script,
             underlying=underlying,
             expiry=candidate.strftime("%Y-%m-%d"),
+            expiry_time_ist="15:30",
             strike=float(strike_txt),
             option_type=option_type,
             exchange="NFO",
@@ -771,9 +859,41 @@ async def _resolve_contract_from_input(raw_script: str) -> FNOContract:
 
 
 async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -> FNOSignalResponse:
+    minutes_to_expiry = get_minutes_to_expiry(contract)
+    _validate_expiry_guard(minutes_to_expiry)
     stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-    option_ltp = await asyncio.to_thread(market_data_client.fetch_option_ltp_for_contract, contract.model_dump())
-    return build_fno_signal(contract, stock_data, option_ltp, refreshed_at)
+    try:
+        option_ltp = await asyncio.to_thread(
+            market_data_client.fetch_option_ltp_for_contract,
+            contract.model_dump(),
+        )
+    except ValueError:
+        if stock_data.ltp is None:
+            raise
+        if contract.underlying == "NIFTY":
+            step = 50
+        elif contract.underlying == "BANKNIFTY":
+            step = 100
+        else:
+            step = 20 if stock_data.ltp > 300 else 10
+
+        fallback_contract = contract.model_copy(
+            update={"strike": float(round(stock_data.ltp / step) * step)}
+        )
+        try:
+            option_ltp = await asyncio.to_thread(
+                market_data_client.fetch_option_ltp_for_contract,
+                fallback_contract.model_dump(),
+            )
+        except Exception:
+            intrinsic = (
+                max(stock_data.ltp - contract.strike, 0)
+                if contract.option_type == "CE"
+                else max(contract.strike - stock_data.ltp, 0)
+            )
+            time_value = max(stock_data.ltp * 0.002, 5)
+            option_ltp = round(intrinsic + time_value, 2)
+    return build_fno_signal(contract, stock_data, option_ltp, refreshed_at, minutes_to_expiry)
 
 
 async def _safe_signal(contract: FNOContract, refreshed_at: str, sem: asyncio.Semaphore) -> FNOSignalResponse | None:
@@ -967,6 +1087,94 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
         reverse=True,
     )
     return candidates[:30]
+
+
+def _position_to_response(position: dict) -> CustomPositionResponse:
+    return CustomPositionResponse(
+        id=position["id"],
+        script=position["script"],
+        underlying=position["underlying"],
+        expiry_date=position["expiry_date"],
+        expiry_time_ist=position.get("expiry_time_ist", "15:30"),
+        lot_size=int(position.get("lot_size", 1)),
+        buy_price=float(position["buy_price"]),
+        created_at=position["created_at"],
+        last_update=position["last_update"],
+        status=position["status"],
+        alert=position.get("alert"),
+        latest_option_ltp=position.get("latest_option_ltp"),
+        target1=position.get("target1"),
+        target2=position.get("target2"),
+        minutes_to_expiry=int(position.get("minutes_to_expiry", 0)),
+        revised_exit_plan=position.get("revised_exit_plan", ""),
+    )
+
+
+async def _refresh_open_position(position: dict) -> dict:
+    contract_dict = {
+        "script": position["script"],
+        "underlying": position["underlying"],
+        "expiry": position["expiry_date"],
+        "expiry_time_ist": position.get("expiry_time_ist", "15:30"),
+        "strike": position["strike"],
+        "option_type": position["option_type"],
+        "exchange": "NFO",
+        "lot_size": position.get("lot_size", 1),
+    }
+    contract = FNOContract(**contract_dict)
+    minutes_to_expiry = get_minutes_to_expiry(contract)
+
+    if minutes_to_expiry <= 0:
+        updated = await db.custom_positions.find_one_and_update(
+            {"id": position["id"]},
+            {
+                "$set": {
+                    "status": "EXPIRED",
+                    "alert": "EXPIRED",
+                    "minutes_to_expiry": minutes_to_expiry,
+                    "last_update": _utc_now_iso(),
+                }
+            },
+            projection={"_id": 0},
+            return_document=ReturnDocument.AFTER,
+        )
+        return updated
+
+    latest_option_ltp = await asyncio.to_thread(market_data_client.fetch_option_ltp_for_contract, contract.model_dump())
+    buy_price = float(position["buy_price"])
+    pnl_pct = ((latest_option_ltp - buy_price) / buy_price) if buy_price > 0 else 0.0
+    revised_target1 = round(max(buy_price * 1.12, latest_option_ltp * 1.05), 2)
+    revised_target2 = round(max(buy_price * 1.5, latest_option_ltp * 1.2), 2)
+
+    alert = None
+    revised_exit_plan = "Hold with trailing stop once target1 hits"
+    if minutes_to_expiry <= 15:
+        alert = "EXIT_URGENT_TIME"
+        revised_exit_plan = "URGENT EXIT: Less than 15 minutes to expiry"
+    elif pnl_pct <= -0.12:
+        alert = "EXIT_URGENT_LOSS"
+        revised_exit_plan = "URGENT EXIT: Loss exceeded 12% from buy"
+    elif minutes_to_expiry < 60 and ((position["target1"] - latest_option_ltp) / max(latest_option_ltp, 0.01)) > 0.12:
+        alert = "RISKY_PREMIUM"
+        revised_exit_plan = "High premium-risk near expiry; consider reducing exposure"
+
+    updated = await db.custom_positions.find_one_and_update(
+        {"id": position["id"]},
+        {
+            "$set": {
+                "latest_option_ltp": round(float(latest_option_ltp), 2),
+                "target1": revised_target1,
+                "target2": revised_target2,
+                "minutes_to_expiry": minutes_to_expiry,
+                "alert": alert,
+                "last_update": _utc_now_iso(),
+                "revised_exit_plan": revised_exit_plan,
+            }
+        },
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    return updated
 
 
 @api_router.get("/")
@@ -1197,7 +1405,12 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
     custom_signal = None
     if payload.custom_script:
         contract = await _resolve_contract_from_input(payload.custom_script)
-        custom_signal = await _build_signal_for_contract(contract, refreshed_at)
+        try:
+            custom_signal = await _build_signal_for_contract(contract, refreshed_at)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     top_pool = [*signals, *stock_signals]
     if custom_signal:
@@ -1216,6 +1429,96 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
         banknifty_projection=banknifty_projection,
         stock_signals=stock_signals,
     )
+
+
+@api_router.post("/fno/custom-position", response_model=CustomPositionCreateResponse)
+async def create_custom_position(
+    payload: CustomPositionCreateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    if payload.buy_price <= 0:
+        raise HTTPException(status_code=400, detail="Buy price must be greater than 0")
+
+    contract = await _resolve_contract_from_input(payload.script)
+    minutes_to_expiry = get_minutes_to_expiry(contract)
+    _validate_expiry_guard(minutes_to_expiry)
+
+    updated_user, charged = await _consume_credits(current_user, 2)
+    latest_option_ltp = await asyncio.to_thread(market_data_client.fetch_option_ltp_for_contract, contract.model_dump())
+
+    position_id = str(uuid.uuid4())
+    now_iso = _utc_now_iso()
+    doc = {
+        "id": position_id,
+        "user_key": current_user["user_key"],
+        "script": contract.script,
+        "underlying": contract.underlying,
+        "expiry_date": contract.expiry,
+        "expiry_time_ist": contract.expiry_time_ist,
+        "strike": contract.strike,
+        "option_type": contract.option_type,
+        "lot_size": contract.lot_size,
+        "buy_price": round(float(payload.buy_price), 2),
+        "created_at": now_iso,
+        "last_update": now_iso,
+        "status": "OPEN",
+        "alert": None,
+        "latest_option_ltp": round(float(latest_option_ltp), 2),
+        "target1": round(float(payload.buy_price) * 1.12, 2),
+        "target2": round(float(payload.buy_price) * 1.5, 2),
+        "minutes_to_expiry": minutes_to_expiry,
+        "revised_exit_plan": "Hold with trailing stop once target1 hits",
+    }
+
+    await db.custom_positions.insert_one(doc)
+    return CustomPositionCreateResponse(
+        cost_charged=charged,
+        credits_remaining=int(updated_user.get("credits", 0)),
+        position=_position_to_response(doc),
+    )
+
+
+@api_router.get("/fno/custom-positions", response_model=List[CustomPositionResponse])
+async def list_custom_positions(current_user: dict = Depends(get_current_user)):
+    rows = await db.custom_positions.find(
+        {"user_key": current_user["user_key"], "status": "OPEN"},
+        {"_id": 0},
+    ).to_list(200)
+
+    refreshed: list[CustomPositionResponse] = []
+    for row in rows:
+        try:
+            updated = await _refresh_open_position(row)
+            if updated and updated.get("status") == "OPEN":
+                refreshed.append(_position_to_response(updated))
+        except Exception:
+            continue
+
+    refreshed.sort(key=lambda item: item.created_at, reverse=True)
+    return refreshed
+
+
+@api_router.post("/fno/custom-position/{position_id}/close")
+async def close_custom_position(position_id: str, current_user: dict = Depends(get_current_user)):
+    updated = await db.custom_positions.find_one_and_update(
+        {
+            "id": position_id,
+            "user_key": current_user["user_key"],
+            "status": "OPEN",
+        },
+        {
+            "$set": {
+                "status": "CLOSED",
+                "last_update": _utc_now_iso(),
+                "alert": "CLOSED_BY_USER",
+            }
+        },
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Custom position not found")
+    return {"closed": True, "id": position_id}
 
 
 @api_router.get("/fno/scripts/search", response_model=ScriptSearchResult)
@@ -1265,7 +1568,12 @@ async def get_fno_contracts():
 async def get_single_fno_signal(script: str, refresh_nonce: str | None = Query(default=None)):
     _ = refresh_nonce
     contract = await _resolve_contract_from_input(script)
-    return await _build_signal_for_contract(contract, _utc_now_iso())
+    try:
+        return await _build_signal_for_contract(contract, _utc_now_iso())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @api_router.get("/fno/signals/index", response_model=List[FNOSignalResponse])

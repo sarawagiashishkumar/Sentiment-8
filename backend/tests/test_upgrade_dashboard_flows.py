@@ -236,3 +236,57 @@ def test_credits_deduct_for_basic_user_but_not_for_owner_or_sub_admin(api_client
 
     assert basic_before - basic_after == 1
     assert sub_before == sub_after
+
+
+def test_custom_position_create_list_close_and_alert_fields(api_client, api_base_url, created_users):
+    owner = _login(api_client, api_base_url, OWNER_USERNAME)
+    owner_headers = _auth_headers(owner['token'])
+
+    username = f'pos{uuid.uuid4().hex[:8]}1'
+    user = _create_user(
+        api_client,
+        api_base_url,
+        owner_headers,
+        created_users,
+        username=username,
+        role='user',
+        initial_credits=5,
+    )
+
+    login = _login(api_client, api_base_url, user['username'])
+    user_headers = _auth_headers(login['token'])
+
+    create = api_client.post(
+        f'{api_base_url}/fno/custom-position',
+        json={'script': 'NIFTY', 'buy_price': 120.5},
+        headers=user_headers,
+        timeout=120,
+    )
+    assert create.status_code == 200
+    payload = create.json()
+    assert payload['cost_charged'] == 2
+    assert payload['position']['status'] == 'OPEN'
+    assert payload['position']['minutes_to_expiry'] > 0
+    position_id = payload['position']['id']
+
+    listing = api_client.get(f'{api_base_url}/fno/custom-positions', headers=user_headers, timeout=120)
+    assert listing.status_code == 200
+    rows = listing.json()
+    assert any(row['id'] == position_id for row in rows)
+
+    close = api_client.post(
+        f'{api_base_url}/fno/custom-position/{position_id}/close',
+        json={},
+        headers=user_headers,
+        timeout=30,
+    )
+    assert close.status_code == 200
+    assert close.json()['closed'] is True
+
+
+def test_fno_signal_has_expiry_risk_and_minutes_to_expiry(api_client, api_base_url):
+    response = api_client.get(f'{api_base_url}/fno/signal/NIFTY10MAR26500PE', timeout=120)
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data['minutes_to_expiry'], int)
+    assert data['expiry_risk'] in {'LOW', 'MEDIUM', 'HIGH'}

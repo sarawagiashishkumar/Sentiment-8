@@ -13,6 +13,96 @@
     background: radial-gradient(circle at top, #0f172a 0%, #020617 55%, #020617 100%);
 }
 
+.result-card {
+    background: rgba(15, 23, 42, 0.88);
+    color: #fef9c3;
+    border-color: rgba(56, 189, 248, 0.35) !important;
+}
+
+.result-card p,
+.result-card span,
+.result-card div,
+.result-card td,
+.result-card th,
+.result-card label {
+    color: inherit;
+}
+
+.result-hover,
+[data-testid="multibagger-table"] tbody tr,
+[data-testid="admin-users-table"] tbody tr,
+[data-testid="fno-page"] [data-testid*="top4-trade-"],
+[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"] {
+    transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+.result-hover:hover,
+[data-testid="multibagger-table"] tbody tr:hover,
+[data-testid="admin-users-table"] tbody tr:hover,
+[data-testid="fno-page"] [data-testid*="top4-trade-"]:hover,
+[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover {
+    background: #f8fafc !important;
+    border-color: #38bdf8 !important;
+    color: #0f172a !important;
+}
+
+.result-hover:hover *,
+[data-testid="multibagger-table"] tbody tr:hover *,
+[data-testid="admin-users-table"] tbody tr:hover *,
+[data-testid="fno-page"] [data-testid*="top4-trade-"]:hover *,
+[data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover * {
+    color: #0f172a !important;
+}
+
+[data-testid="multibagger-table"] thead tr,
+[data-testid="admin-users-table"] thead tr {
+    background: rgba(15, 23, 42, 0.95) !important;
+}
+
+[data-testid="multibagger-table"] th,
+[data-testid="multibagger-table"] td,
+[data-testid="admin-users-table"] th,
+[data-testid="admin-users-table"] td {
+    color: #fef9c3 !important;
+}
+
+[data-testid="fno-page"] .rounded-md,
+[data-testid="fno-page"] .rounded-lg,
+[data-testid="fno-page"] .rounded-xl,
+[data-testid="multibagger-page"] .rounded-md,
+[data-testid="multibagger-page"] .rounded-lg,
+[data-testid="admin-page"] .rounded-md,
+[data-testid="admin-page"] .rounded-lg {
+    color: #fef9c3;
+}
+
+[data-testid="fno-page"] .rounded-md:hover,
+[data-testid="fno-page"] .rounded-lg:hover,
+[data-testid="fno-page"] .rounded-xl:hover,
+[data-testid="multibagger-page"] .rounded-md:hover,
+[data-testid="multibagger-page"] .rounded-lg:hover,
+[data-testid="admin-page"] .rounded-md:hover,
+[data-testid="admin-page"] .rounded-lg:hover {
+    color: #0f172a;
+}
+
+.urgent-alert-card {
+    border: 2px solid #ef4444 !important;
+    animation: urgent-flash 1s infinite;
+}
+
+@keyframes urgent-flash {
+    0% {
+        background-color: rgba(127, 29, 29, 0.35);
+    }
+    50% {
+        background-color: rgba(239, 68, 68, 0.35);
+    }
+    100% {
+        background-color: rgba(127, 29, 29, 0.35);
+    }
+}
+
 main {
     position: relative;
     z-index: 1;

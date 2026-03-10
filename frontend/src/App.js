@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
+  AlertTriangle,
   BarChart3,
   GaugeCircle,
   Home,
@@ -11,6 +12,7 @@ import {
   Sparkles,
   TrendingUp,
   UserCog,
+  X,
 } from "lucide-react";
 import "@/App.css";
 import { Badge } from "@/components/ui/badge";
@@ -90,6 +92,10 @@ export default function App() {
   const [fnoLoading, setFnoLoading] = useState(false);
   const [fnoError, setFnoError] = useState("");
   const [customScript, setCustomScript] = useState("");
+  const [customBuyPrice, setCustomBuyPrice] = useState("");
+  const [customPositionLoading, setCustomPositionLoading] = useState(false);
+  const [customPositionError, setCustomPositionError] = useState("");
+  const [customPositions, setCustomPositions] = useState([]);
 
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminError, setAdminError] = useState("");
@@ -134,8 +140,28 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!token) return undefined;
+    loadCustomPositions();
+    const timer = setInterval(() => {
+      loadCustomPositions();
+    }, 5000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   const syncCredits = (credits) => {
     setMe((prev) => (prev ? { ...prev, credits } : prev));
+  };
+
+  const loadCustomPositions = async () => {
+    if (!token) return;
+    try {
+      const response = await axios.get(`${API}/fno/custom-positions`, { headers: authHeaders });
+      setCustomPositions(response.data || []);
+    } catch {
+      // keep silent during polling
+    }
   };
 
   const onLogin = async (event) => {
@@ -175,6 +201,7 @@ export default function App() {
     setMultibaggerData(null);
     setFnoData(null);
     setAdminUsers([]);
+    setCustomPositions([]);
   };
 
   const generateMultibagger = async () => {
@@ -203,6 +230,52 @@ export default function App() {
       setFnoError(error?.response?.data?.detail || "Unable to generate F&O projections");
     } finally {
       setFnoLoading(false);
+    }
+  };
+
+  const createCustomProjection = async (event) => {
+    event.preventDefault();
+    setCustomPositionError("");
+    if (!customScript.trim()) {
+      setCustomPositionError("Please enter a script or symbol.");
+      return;
+    }
+    const buyPriceNum = Number(customBuyPrice);
+    if (!buyPriceNum || buyPriceNum <= 0) {
+      setCustomPositionError("Enter a valid buy price.");
+      return;
+    }
+
+    setCustomPositionLoading(true);
+    try {
+      const response = await axios.post(
+        `${API}/fno/custom-position`,
+        {
+          script: customScript.trim().toUpperCase(),
+          buy_price: buyPriceNum,
+        },
+        { headers: authHeaders },
+      );
+      syncCredits(response.data.credits_remaining);
+      setCustomBuyPrice("");
+      await loadCustomPositions();
+    } catch (error) {
+      setCustomPositionError(error?.response?.data?.detail || "Unable to create custom projection.");
+    } finally {
+      setCustomPositionLoading(false);
+    }
+  };
+
+  const closeCustomProjection = async (positionId) => {
+    try {
+      await axios.post(
+        `${API}/fno/custom-position/${positionId}/close`,
+        {},
+        { headers: authHeaders },
+      );
+      await loadCustomPositions();
+    } catch {
+      // ignore close errors silently
     }
   };
 
@@ -454,7 +527,7 @@ export default function App() {
 
         {currentPage === "multibagger" ? (
           <section className="space-y-6" data-testid="multibagger-page">
-            <Card className="border-slate-800 bg-slate-950/70">
+            <Card className="result-card border-slate-800 bg-slate-950/70">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
                 <CardTitle className="text-white">Multibagger Discovery</CardTitle>
                 <Button
@@ -495,7 +568,7 @@ export default function App() {
             </Card>
 
             {multibaggerData ? (
-              <Card className="border-slate-800 bg-slate-950/70">
+              <Card className="result-card border-slate-800 bg-slate-950/70">
                 <CardHeader>
                   <CardTitle className="text-white">Projected Multibagger Table</CardTitle>
                 </CardHeader>
@@ -521,7 +594,7 @@ export default function App() {
                       <TableBody>
                         {filteredMultibaggers.map((row) => (
                           <Fragment key={`fragment-${row.symbol}`}>
-                            <TableRow key={`${row.symbol}-target`} data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
+                            <TableRow key={`${row.symbol}-target`} className="result-row" data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
                               <TableCell className="font-mono text-cyan-300">{row.company_name}</TableCell>
                               <TableCell>{row.sector}</TableCell>
                               <TableCell className="font-mono">{formatNumber(row.current_rsi_level)}</TableCell>
@@ -540,7 +613,7 @@ export default function App() {
                               </TableCell>
                             </TableRow>
 
-                            <TableRow key={`${row.symbol}-roi`} data-testid={`multibagger-roi-row-${row.symbol.toLowerCase()}`}>
+                            <TableRow key={`${row.symbol}-roi`} className="result-row" data-testid={`multibagger-roi-row-${row.symbol.toLowerCase()}`}>
                               <TableCell className="font-mono text-slate-400">{row.symbol}</TableCell>
                               <TableCell className="text-slate-500">Tier: {row.tier_pass_count}/8</TableCell>
                               <TableCell className="text-slate-500">LTP: ₹{formatNumber(row.ltp)}</TableCell>
@@ -571,7 +644,7 @@ export default function App() {
 
         {currentPage === "fno" ? (
           <section className="space-y-6" data-testid="fno-page">
-            <Card className="border-slate-800 bg-slate-950/70">
+            <Card className="result-card border-slate-800 bg-slate-950/70">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
                 <CardTitle className="text-white">F&O Projections</CardTitle>
                 <Button
@@ -586,28 +659,81 @@ export default function App() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    generateFnoProjection(customScript);
-                  }}
-                  className="flex flex-col gap-3 sm:flex-row"
+                  onSubmit={createCustomProjection}
+                  className="flex flex-col gap-3 lg:flex-row"
                   data-testid="fno-custom-script-form"
                 >
                   <Input
                     value={customScript}
                     onChange={(event) => setCustomScript(event.target.value.toUpperCase())}
-                    placeholder="Run custom script or symbol (e.g. NIFTY10MAR26500PE / RELIANCE)"
+                    placeholder="Custom script/symbol (e.g. NIFTY10MAR26500PE / RELIANCE)"
                     className="font-mono border-slate-700 bg-slate-900 text-slate-100"
                     data-testid="fno-custom-script-input"
                   />
+                  <Input
+                    value={customBuyPrice}
+                    onChange={(event) => setCustomBuyPrice(event.target.value)}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Buy Price"
+                    className="w-full border-slate-700 bg-slate-900 text-slate-100 lg:w-44"
+                    data-testid="fno-custom-buy-price-input"
+                  />
                   <Button
                     type="submit"
-                    className="border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"
+                    className="border border-slate-700 bg-slate-900 text-yellow-200 hover:bg-yellow-200 hover:text-slate-900"
                     data-testid="fno-custom-script-submit"
                   >
-                    Run Custom Projection
+                    {customPositionLoading ? "Saving..." : "RUN CUSTOM PROJECTION"}
                   </Button>
                 </form>
+                {customPositionError ? (
+                  <p className="text-sm text-rose-400" data-testid="fno-custom-position-error">{customPositionError}</p>
+                ) : null}
+                <div className="space-y-3" data-testid="custom-position-list">
+                  {customPositions.length ? (
+                    customPositions.map((position) => {
+                      const urgent = ["EXIT_URGENT_TIME", "EXIT_URGENT_LOSS", "RISKY_PREMIUM"].includes(position.alert || "");
+                      return (
+                        <div
+                          key={position.id}
+                          className={`result-card result-hover rounded-lg border p-3 ${urgent ? "urgent-alert-card" : "border-slate-700"}`}
+                          data-testid={`custom-position-card-${position.id}`}
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <p className="font-mono text-yellow-200" data-testid={`custom-position-script-${position.id}`}>{position.script}</p>
+                            <Button
+                              type="button"
+                              onClick={() => closeCustomProjection(position.id)}
+                              className="h-7 border border-rose-500 bg-transparent px-2 text-rose-300 hover:bg-rose-500/20"
+                              data-testid={`custom-position-close-${position.id}`}
+                            >
+                              <X size={14} />
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
+                            <p>Buy Price: <span className="font-mono">₹{formatNumber(position.buy_price)}</span></p>
+                            <p>Live LTP: <span className="font-mono">₹{formatNumber(position.latest_option_ltp)}</span></p>
+                            <p>Target1 / Target2: <span className="font-mono">₹{formatNumber(position.target1)} / ₹{formatNumber(position.target2)}</span></p>
+                            <p>Expiry in: <span className="font-mono">{position.minutes_to_expiry} min</span></p>
+                            <p className="md:col-span-2">Exit Plan: <span className="font-mono">{position.revised_exit_plan}</span></p>
+                          </div>
+                          {urgent ? (
+                            <div className="mt-2 flex items-center gap-2 rounded-md border border-red-500 bg-red-500/20 px-2 py-1 text-xs font-bold text-red-100" data-testid={`custom-position-alert-${position.id}`}>
+                              <AlertTriangle size={14} />
+                              URGENT EXIT ALERT — Review this position now
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="text-xs text-slate-400" data-testid="custom-position-empty-note">
+                      No sticky custom projections yet. Create one using script + buy price.
+                    </p>
+                  )}
+                </div>
                 {fnoError ? <p className="text-sm text-rose-400" data-testid="fno-error">{fnoError}</p> : null}
                 {!fnoData ? (
                   <p className="text-sm text-slate-400" data-testid="fno-empty-note">
@@ -626,7 +752,7 @@ export default function App() {
                 <div className="space-y-6 xl:col-span-8">
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2" data-testid="fno-dual-pane">
                     {[fnoData.nifty_projection, fnoData.banknifty_projection].map((pane) => (
-                      <Card key={pane.index_name} className="border-slate-800 bg-slate-950/70" data-testid={`pane-${pane.index_name.toLowerCase()}`}>
+                      <Card key={pane.index_name} className="result-card border-slate-800 bg-slate-950/70" data-testid={`pane-${pane.index_name.toLowerCase()}`}>
                         <CardHeader>
                           <CardTitle className="flex items-center justify-between gap-2 text-white">
                             <span>{pane.index_name}</span>
@@ -644,7 +770,7 @@ export default function App() {
                             {pane.assured_signals.length ? (
                               <div className="space-y-2">
                                 {pane.assured_signals.slice(0, 5).map((signal) => (
-                                  <div key={signal.script} className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs">
+                                  <div key={signal.script} className="result-hover rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs">
                                     <div className="mb-1 flex items-center justify-between">
                                       <span className="font-mono text-cyan-200">{signal.script}</span>
                                       <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
@@ -664,7 +790,7 @@ export default function App() {
                             {pane.non_directional_strategies.length ? (
                               <div className="space-y-2">
                                 {pane.non_directional_strategies.map((item) => (
-                                  <div key={`${pane.index_name}-${item.strike}`} className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                                  <div key={`${pane.index_name}-${item.strike}`} className="result-hover rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
                                     <p className="font-semibold text-amber-200">{item.strategy}</p>
                                     <p>Strike: {formatNumber(item.strike, 0)} | CE: {item.ce_script} | PE: {item.pe_script}</p>
                                     <p>Combined Entry: ₹{formatNumber(item.combined_entry)}</p>
@@ -694,14 +820,14 @@ export default function App() {
                     ))}
                   </div>
 
-                  <Card className="border-slate-800 bg-slate-950/70" data-testid="stock-fno-bottom-panel">
+                  <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="stock-fno-bottom-panel">
                     <CardHeader>
                       <CardTitle className="text-white">Profitable F&O Signals — Individual Stocks</CardTitle>
                     </CardHeader>
                     <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                       {fnoData.stock_signals?.length ? (
                         fnoData.stock_signals.map((signal) => (
-                          <div key={signal.script} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`stock-fno-signal-${signal.script.toLowerCase()}`}>
+                          <div key={signal.script} className="result-hover rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`stock-fno-signal-${signal.script.toLowerCase()}`}>
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <p className="font-mono text-cyan-200">{signal.script}</p>
                               <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
@@ -721,14 +847,14 @@ export default function App() {
 
                 <div className="xl:col-span-4">
                   <div className="sticky top-4 space-y-4">
-                    <Card className="border-slate-800 bg-slate-950/70" data-testid="top4-trades-panel">
+                    <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="top4-trades-panel">
                       <CardHeader>
                         <CardTitle className="text-white">Top 4 Best Trade Now</CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-3">
                         {fnoData.top_trades?.length ? (
                           fnoData.top_trades.map((trade) => (
-                            <div key={trade.script} className="rounded-md border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`top4-trade-${trade.script.toLowerCase()}`}>
+                            <div key={trade.script} className="result-hover rounded-md border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`top4-trade-${trade.script.toLowerCase()}`}>
                               <div className="mb-2 flex items-center justify-between">
                                 <p className="font-mono text-cyan-200">{trade.script}</p>
                                 <Badge className={`border ${qualityBadge(trade.signal_quality)}`}>{trade.signal_quality}</Badge>
@@ -747,7 +873,7 @@ export default function App() {
                     </Card>
 
                     {fnoData.custom_signal ? (
-                      <Card className="border-slate-800 bg-slate-950/70" data-testid="custom-script-result-card">
+                      <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="custom-script-result-card">
                         <CardHeader>
                           <CardTitle className="text-white">Custom Script Result</CardTitle>
                         </CardHeader>
@@ -768,7 +894,7 @@ export default function App() {
 
         {currentPage === "admin" && isAdmin ? (
           <section className="space-y-6" data-testid="admin-page">
-            <Card className="border-slate-800 bg-slate-950/70">
+            <Card className="result-card border-slate-800 bg-slate-950/70">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
                 <CardTitle className="text-white">User Management & Security</CardTitle>
                 <Button
@@ -842,7 +968,7 @@ export default function App() {
                       </TableHeader>
                       <TableBody>
                         {adminUsers.map((row) => (
-                          <TableRow key={row.user_key} data-testid={`admin-row-${row.user_key}`}>
+                          <TableRow key={row.user_key} className="result-row" data-testid={`admin-row-${row.user_key}`}>
                             <TableCell className="font-mono text-xs text-cyan-200">{row.credential_label}</TableCell>
                             <TableCell>{row.role}</TableCell>
                             <TableCell>

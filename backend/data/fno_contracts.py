@@ -2,7 +2,7 @@ FNO_CONTRACTS = [
     {
         "script": "NIFTY10MAR26500CE",
         "underlying": "NIFTY",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 26500,
         "option_type": "CE",
         "exchange": "NFO",
@@ -11,7 +11,7 @@ FNO_CONTRACTS = [
     {
         "script": "NIFTY10MAR26500PE",
         "underlying": "NIFTY",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 26500,
         "option_type": "PE",
         "exchange": "NFO",
@@ -20,7 +20,7 @@ FNO_CONTRACTS = [
     {
         "script": "BANKNIFTY10MAR47000CE",
         "underlying": "BANKNIFTY",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 47000,
         "option_type": "CE",
         "exchange": "NFO",
@@ -29,7 +29,7 @@ FNO_CONTRACTS = [
     {
         "script": "BANKNIFTY10MAR47000PE",
         "underlying": "BANKNIFTY",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 47000,
         "option_type": "PE",
         "exchange": "NFO",
@@ -38,7 +38,7 @@ FNO_CONTRACTS = [
     {
         "script": "RELIANCE10MAR3000CE",
         "underlying": "RELIANCE",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 3000,
         "option_type": "CE",
         "exchange": "NFO",
@@ -47,7 +47,7 @@ FNO_CONTRACTS = [
     {
         "script": "RELIANCE10MAR3000PE",
         "underlying": "RELIANCE",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 3000,
         "option_type": "PE",
         "exchange": "NFO",
@@ -56,7 +56,7 @@ FNO_CONTRACTS = [
     {
         "script": "BDL10MAR120CE",
         "underlying": "BDL",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 120,
         "option_type": "CE",
         "exchange": "NFO",
@@ -65,7 +65,7 @@ FNO_CONTRACTS = [
     {
         "script": "BDL10MAR120PE",
         "underlying": "BDL",
-        "expiry": "2026-03-10",
+        "expiry": "2027-03-10",
         "strike": 120,
         "option_type": "PE",
         "exchange": "NFO",

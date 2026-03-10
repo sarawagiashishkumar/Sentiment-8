@@ -299,7 +299,8 @@ class MarketDataClient:
             instrument_id = did
 
         expiries = self.get_option_expiries(instrument_id)
-        target_expiry = datetime.strptime(contract["expiry"], "%Y-%m-%d")
+        expiry_value = contract.get("expiry_date") or contract.get("expiry")
+        target_expiry = datetime.strptime(expiry_value, "%Y-%m-%d")
 
         if expiries:
             chosen_expiry = min(expiries, key=lambda exp: abs((exp - target_expiry).days))
