@@ -103,6 +103,25 @@
     color: inherit !important;
 }
 
+[data-testid="admin-users-table"] tbody tr:hover button {
+    background: #0f172a !important;
+    color: #f8fafc !important;
+    border-color: #334155 !important;
+}
+
+[data-testid="admin-users-table"] tbody tr:hover button[data-testid*="delete"] {
+    background: #7f1d1d !important;
+    color: #fee2e2 !important;
+    border-color: #ef4444 !important;
+}
+
+[data-testid="admin-users-table"] tbody tr:hover input,
+[data-testid="admin-users-table"] tbody tr:hover select {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border-color: #38bdf8 !important;
+}
+
 [data-testid="multibagger-table"] thead tr,
 [data-testid="admin-users-table"] thead tr {
     background: rgba(15, 23, 42, 0.95) !important;
