@@ -96,8 +96,8 @@ const renderLiveInfoBox = (signal, suffix) => {
 
   return (
     <div className="fno-live-info-box" data-testid={`fno-live-info-box-${suffix}`}>
-      <span className="fno-heatmap-mini-badge" data-testid={`fno-heatmap-badge-${suffix}`}>
-        Heatmap {formatNumber(signal.achievable_profit_pct)}%
+      <span className="fno-corner-delta-box" data-testid={`fno-corner-delta-box-${suffix}`}>
+        {formatSignedPct(upFromLowPct)} Day Low | {formatSignedPct(downFromHighPct)} Day High
       </span>
       <p className="text-[11px] font-extrabold">
         Live Option LTP: ₹{formatNumber(signal.option_ltp)}
@@ -112,9 +112,6 @@ const renderLiveInfoBox = (signal, suffix) => {
       </p>
       <p className={`mt-1 inline-flex rounded-md border px-2 py-0.5 text-[11px] font-extrabold ${heatmapClass(signal.achievable_profit_pct)}`}>
         Heatmap Ratio: {formatNumber(signal.achievable_profit_pct)}%
-      </p>
-      <p className="fno-hover-variation-box" data-testid={`fno-hover-variation-${suffix}`}>
-        {formatSignedPct(upFromLowPct)} Day Low | {formatSignedPct(downFromHighPct)} Day High
       </p>
     </div>
   );
