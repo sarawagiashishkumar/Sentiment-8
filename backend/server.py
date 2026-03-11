@@ -2154,9 +2154,9 @@ def build_fno_signal(
         bias_score += (pos - 0.5) * 1.2
     trigger_factors.append(f"BiasScore={bias_score:.2f}")
 
-    if bias_score >= 0.15:
+    if bias_score >= 0.05:
         underlying_bias: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "BULLISH"
-    elif bias_score <= -0.15:
+    elif bias_score <= -0.05:
         underlying_bias = "BEARISH"
     else:
         underlying_bias = "NEUTRAL"
@@ -2200,7 +2200,14 @@ def build_fno_signal(
 
     confluence_score = int(clamp(round(confluence), 0, 100))
     signal_quality = _get_signal_quality(confluence_score)
-    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 72 and risk_reward_target2 >= 2
+
+    if direction != "NEUTRAL" and 60 <= confluence_score < 80:
+        target1 = round(max(entry_price * 1.05, min(target1, entry_price * 1.1)), 2)
+        target2 = round(max(entry_price * 1.12, min(target2, entry_price * 1.22)), 2)
+        risk_reward_target1 = round((target1 - entry_price) / risk, 2)
+        risk_reward_target2 = round((target2 - entry_price) / risk, 2)
+
+    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 72 and risk_reward_target2 >= 1.6
     if is_potential_trade:
         trigger_factors.append("PotentialTrade=YES")
 
@@ -2491,9 +2498,13 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     if not rows:
         raise HTTPException(status_code=502, detail=f"No live option-chain strikes available for {index_name}")
 
-    potential = [item for item in rows if item.is_potential_trade]
+    directional_candidates = [
+        item
+        for item in rows
+        if item.direction != "NEUTRAL" and item.confluence_score >= 72 and item.risk_reward_target2 >= 1.5
+    ]
     by_strike: dict[float, list[FNOSignalResponse]] = defaultdict(list)
-    for row in potential:
+    for row in directional_candidates:
         by_strike[row.strike].append(row)
 
     paired_scripts = set()
@@ -2521,8 +2532,13 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
 
     assured_signals = [
         item
-        for item in potential
-        if item.script not in paired_scripts and strike_range_min <= item.strike <= strike_range_max
+        for item in rows
+        if item.script not in paired_scripts
+        and strike_range_min <= item.strike <= strike_range_max
+        and item.direction != "NEUTRAL"
+        and item.confluence_score >= 80
+        and item.risk_reward_target2 >= 1.8
+        and item.expiry_risk != "HIGH"
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
@@ -2534,8 +2550,8 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         and item.script not in paired_scripts
         and item.script not in assured_scripts
         and strike_range_min <= item.strike <= strike_range_max
-        and item.confluence_score >= 60
-        and item.risk_reward_target2 >= 1.4
+        and item.confluence_score >= 58
+        and item.risk_reward_target2 >= 1.3
     ]
     watchlist_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
@@ -2544,6 +2560,36 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     normalized_report_rows = [StockCoreNormalized(**row) for row in report_rows]
     with_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=True)
     without_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=False)
+
+    if not watchlist_signals:
+        inferred_bias = with_report.bias
+        if inferred_bias == "NEUTRAL":
+            day_change_pct = (
+                ((stock.ltp - stock.prev_close) / stock.prev_close) * 100
+                if stock.ltp is not None and stock.prev_close is not None and stock.prev_close > 0
+                else 0.0
+            )
+            inferred_bias = "BULLISH" if day_change_pct >= 0 else "BEARISH"
+
+        preferred_option_type = "CE" if inferred_bias == "BULLISH" else "PE"
+        fallback_candidates = [
+            item
+            for item in rows
+            if item.option_type == preferred_option_type
+            and strike_range_min <= item.strike <= strike_range_max
+        ]
+        fallback_candidates.sort(key=lambda row: row.confluence_score, reverse=True)
+
+        seeded_watchlist: list[FNOSignalResponse] = []
+        for item in fallback_candidates[:6]:
+            updates = {
+                "strategy": "Watchlist Projection (Breadth-guided)",
+                "is_potential_trade": False,
+            }
+            if item.direction == "NEUTRAL":
+                updates["direction"] = "BULLISH" if preferred_option_type == "CE" else "BEARISH"
+            seeded_watchlist.append(item.model_copy(update=updates))
+        watchlist_signals = seeded_watchlist
 
     return IndexProjectionPane(
         index_name=index_name,
