@@ -1,6 +1,6 @@
 .dashboard-dark-bg {
-    --headingTextColor: #dbeafe;
-    --resultTextColor: #fde68a;
+    --headingTextColor: #ffffff;
+    --resultTextColor: #f8fafc;
     --hoverTextSafeColor: #f8fafc;
 }
 
@@ -258,22 +258,20 @@
     color: #7f1d1d !important;
 }
 
-.fno-live-info-box:hover {
-    background: #fde047 !important;
-    border-color: #1d4ed8 !important;
-    text-shadow: none;
+.fno-live-info-box:hover,
+.result-hover:hover .fno-live-info-box,
+.result-hover:focus-within .fno-live-info-box {
+    background: rgba(109, 40, 217, 0.55) !important;
+    border-color: rgba(167, 139, 250, 0.8) !important;
 }
 
 .fno-live-info-box:hover p,
 .result-hover:hover .fno-live-info-box p,
-.result-hover:focus-within .fno-live-info-box p {
-    color: #1e3a8a !important;
-    background: transparent !important;
-}
-
+.result-hover:focus-within .fno-live-info-box p,
 .fno-live-info-box:hover span,
 .result-hover:hover .fno-live-info-box span,
 .result-hover:focus-within .fno-live-info-box span {
+    color: #ffffff !important;
     background: transparent !important;
 }
 
