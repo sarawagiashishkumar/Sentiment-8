@@ -344,6 +344,9 @@ class FNOSignalResponse(BaseModel):
     underlying_day_high: float | None = None
     underlying_day_low: float | None = None
     option_ltp: float
+    ltp_margin_to_t1_amount: float
+    ltp_margin_to_t1_pct: float
+    achievable_profit_pct: float
     direction: Literal["BULLISH", "BEARISH", "NEUTRAL"]
     strategy: str
     entry_price: float
@@ -501,6 +504,9 @@ class CustomPositionResponse(BaseModel):
     target1: float | None = None
     target2: float | None = None
     buy_to_ltp_diff: float | None = None
+    buy_to_ltp_pct: float | None = None
+    floating_pnl_amount: float | None = None
+    floating_pnl_pct: float | None = None
     ltp_to_t1_diff: float | None = None
     ltp_to_t2_diff: float | None = None
     target1_achieved: bool = False
@@ -2210,6 +2216,10 @@ def build_fno_signal(
         risk_reward_target1 = round((target1 - entry_price) / risk, 2)
         risk_reward_target2 = round((target2 - entry_price) / risk, 2)
 
+    ltp_margin_to_t1_amount = round(max(target1 - option_ltp, 0.0), 2)
+    ltp_margin_to_t1_pct = round(((target1 - option_ltp) / max(option_ltp, 0.01)) * 100, 2)
+    achievable_profit_pct = round(((target1 - entry_price) / max(entry_price, 0.01)) * 100, 2)
+
     is_potential_trade = direction != "NEUTRAL" and confluence_score >= 72 and risk_reward_target2 >= 1.6
     if is_potential_trade:
         trigger_factors.append("PotentialTrade=YES")
@@ -2226,6 +2236,9 @@ def build_fno_signal(
         underlying_day_high=round(stock_core.high, 2) if stock_core.high is not None else None,
         underlying_day_low=round(stock_core.low, 2) if stock_core.low is not None else None,
         option_ltp=round(option_ltp, 2),
+        ltp_margin_to_t1_amount=ltp_margin_to_t1_amount,
+        ltp_margin_to_t1_pct=ltp_margin_to_t1_pct,
+        achievable_profit_pct=achievable_profit_pct,
         direction=direction,
         strategy=(
             "Assured Directional Projection"
@@ -2579,6 +2592,52 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     ]
     watchlist_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
+    min_required_trades = 2
+    combined_count = len(assured_signals) + len(watchlist_signals)
+    if combined_count < min_required_trades:
+        fallback_pool = [
+            item
+            for item in rows
+            if item.script not in paired_scripts
+            and item.script not in assured_scripts
+            and strike_range_min <= item.strike <= strike_range_max
+            and item.expiry_risk != "HIGH"
+            and item.minutes_to_expiry > 60
+            and item.risk_reward_target1 >= 0.85
+            and item.confluence_score >= 55
+            and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.14
+        ]
+        fallback_pool.sort(key=lambda row: row.confluence_score, reverse=True)
+
+        if not fallback_pool:
+            fallback_pool = [
+                item
+                for item in rows
+                if item.script not in paired_scripts
+                and item.script not in assured_scripts
+                and strike_range_min <= item.strike <= strike_range_max
+                and item.expiry_risk != "HIGH"
+                and item.minutes_to_expiry > 60
+            ]
+            fallback_pool.sort(key=lambda row: row.confluence_score, reverse=True)
+
+        seen = {item.script for item in watchlist_signals}
+        for item in fallback_pool:
+            if item.script in seen:
+                continue
+            updates = {
+                "strategy": "CAUTION: Probable T1 setup (strict risk control)",
+                "signal_quality": "MEDIUM",
+                "is_potential_trade": False,
+            }
+            if item.direction == "NEUTRAL":
+                updates["direction"] = "BULLISH" if item.option_type == "CE" else "BEARISH"
+            watchlist_signals.append(item.model_copy(update=updates))
+            seen.add(item.script)
+            combined_count = len(assured_signals) + len(watchlist_signals)
+            if combined_count >= min_required_trades:
+                break
+
     directional_count = len([item for item in rows if item.direction != "NEUTRAL"])
     high_conf_count = len([item for item in rows if item.confluence_score >= 80])
     medium_conf_count = len([item for item in rows if 70 <= item.confluence_score < 80])
@@ -2796,6 +2855,9 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
     target2_achieved = bool(latest_option_ltp is not None and target2 is not None and latest_option_ltp >= target2)
 
     buy_to_ltp_diff = round(float(latest_option_ltp) - buy_price, 2) if latest_option_ltp is not None else None
+    buy_to_ltp_pct = round((buy_to_ltp_diff / buy_price) * 100, 2) if (buy_to_ltp_diff is not None and buy_price > 0) else None
+    floating_pnl_amount = round((float(latest_option_ltp) - buy_price) * units, 2) if latest_option_ltp is not None else None
+    floating_pnl_pct = buy_to_ltp_pct
     ltp_to_t1_diff = round(max(float(target1) - float(latest_option_ltp), 0.0), 2) if (target1 is not None and latest_option_ltp is not None) else None
     ltp_to_t2_diff = round(max(float(target2) - float(latest_option_ltp), 0.0), 2) if (target2 is not None and latest_option_ltp is not None) else None
 
@@ -2824,6 +2886,9 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
         target1=target1,
         target2=target2,
         buy_to_ltp_diff=buy_to_ltp_diff,
+        buy_to_ltp_pct=buy_to_ltp_pct,
+        floating_pnl_amount=floating_pnl_amount,
+        floating_pnl_pct=floating_pnl_pct,
         ltp_to_t1_diff=ltp_to_t1_diff,
         ltp_to_t2_diff=ltp_to_t2_diff,
         target1_achieved=target1_achieved,

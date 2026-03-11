@@ -73,13 +73,23 @@ const formatSignedInr = (value) => {
   })}`;
 };
 
+const heatmapClass = (pct) => {
+  const value = Number(pct || 0);
+  if (value >= 10) return "bg-emerald-500/30 border-emerald-400 text-emerald-100";
+  if (value >= 6) return "bg-amber-500/30 border-amber-300 text-amber-100";
+  return "bg-rose-500/30 border-rose-300 text-rose-100";
+};
+
 const renderLiveInfoBox = (signal, suffix) => (
   <div className="fno-live-info-box" data-testid={`fno-live-info-box-${suffix}`}>
     <p className="text-[11px] font-extrabold">
-      CMP: ₹{formatNumber(signal.underlying_ltp)}
+      Live LTP Margin (T1): ₹{formatNumber(signal.ltp_margin_to_t1_amount)} ({formatNumber(signal.ltp_margin_to_t1_pct)}%)
     </p>
     <p className="text-[11px] font-extrabold">
       Day H/L: ₹{formatNumber(signal.underlying_day_high)} / ₹{formatNumber(signal.underlying_day_low)}
+    </p>
+    <p className={`mt-1 inline-flex rounded-md border px-2 py-0.5 text-[11px] font-extrabold ${heatmapClass(signal.achievable_profit_pct)}`}>
+      Heatmap Ratio: {formatNumber(signal.achievable_profit_pct)}%
     </p>
   </div>
 );
@@ -1144,6 +1154,12 @@ export default function App() {
                             <p>
                               LTP vs Buy: <span className={`font-mono font-semibold ${ltpDeltaClass}`} data-testid={`custom-position-buy-diff-${position.id}`}>{formatSignedInr(position.buy_to_ltp_diff)}</span>
                             </p>
+                            <p className="md:col-span-2 custom-position-pnl-box" data-testid={`custom-position-pnl-box-${position.id}`}>
+                              P/L (Lot Size Based):
+                              <span className={`ml-1 font-mono font-extrabold ${Number(position.floating_pnl_amount || 0) >= 0 ? "text-emerald-100" : "text-rose-100"}`}>
+                                {formatSignedInr(position.floating_pnl_amount)} ({position.floating_pnl_pct !== null && position.floating_pnl_pct !== undefined ? `${position.floating_pnl_pct > 0 ? "+" : ""}${formatNumber(position.floating_pnl_pct)}%` : "-"})
+                              </span>
+                            </p>
                             <p>Target1 / Target2: <span className="font-mono">₹{formatNumber(position.target1)} / ₹{formatNumber(position.target2)}</span></p>
                             <p>
                               To T1 / T2: <span className="font-mono" data-testid={`custom-position-target-diff-${position.id}`}>₹{formatNumber(position.ltp_to_t1_diff)} / ₹{formatNumber(position.ltp_to_t2_diff)}</span>
@@ -1151,10 +1167,10 @@ export default function App() {
                             <p>Expiry in: <span className="font-mono">{position.minutes_to_expiry} min</span></p>
                             <p>Recovery Potential: <span className="font-mono" data-testid={`custom-position-recovery-${position.id}`}>{position.recovery_potential !== null && position.recovery_potential !== undefined ? `${formatNumber(position.recovery_potential * 100)}%` : "-"}</span></p>
                             <p>
-                              T1 Status: <span className="inline-flex items-center gap-1 font-semibold" data-testid={`custom-position-t1-status-${position.id}`}>{position.target1_achieved ? <><CheckCircle2 size={14} className="text-emerald-400" /> Achieved</> : "Pending"}</span>
+                              T1 Status: <span className="inline-flex items-center gap-1 font-semibold" data-testid={`custom-position-t1-status-${position.id}`}>{position.target1_achieved ? <><CheckCircle2 size={14} className="text-blue-600" /> Achieved</> : "Pending"}</span>
                             </p>
                             <p>
-                              T2 Status: <span className="inline-flex items-center gap-1 font-semibold" data-testid={`custom-position-t2-status-${position.id}`}>{position.target2_achieved ? <><CheckCircle2 size={14} className="text-emerald-400" /> Achieved</> : "Pending"}</span>
+                              T2 Status: <span className="inline-flex items-center gap-1 font-semibold" data-testid={`custom-position-t2-status-${position.id}`}>{position.target2_achieved ? <><CheckCircle2 size={14} className="text-blue-600" /> Achieved</> : "Pending"}</span>
                             </p>
                             <p className="md:col-span-2">Exit Plan: <span className="font-mono">{position.revised_exit_plan}</span></p>
                             {position.sold_price !== null && position.sold_price !== undefined ? (
@@ -1294,6 +1310,9 @@ export default function App() {
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
+                                    {String(signal.strategy || "").toUpperCase().includes("CAUTION") ? (
+                                      <p className="font-semibold text-amber-200">⚠ Caution: Probable setup only. Use strict stop-loss and position sizing.</p>
+                                    ) : null}
                                   </div>
                                 ))}
                               </div>
