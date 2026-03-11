@@ -1341,6 +1341,15 @@ export default function App() {
                               <p>Contributors: {pane.without_consolidated_report.top_contributors.join(" | ")}</p>
                             </div>
                           </div>
+
+                          {pane.rejection_note ? (
+                            <p
+                              className="rounded-md border border-slate-700 bg-slate-900/70 p-2 text-xs font-bold text-white transition-colors hover:text-blue-900"
+                              data-testid={`pane-rejection-note-${pane.index_name.toLowerCase()}`}
+                            >
+                              {pane.rejection_note}
+                            </p>
+                          ) : null}
                         </CardContent>
                       </Card>
                     ))}

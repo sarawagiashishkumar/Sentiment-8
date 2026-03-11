@@ -387,6 +387,7 @@ class IndexProjectionPane(BaseModel):
     assured_signals: List[FNOSignalResponse]
     watchlist_signals: List[FNOSignalResponse]
     non_directional_strategies: List[NonDirectionalStrategy]
+    rejection_note: str | None = None
     with_consolidated_report: IndexAnalysisReport
     without_consolidated_report: IndexAnalysisReport
 
@@ -2574,6 +2575,27 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     ]
     watchlist_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
+    directional_count = len([item for item in rows if item.direction != "NEUTRAL"])
+    high_conf_count = len([item for item in rows if item.confluence_score >= 80])
+    medium_conf_count = len([item for item in rows if 70 <= item.confluence_score < 80])
+    bias_aligned_count = (
+        len([item for item in rows if item.direction == expected_direction])
+        if expected_direction != "NEUTRAL"
+        else 0
+    )
+    rejection_note = None
+    if not assured_signals and not watchlist_signals:
+        if expected_direction == "NEUTRAL":
+            rejection_note = (
+                f"No trade: weighted {index_name} bias is NEUTRAL. "
+                f"Directional contracts: {directional_count}/{len(rows)}."
+            )
+        else:
+            rejection_note = (
+                f"No trade: bias-aligned contracts {bias_aligned_count}/{len(rows)} did not pass strict gates. "
+                f"High-confluence={high_conf_count}, Medium-confluence={medium_conf_count}."
+            )
+
     return IndexProjectionPane(
         index_name=index_name,
         spot=round(stock.ltp, 2),
@@ -2582,6 +2604,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         assured_signals=assured_signals,
         watchlist_signals=watchlist_signals[:8],
         non_directional_strategies=non_directional,
+        rejection_note=rejection_note,
         with_consolidated_report=with_report,
         without_consolidated_report=without_report,
     )
@@ -3426,6 +3449,7 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
             assured_signals=[],
             watchlist_signals=[],
             non_directional_strategies=[],
+            rejection_note="NIFTY projection temporarily unavailable",
             with_consolidated_report=IndexAnalysisReport(
                 report_type="with_consolidated",
                 breadth_score=0,
@@ -3455,6 +3479,7 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
             assured_signals=[],
             watchlist_signals=[],
             non_directional_strategies=[],
+            rejection_note="BANKNIFTY projection temporarily unavailable",
             with_consolidated_report=IndexAnalysisReport(
                 report_type="with_consolidated",
                 breadth_score=0,
