@@ -3,6 +3,7 @@ import axios from "axios";
 import {
   AlertTriangle,
   BarChart3,
+  CheckCircle2,
   FileUp,
   GaugeCircle,
   Home,
@@ -62,6 +63,16 @@ const formatExpiryDate = (isoDate) => {
   return `${day}-${month}-${year}`;
 };
 
+const formatSignedInr = (value) => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  const numeric = Number(value);
+  const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
+  return `${sign}₹${Math.abs(numeric).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}`;
+};
+
 const directionBadge = (direction) => {
   if (direction === "BULLISH") return "bg-emerald-600 text-white border-emerald-700";
   if (direction === "BEARISH") return "bg-rose-600 text-white border-rose-700";
@@ -107,6 +118,11 @@ export default function App() {
   const [customPositionLoading, setCustomPositionLoading] = useState(false);
   const [customPositionError, setCustomPositionError] = useState("");
   const [customPositions, setCustomPositions] = useState([]);
+  const [sellDialogOpen, setSellDialogOpen] = useState(false);
+  const [sellDialogPosition, setSellDialogPosition] = useState(null);
+  const [sellPriceInput, setSellPriceInput] = useState("");
+  const [sellConfirmChecked, setSellConfirmChecked] = useState(false);
+  const [sellLoading, setSellLoading] = useState(false);
 
   const [portfolioFile, setPortfolioFile] = useState(null);
   const [portfolioRows, setPortfolioRows] = useState([
@@ -297,6 +313,50 @@ export default function App() {
       await loadCustomPositions();
     } catch (error) {
       setCustomPositionError(error?.response?.data?.detail || "Unable to close custom projection.");
+    }
+  };
+
+  const openSellDialog = (position) => {
+    setSellDialogPosition(position);
+    setSellPriceInput("");
+    setSellConfirmChecked(false);
+    setSellDialogOpen(true);
+  };
+
+  const submitSoldPosition = async (event) => {
+    event.preventDefault();
+    if (!sellDialogPosition) return;
+
+    const soldPrice = Number(sellPriceInput);
+    if (!soldPrice || soldPrice <= 0) {
+      setCustomPositionError("Please enter a valid sold price.");
+      return;
+    }
+    if (!sellConfirmChecked) {
+      setCustomPositionError("Please confirm before submitting sold price.");
+      return;
+    }
+
+    setSellLoading(true);
+    setCustomPositionError("");
+    try {
+      await axios.post(
+        `${API}/fno/custom-position/${sellDialogPosition.id}/sell`,
+        {
+          sold_price: soldPrice,
+          confirm: true,
+        },
+        { headers: authHeaders },
+      );
+      setSellDialogOpen(false);
+      setSellDialogPosition(null);
+      setSellPriceInput("");
+      setSellConfirmChecked(false);
+      await loadCustomPositions();
+    } catch (error) {
+      setCustomPositionError(error?.response?.data?.detail || "Unable to mark position as sold.");
+    } finally {
+      setSellLoading(false);
     }
   };
 
@@ -822,6 +882,7 @@ export default function App() {
                         "EXIT_URGENT_NO_RECOVERY",
                       ].includes(position.alert || "");
                       const exitPrice = position.best_exit_price ?? position.projected_exit_price;
+                      const ltpDeltaClass = Number(position.buy_to_ltp_diff || 0) >= 0 ? "text-emerald-300" : "text-rose-300";
                       return (
                         <div
                           key={position.id}
@@ -830,23 +891,60 @@ export default function App() {
                         >
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <p className="font-mono text-yellow-200" data-testid={`custom-position-script-${position.id}`}>{position.script}</p>
-                            <Button
-                              type="button"
-                              onClick={() => closeCustomProjection(position.id)}
-                              className="h-7 border border-rose-500 bg-transparent px-2 text-rose-300 hover:bg-rose-500/20"
-                              data-testid={`custom-position-close-${position.id}`}
-                            >
-                              <X size={14} />
-                            </Button>
+                            {position.status === "OPEN" ? (
+                              <Button
+                                type="button"
+                                onClick={() => closeCustomProjection(position.id)}
+                                className="h-7 border border-rose-500 bg-transparent px-2 text-rose-300 hover:bg-rose-500/20"
+                                data-testid={`custom-position-close-${position.id}`}
+                              >
+                                <X size={14} />
+                              </Button>
+                            ) : (
+                              <Badge className="border border-emerald-600 bg-emerald-500/20 text-emerald-200" data-testid={`custom-position-status-${position.id}`}>
+                                {position.status}
+                              </Badge>
+                            )}
                           </div>
                           <div className="grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
                             <p>Buy Price: <span className="font-mono">₹{formatNumber(position.buy_price)}</span></p>
-                            <p>Live LTP: <span className="font-mono">₹{formatNumber(position.latest_option_ltp)}</span></p>
+                            <p>
+                              Live LTP: <span className="font-mono text-sm font-extrabold text-cyan-200" data-testid={`custom-position-live-ltp-${position.id}`}>₹{formatNumber(position.latest_option_ltp)}</span>
+                            </p>
+                            <p>
+                              LTP vs Buy: <span className={`font-mono font-semibold ${ltpDeltaClass}`} data-testid={`custom-position-buy-diff-${position.id}`}>{formatSignedInr(position.buy_to_ltp_diff)}</span>
+                            </p>
                             <p>Target1 / Target2: <span className="font-mono">₹{formatNumber(position.target1)} / ₹{formatNumber(position.target2)}</span></p>
+                            <p>
+                              To T1 / T2: <span className="font-mono" data-testid={`custom-position-target-diff-${position.id}`}>₹{formatNumber(position.ltp_to_t1_diff)} / ₹{formatNumber(position.ltp_to_t2_diff)}</span>
+                            </p>
                             <p>Expiry in: <span className="font-mono">{position.minutes_to_expiry} min</span></p>
                             <p>Recovery Potential: <span className="font-mono" data-testid={`custom-position-recovery-${position.id}`}>{position.recovery_potential !== null && position.recovery_potential !== undefined ? `${formatNumber(position.recovery_potential * 100)}%` : "-"}</span></p>
+                            <p>
+                              T1 Status: <span className="inline-flex items-center gap-1 font-semibold" data-testid={`custom-position-t1-status-${position.id}`}>{position.target1_achieved ? <><CheckCircle2 size={14} className="text-emerald-400" /> Achieved</> : "Pending"}</span>
+                            </p>
+                            <p>
+                              T2 Status: <span className="inline-flex items-center gap-1 font-semibold" data-testid={`custom-position-t2-status-${position.id}`}>{position.target2_achieved ? <><CheckCircle2 size={14} className="text-emerald-400" /> Achieved</> : "Pending"}</span>
+                            </p>
                             <p className="md:col-span-2">Exit Plan: <span className="font-mono">{position.revised_exit_plan}</span></p>
+                            {position.sold_price !== null && position.sold_price !== undefined ? (
+                              <p className="md:col-span-2" data-testid={`custom-position-realized-pnl-${position.id}`}>
+                                Sold @ <span className="font-mono">₹{formatNumber(position.sold_price)}</span> | Realized P&L: <span className={`font-mono font-bold ${Number(position.realized_pnl || 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatSignedInr(position.realized_pnl)}</span>
+                              </p>
+                            ) : null}
                           </div>
+                          {position.can_sell ? (
+                            <div className="mt-2">
+                              <Button
+                                type="button"
+                                onClick={() => openSellDialog(position)}
+                                className="h-8 border border-emerald-500 bg-emerald-500/10 px-3 text-emerald-200 hover:bg-emerald-500/20"
+                                data-testid={`custom-position-sold-button-${position.id}`}
+                              >
+                                Sold
+                              </Button>
+                            </div>
+                          ) : null}
                           {urgent ? (
                             <div className="mt-2 flex items-center gap-2 rounded-md border border-red-500 bg-red-500/20 px-2 py-1 text-xs font-bold text-red-100" data-testid={`custom-position-alert-${position.id}`}>
                               <AlertTriangle size={14} />
@@ -867,6 +965,60 @@ export default function App() {
                     </p>
                   )}
                 </div>
+                {sellDialogOpen && sellDialogPosition ? (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4" data-testid="custom-position-sell-modal">
+                    <Card className="w-full max-w-md border-slate-700 bg-slate-950">
+                      <CardHeader>
+                        <CardTitle className="text-white">Mark Position as Sold</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <form className="space-y-3" onSubmit={submitSoldPosition} data-testid="custom-position-sell-form">
+                          <p className="text-sm text-slate-300">{sellDialogPosition.script}</p>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={sellPriceInput}
+                            onChange={(event) => setSellPriceInput(event.target.value)}
+                            placeholder="Enter Sold Price"
+                            data-testid="custom-position-sell-price-input"
+                            className="border-slate-700 bg-slate-900 text-slate-100"
+                          />
+                          <label className="flex items-center gap-2 text-xs text-slate-300" data-testid="custom-position-sell-confirm">
+                            <input
+                              type="checkbox"
+                              checked={sellConfirmChecked}
+                              onChange={(event) => setSellConfirmChecked(event.target.checked)}
+                              data-testid="custom-position-sell-confirm-checkbox"
+                            />
+                            I confirm this sold price is correct.
+                          </label>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              type="button"
+                              className="border border-slate-600 bg-transparent text-slate-200 hover:bg-slate-800"
+                              onClick={() => {
+                                setSellDialogOpen(false);
+                                setSellDialogPosition(null);
+                              }}
+                              data-testid="custom-position-sell-cancel"
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              type="submit"
+                              className="bg-emerald-500 text-slate-900 hover:bg-emerald-400"
+                              disabled={sellLoading}
+                              data-testid="custom-position-sell-submit"
+                            >
+                              {sellLoading ? "Saving..." : "Confirm Sold"}
+                            </Button>
+                          </div>
+                        </form>
+                      </CardContent>
+                    </Card>
+                  </div>
+                ) : null}
                 {fnoError ? <p className="text-sm text-rose-400" data-testid="fno-error">{fnoError}</p> : null}
                 {!fnoData ? (
                   <p className="text-sm text-slate-400" data-testid="fno-empty-note">

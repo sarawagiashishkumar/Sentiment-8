@@ -443,6 +443,11 @@ class CustomPositionCreateRequest(BaseModel):
     buy_price: float
 
 
+class CustomPositionSellRequest(BaseModel):
+    sold_price: float
+    confirm: bool = True
+
+
 class CustomPositionResponse(BaseModel):
     id: str
     script: str
@@ -450,14 +455,24 @@ class CustomPositionResponse(BaseModel):
     expiry_date: str
     expiry_time_ist: str
     lot_size: int
+    quantity_lots: int = 1
+    units: int = 1
     buy_price: float
     created_at: str
     last_update: str
-    status: Literal["OPEN", "CLOSED", "EXPIRED"]
+    status: Literal["OPEN", "CLOSED", "EXPIRED", "SOLD"]
     alert: str | None = None
     latest_option_ltp: float | None = None
     target1: float | None = None
     target2: float | None = None
+    buy_to_ltp_diff: float | None = None
+    ltp_to_t1_diff: float | None = None
+    ltp_to_t2_diff: float | None = None
+    target1_achieved: bool = False
+    target2_achieved: bool = False
+    can_sell: bool = False
+    sold_price: float | None = None
+    realized_pnl: float | None = None
     projected_exit_price: float | None = None
     best_exit_price: float | None = None
     recovery_potential: float | None = None
@@ -854,32 +869,34 @@ async def _get_kite_access_token() -> str | None:
     return token or None
 
 
+async def _resolve_kite_instrument_for_contract(contract: FNOContract) -> str | None:
+    rows = await db.kite_option_master.find(
+        {
+            "underlying": contract.underlying,
+            "expiry": contract.expiry,
+            "option_type": contract.option_type,
+        },
+        {"_id": 0, "instrument": 1, "strike": 1},
+    ).to_list(500)
+    if not rows:
+        return None
+
+    target_strike = float(contract.strike)
+    rows.sort(key=lambda item: abs(float(item.get("strike", 0.0)) - target_strike))
+    best = rows[0]
+    if abs(float(best.get("strike", 0.0)) - target_strike) > 0.01:
+        return None
+    instrument = str(best.get("instrument", "")).strip()
+    return instrument or None
+
+
 async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
     access_token = await _get_kite_access_token()
     if not access_token or not KITE_API_KEY:
         return None
 
     await _sync_kite_option_master_daily()
-    expiry = contract.expiry
-    target_strike = float(contract.strike)
-    rows = await db.kite_option_master.find(
-        {
-            "underlying": contract.underlying,
-            "expiry": expiry,
-            "option_type": contract.option_type,
-        },
-        {"_id": 0, "instrument": 1, "strike": 1},
-    ).to_list(500)
-
-    if not rows:
-        return None
-
-    rows.sort(key=lambda item: abs(float(item.get("strike", 0.0)) - target_strike))
-    best = rows[0]
-    if abs(float(best.get("strike", 0.0)) - target_strike) > 0.01:
-        return None
-
-    instrument = str(best.get("instrument", "")).strip()
+    instrument = await _resolve_kite_instrument_for_contract(contract)
     if not instrument:
         return None
 
@@ -907,6 +924,80 @@ async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
             return None
 
     return await asyncio.to_thread(_fetch_ltp)
+
+
+async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str, float]:
+    access_token = await _get_kite_access_token()
+    if not access_token or not KITE_API_KEY or not contracts:
+        return {}
+
+    await _sync_kite_option_master_daily()
+
+    script_to_instrument: dict[str, str] = {}
+    grouped: dict[tuple[str, str, str], list[FNOContract]] = defaultdict(list)
+    for contract in contracts:
+        grouped[(contract.underlying, contract.expiry, contract.option_type)].append(contract)
+
+    for (underlying, expiry, option_type), group_contracts in grouped.items():
+        rows = await db.kite_option_master.find(
+            {
+                "underlying": underlying,
+                "expiry": expiry,
+                "option_type": option_type,
+            },
+            {"_id": 0, "instrument": 1, "strike": 1},
+        ).to_list(2000)
+        if not rows:
+            continue
+
+        by_strike = {round(float(row.get("strike", 0.0)), 2): str(row.get("instrument", "")).strip() for row in rows}
+        for contract in group_contracts:
+            instrument = by_strike.get(round(float(contract.strike), 2))
+            if instrument:
+                script_to_instrument[contract.script] = instrument
+
+    if not script_to_instrument:
+        return {}
+
+    unique_instruments = list(dict.fromkeys(script_to_instrument.values()))
+    instrument_ltp: dict[str, float] = {}
+
+    def _fetch_batch(batch: list[str]) -> dict[str, float]:
+        params = [("i", item) for item in batch]
+        try:
+            response = requests.get(
+                "https://api.kite.trade/quote/ltp",
+                params=params,
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {KITE_API_KEY}:{access_token}",
+                },
+                timeout=15,
+            )
+            if response.status_code != 200:
+                return {}
+            payload = response.json()
+            data = payload.get("data", {})
+            rows: dict[str, float] = {}
+            for instrument, row in data.items():
+                price = _to_float((row or {}).get("last_price"))
+                if price is not None and price > 0:
+                    rows[instrument] = float(price)
+            return rows
+        except Exception:
+            return {}
+
+    for idx in range(0, len(unique_instruments), 200):
+        batch = unique_instruments[idx : idx + 200]
+        rows = await asyncio.to_thread(_fetch_batch, batch)
+        instrument_ltp.update(rows)
+
+    response: dict[str, float] = {}
+    for script, instrument in script_to_instrument.items():
+        value = instrument_ltp.get(instrument)
+        if value is not None and value > 0:
+            response[script] = float(value)
+    return response
 
 
 async def _fetch_live_option_ltp(contract: FNOContract) -> float:
@@ -2135,7 +2226,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     expiry = await _get_nearest_expiry(index_name)
 
     strikes = list(range(int(strike_range_min), int(strike_range_max) + step, step))
-    rows: list[FNOSignalResponse] = []
+    contracts: list[FNOContract] = []
     for strike in strikes:
         for option_type in ["CE", "PE"]:
             contract = FNOContract(
@@ -2148,23 +2239,32 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                 exchange="NFO",
                 lot_size=LOT_SIZE_MAP.get(index_name, 1),
             )
-            minutes_to_expiry = get_minutes_to_expiry(contract)
-            if minutes_to_expiry <= 15:
-                continue
-            try:
+            if get_minutes_to_expiry(contract) > 15:
+                contracts.append(contract)
+
+    if not contracts:
+        raise HTTPException(status_code=502, detail=f"No active contracts available for {index_name}")
+
+    kite_map = await _fetch_option_ltps_from_kite(contracts)
+    rows: list[FNOSignalResponse] = []
+    for contract in contracts:
+        minutes_to_expiry = get_minutes_to_expiry(contract)
+        try:
+            option_ltp = kite_map.get(contract.script)
+            if option_ltp is None:
                 option_ltp = await _fetch_live_option_ltp(contract)
-                signal = build_fno_signal(
-                    contract,
-                    stock,
-                    option_ltp,
-                    refreshed_at,
-                    minutes_to_expiry,
-                )
-                rows.append(signal)
-            except HTTPException:
-                continue
-            except Exception:
-                continue
+            signal = build_fno_signal(
+                contract,
+                stock,
+                option_ltp,
+                refreshed_at,
+                minutes_to_expiry,
+            )
+            rows.append(signal)
+        except HTTPException:
+            continue
+        except Exception:
+            continue
 
     if not rows:
         raise HTTPException(status_code=502, detail=f"No live option-chain strikes available for {index_name}")
@@ -2356,21 +2456,53 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
 
 
 def _position_to_response(position: dict) -> CustomPositionResponse:
+    lot_size = int(position.get("lot_size", 1))
+    quantity_lots = max(1, int(position.get("quantity_lots", 1)))
+    units = max(1, lot_size * quantity_lots)
+    buy_price = float(position["buy_price"])
+    latest_option_ltp = _to_float(position.get("latest_option_ltp"))
+    target1 = _to_float(position.get("target1"))
+    target2 = _to_float(position.get("target2"))
+
+    target1_achieved = bool(latest_option_ltp is not None and target1 is not None and latest_option_ltp >= target1)
+    target2_achieved = bool(latest_option_ltp is not None and target2 is not None and latest_option_ltp >= target2)
+
+    buy_to_ltp_diff = round(float(latest_option_ltp) - buy_price, 2) if latest_option_ltp is not None else None
+    ltp_to_t1_diff = round(max(float(target1) - float(latest_option_ltp), 0.0), 2) if (target1 is not None and latest_option_ltp is not None) else None
+    ltp_to_t2_diff = round(max(float(target2) - float(latest_option_ltp), 0.0), 2) if (target2 is not None and latest_option_ltp is not None) else None
+
+    sold_price = _to_float(position.get("sold_price"))
+    realized_pnl = _to_float(position.get("realized_pnl"))
+    if realized_pnl is None and sold_price is not None:
+        realized_pnl = round((sold_price - buy_price) * units, 2)
+
+    can_sell = position.get("status") == "OPEN" and (target1_achieved or target2_achieved)
+
     return CustomPositionResponse(
         id=position["id"],
         script=position["script"],
         underlying=position["underlying"],
         expiry_date=position["expiry_date"],
         expiry_time_ist=position.get("expiry_time_ist", "15:30"),
-        lot_size=int(position.get("lot_size", 1)),
-        buy_price=float(position["buy_price"]),
+        lot_size=lot_size,
+        quantity_lots=quantity_lots,
+        units=units,
+        buy_price=buy_price,
         created_at=position["created_at"],
         last_update=position["last_update"],
         status=position["status"],
         alert=position.get("alert"),
-        latest_option_ltp=position.get("latest_option_ltp"),
-        target1=position.get("target1"),
-        target2=position.get("target2"),
+        latest_option_ltp=latest_option_ltp,
+        target1=target1,
+        target2=target2,
+        buy_to_ltp_diff=buy_to_ltp_diff,
+        ltp_to_t1_diff=ltp_to_t1_diff,
+        ltp_to_t2_diff=ltp_to_t2_diff,
+        target1_achieved=target1_achieved,
+        target2_achieved=target2_achieved,
+        can_sell=can_sell,
+        sold_price=sold_price,
+        realized_pnl=realized_pnl,
         projected_exit_price=position.get("projected_exit_price"),
         best_exit_price=position.get("best_exit_price"),
         recovery_potential=position.get("recovery_potential"),
@@ -2428,8 +2560,8 @@ async def _refresh_open_position(position: dict) -> dict:
         return updated
     buy_price = float(position["buy_price"])
     pnl_pct = ((latest_option_ltp - buy_price) / buy_price) if buy_price > 0 else 0.0
-    revised_target1 = round(max(buy_price * 1.12, latest_option_ltp * 1.05), 2)
-    revised_target2 = round(max(buy_price * 1.5, latest_option_ltp * 1.2), 2)
+    revised_target1 = round(float(position.get("target1") or (buy_price * 1.12)), 2)
+    revised_target2 = round(float(position.get("target2") or (buy_price * 1.5)), 2)
     projected_exit_price = None
     raw_recovery_potential = ((revised_target1 - latest_option_ltp) / max(latest_option_ltp, 0.01)) if latest_option_ltp > 0 else 0.0
     if minutes_to_expiry <= 120:
@@ -2856,6 +2988,7 @@ async def create_custom_position(
         "strike": contract.strike,
         "option_type": contract.option_type,
         "lot_size": contract.lot_size,
+        "quantity_lots": 1,
         "buy_price": round(float(payload.buy_price), 2),
         "created_at": now_iso,
         "last_update": now_iso,
@@ -2867,6 +3000,8 @@ async def create_custom_position(
         "projected_exit_price": None,
         "best_exit_price": None,
         "recovery_potential": None,
+        "sold_price": None,
+        "realized_pnl": None,
         "minutes_to_expiry": minutes_to_expiry,
         "revised_exit_plan": "Hold with trailing stop once target1 hits",
     }
@@ -2882,12 +3017,15 @@ async def create_custom_position(
 @api_router.get("/fno/custom-positions", response_model=List[CustomPositionResponse])
 async def list_custom_positions(current_user: dict = Depends(get_current_user)):
     rows = await db.custom_positions.find(
-        {"user_key": current_user["user_key"], "status": "OPEN"},
+        {"user_key": current_user["user_key"], "status": {"$in": ["OPEN", "SOLD"]}},
         {"_id": 0},
     ).to_list(200)
 
     refreshed: list[CustomPositionResponse] = []
     for row in rows:
+        if row.get("status") == "SOLD":
+            refreshed.append(_position_to_response(row))
+            continue
         try:
             updated = await _refresh_open_position(row)
             if updated and updated.get("status") == "OPEN":
@@ -2904,6 +3042,51 @@ async def list_custom_positions(current_user: dict = Depends(get_current_user)):
 
     refreshed.sort(key=lambda item: item.created_at, reverse=True)
     return refreshed
+
+
+@api_router.post("/fno/custom-position/{position_id}/sell", response_model=CustomPositionResponse)
+async def sell_custom_position(
+    position_id: str,
+    payload: CustomPositionSellRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    if payload.sold_price <= 0:
+        raise HTTPException(status_code=400, detail="Sold price must be greater than 0")
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Please confirm sale before submitting")
+
+    row = await db.custom_positions.find_one(
+        {"id": position_id, "user_key": current_user["user_key"], "status": "OPEN"},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Open custom position not found")
+
+    response_view = _position_to_response(row)
+    if not (response_view.target1_achieved or response_view.target2_achieved):
+        raise HTTPException(status_code=400, detail="Sell allowed only after T1 or T2 is achieved")
+
+    units = max(1, int(row.get("lot_size", 1)) * int(row.get("quantity_lots", 1) or 1))
+    realized_pnl = round((float(payload.sold_price) - float(row["buy_price"])) * units, 2)
+
+    updated = await db.custom_positions.find_one_and_update(
+        {"id": position_id, "user_key": current_user["user_key"], "status": "OPEN"},
+        {
+            "$set": {
+                "status": "SOLD",
+                "alert": "SOLD",
+                "sold_price": round(float(payload.sold_price), 2),
+                "realized_pnl": realized_pnl,
+                "last_update": _utc_now_iso(),
+                "revised_exit_plan": "Position sold by user.",
+            }
+        },
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Open custom position not found")
+    return _position_to_response(updated)
 
 
 @api_router.post("/fno/custom-position/{position_id}/close")
