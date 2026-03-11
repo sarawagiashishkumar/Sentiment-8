@@ -258,13 +258,23 @@
     color: #7f1d1d !important;
 }
 
-.fno-live-info-box:hover,
-.fno-live-info-box:hover p,
-.fno-live-info-box:hover span {
+.fno-live-info-box:hover {
     background: #fde047 !important;
     border-color: #1d4ed8 !important;
-    color: #1e3a8a !important;
     text-shadow: none;
+}
+
+.fno-live-info-box:hover p,
+.result-hover:hover .fno-live-info-box p,
+.result-hover:focus-within .fno-live-info-box p {
+    color: #1e3a8a !important;
+    background: transparent !important;
+}
+
+.fno-live-info-box:hover span,
+.result-hover:hover .fno-live-info-box span,
+.result-hover:focus-within .fno-live-info-box span {
+    background: transparent !important;
 }
 
 .result-hover:hover .fno-corner-delta-box,
@@ -278,6 +288,16 @@
 .result-hover:hover .fno-corner-delta-box span,
 .fno-live-info-box:hover .fno-corner-delta-box span,
 .result-hover:focus-within .fno-corner-delta-box span {
+    color: #fde047 !important;
+    background: transparent !important;
+}
+
+.result-hover:hover .fno-corner-delta-box .fno-corner-label,
+.fno-live-info-box:hover .fno-corner-delta-box .fno-corner-label,
+.result-hover:focus-within .fno-corner-delta-box .fno-corner-label,
+.result-hover:hover .fno-corner-delta-box .fno-corner-value,
+.fno-live-info-box:hover .fno-corner-delta-box .fno-corner-value,
+.result-hover:focus-within .fno-corner-delta-box .fno-corner-value {
     color: #fde047 !important;
 }
 
