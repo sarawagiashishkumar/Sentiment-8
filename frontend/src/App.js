@@ -86,7 +86,9 @@ const renderLiveInfoBox = (signal, suffix) => (
       Live Option LTP: ₹{formatNumber(signal.option_ltp)}
     </p>
     <p className="text-[11px] font-extrabold">
-      Live LTP Margin (T1): ₹{formatNumber(signal.ltp_margin_to_t1_amount)} ({formatNumber(signal.ltp_margin_to_t1_pct)}%)
+      <span className="hidden sm:inline">Minimum Profit on Target1 on Current Buy:</span>
+      <span className="sm:hidden">Min Profit @ T1 (Current Buy):</span>{" "}
+      ₹{formatNumber(signal.ltp_margin_to_t1_amount)} ({formatNumber(signal.ltp_margin_to_t1_pct)}%)
     </p>
     <p className="text-[11px] font-extrabold">
       Day H/L: ₹{formatNumber(signal.option_day_high)} / ₹{formatNumber(signal.option_day_low)}
