@@ -983,6 +983,40 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
     KITE_OPTION_MASTER_LAST_SYNC_DATE = today
 
 
+async def _resolve_kite_lot_size_for_script(script: str) -> int | None:
+    if not script:
+        return None
+    await _sync_kite_option_master_daily()
+    row = await db.kite_option_master.find_one(
+        {"tradingsymbol": script.upper()},
+        {"_id": 0, "lot_size": 1},
+    )
+    if not row:
+        return None
+    lot_size = int(_to_float(row.get("lot_size")) or 0)
+    return lot_size if lot_size > 0 else None
+
+
+async def _resolve_verified_lot_size(underlying: str, script: str | None = None) -> int:
+    if script:
+        by_script = await _resolve_kite_lot_size_for_script(script)
+        if by_script and by_script > 0:
+            return int(by_script)
+
+    await _sync_kite_option_master_daily()
+    row = await db.kite_option_master.find_one(
+        {"underlying": _normalize_symbol_key(underlying)},
+        {"_id": 0, "lot_size": 1},
+    )
+    if row:
+        lot_size = int(_to_float(row.get("lot_size")) or 0)
+        if lot_size > 0:
+            return lot_size
+
+    mapped = int(LOT_SIZE_MAP.get(_normalize_symbol_key(underlying), 1) or 1)
+    return mapped if mapped > 0 else 1
+
+
 async def _get_kite_access_token() -> str | None:
     if not KITE_API_KEY:
         return None
@@ -3025,6 +3059,13 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
 
 
 async def _refresh_open_position(position: dict) -> dict:
+    corrected_lot_size = int(position.get("lot_size") or 1)
+    if corrected_lot_size <= 1:
+        corrected_lot_size = await _resolve_verified_lot_size(
+            str(position.get("underlying", "")),
+            str(position.get("script", "")),
+        )
+
     contract_dict = {
         "script": position["script"],
         "underlying": position["underlying"],
@@ -3033,7 +3074,7 @@ async def _refresh_open_position(position: dict) -> dict:
         "strike": position["strike"],
         "option_type": position["option_type"],
         "exchange": "NFO",
-        "lot_size": position.get("lot_size", 1),
+        "lot_size": corrected_lot_size,
     }
     contract = FNOContract(**contract_dict)
     minutes_to_expiry = get_minutes_to_expiry(contract)
@@ -3062,6 +3103,7 @@ async def _refresh_open_position(position: dict) -> dict:
             {
                 "$set": {
                     "alert": "LIVE_LTP_UNAVAILABLE",
+                    "lot_size": corrected_lot_size,
                     "minutes_to_expiry": minutes_to_expiry,
                     "last_update": _utc_now_iso(),
                     "revised_exit_plan": "Live option feed unavailable; showing last confirmed option LTP.",
@@ -3110,6 +3152,7 @@ async def _refresh_open_position(position: dict) -> dict:
         {
             "$set": {
                 "latest_option_ltp": round(float(latest_option_ltp), 2),
+                    "lot_size": corrected_lot_size,
                 "target1": revised_target1,
                 "target2": revised_target2,
                 "minutes_to_expiry": minutes_to_expiry,
@@ -3736,6 +3779,9 @@ async def create_custom_position(
         raise HTTPException(status_code=400, detail="Buy price must be greater than 0")
 
     contract = await _resolve_contract_from_input(payload.script)
+    final_lot_size = await _resolve_verified_lot_size(contract.underlying, contract.script)
+    if final_lot_size > 0 and final_lot_size != contract.lot_size:
+        contract = contract.model_copy(update={"lot_size": final_lot_size})
     minutes_to_expiry = get_minutes_to_expiry(contract)
     _validate_expiry_guard(minutes_to_expiry)
 
@@ -3794,6 +3840,15 @@ async def list_custom_positions(current_user: dict = Depends(get_current_user)):
     refreshed: list[CustomPositionResponse] = []
     for row in rows:
         if row.get("status") == "SOLD":
+            if int(row.get("lot_size") or 1) <= 1:
+                corrected = await _resolve_verified_lot_size(str(row.get("underlying", "")), str(row.get("script", "")))
+                if corrected > 1:
+                    row = await db.custom_positions.find_one_and_update(
+                        {"id": row["id"], "user_key": current_user["user_key"]},
+                        {"$set": {"lot_size": corrected, "last_update": _utc_now_iso()}},
+                        projection={"_id": 0},
+                        return_document=ReturnDocument.AFTER,
+                    ) or row
             refreshed.append(_position_to_response(row))
             continue
         try:

@@ -83,10 +83,13 @@ const heatmapClass = (pct) => {
 const renderLiveInfoBox = (signal, suffix) => (
   <div className="fno-live-info-box" data-testid={`fno-live-info-box-${suffix}`}>
     <p className="text-[11px] font-extrabold">
+      Live Option LTP: ₹{formatNumber(signal.option_ltp)}
+    </p>
+    <p className="text-[11px] font-extrabold">
       Live LTP Margin (T1): ₹{formatNumber(signal.ltp_margin_to_t1_amount)} ({formatNumber(signal.ltp_margin_to_t1_pct)}%)
     </p>
     <p className="text-[11px] font-extrabold">
-      Day H/L: ₹{formatNumber(signal.option_day_high ?? signal.option_ltp)} / ₹{formatNumber(signal.option_day_low ?? signal.option_ltp)}
+      Day H/L: ₹{formatNumber(signal.option_day_high)} / ₹{formatNumber(signal.option_day_low)}
     </p>
     <p className={`mt-1 inline-flex rounded-md border px-2 py-0.5 text-[11px] font-extrabold ${heatmapClass(signal.achievable_profit_pct)}`}>
       Heatmap Ratio: {formatNumber(signal.achievable_profit_pct)}%
