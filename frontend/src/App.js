@@ -73,6 +73,17 @@ const formatSignedInr = (value) => {
   })}`;
 };
 
+const renderLiveInfoBox = (signal, suffix) => (
+  <div className="fno-live-info-box" data-testid={`fno-live-info-box-${suffix}`}>
+    <p className="text-[11px] font-extrabold">
+      CMP: ₹{formatNumber(signal.underlying_ltp)}
+    </p>
+    <p className="text-[11px] font-extrabold">
+      Day H/L: ₹{formatNumber(signal.underlying_day_high)} / ₹{formatNumber(signal.underlying_day_low)}
+    </p>
+  </div>
+);
+
 const directionBadge = (direction) => {
   if (direction === "BULLISH") return "bg-emerald-600 text-white border-emerald-700";
   if (direction === "BEARISH") return "bg-rose-600 text-white border-rose-700";
@@ -1090,7 +1101,7 @@ export default function App() {
                 {customPositionError ? (
                   <p className="text-sm text-rose-400" data-testid="fno-custom-position-error">{customPositionError}</p>
                 ) : null}
-                <div className="space-y-3" data-testid="custom-position-list">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-3" data-testid="custom-position-list">
                   {customPositions.length ? (
                     customPositions.map((position) => {
                       const urgent = [
@@ -1105,11 +1116,11 @@ export default function App() {
                       return (
                         <div
                           key={position.id}
-                          className={`result-card result-hover rounded-lg border p-3 ${urgent ? "urgent-alert-card" : "border-slate-700"}`}
+                          className={`result-card result-hover custom-position-yellow-card rounded-lg border p-3 ${urgent ? "urgent-alert-card" : "border-amber-500"}`}
                           data-testid={`custom-position-card-${position.id}`}
                         >
                           <div className="mb-2 flex items-center justify-between gap-2">
-                            <p className="font-mono text-yellow-200" data-testid={`custom-position-script-${position.id}`}>{position.script}</p>
+                            <p className="font-mono text-slate-900" data-testid={`custom-position-script-${position.id}`}>{position.script}</p>
                             {position.status === "OPEN" ? (
                               <Button
                                 type="button"
@@ -1128,7 +1139,7 @@ export default function App() {
                           <div className="grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
                             <p>Buy Price: <span className="font-mono">₹{formatNumber(position.buy_price)}</span></p>
                             <p>
-                              Live LTP: <span className="font-mono text-sm font-extrabold text-cyan-200" data-testid={`custom-position-live-ltp-${position.id}`}>₹{formatNumber(position.latest_option_ltp)}</span>
+                              Live LTP: <span className="font-mono text-sm font-extrabold text-slate-900" data-testid={`custom-position-live-ltp-${position.id}`}>₹{formatNumber(position.latest_option_ltp)}</span>
                             </p>
                             <p>
                               LTP vs Buy: <span className={`font-mono font-semibold ${ltpDeltaClass}`} data-testid={`custom-position-buy-diff-${position.id}`}>{formatSignedInr(position.buy_to_ltp_diff)}</span>
@@ -1273,12 +1284,13 @@ export default function App() {
                             <p className="mb-2 text-sm font-semibold text-cyan-300">Assured Directional Projections</p>
                             {pane.assured_signals.length ? (
                               <div className="space-y-2">
-                                {pane.assured_signals.slice(0, 5).map((signal) => (
+                                {pane.assured_signals.slice(0, 5).map((signal, idx) => (
                                   <div key={signal.script} className="result-hover rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs">
                                     <div className="mb-1 flex items-center justify-between">
                                       <span className="font-mono text-cyan-200">{signal.script}</span>
                                       <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                                     </div>
+                                    {renderLiveInfoBox(signal, `assured-${pane.index_name.toLowerCase()}-${idx}`)}
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
@@ -1294,12 +1306,13 @@ export default function App() {
                             <p className="mb-2 text-sm font-semibold text-emerald-300">Watchlist (Medium Conviction)</p>
                             {pane.watchlist_signals?.length ? (
                               <div className="space-y-2">
-                                {pane.watchlist_signals.map((signal) => (
+                                {pane.watchlist_signals.map((signal, idx) => (
                                   <div key={`${signal.script}-watch`} className="result-hover rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs">
                                     <div className="mb-1 flex items-center justify-between">
                                       <span className="font-mono text-emerald-200">{signal.script}</span>
                                       <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                                     </div>
+                                    {renderLiveInfoBox(signal, `watch-${pane.index_name.toLowerCase()}-${idx}`)}
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
@@ -1361,12 +1374,13 @@ export default function App() {
                     </CardHeader>
                     <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                       {fnoData.stock_signals?.length ? (
-                        fnoData.stock_signals.map((signal) => (
+                        fnoData.stock_signals.map((signal, idx) => (
                           <div key={signal.script} className="result-hover rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`stock-fno-signal-${signal.script.toLowerCase()}`}>
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <p className="font-mono text-cyan-200">{signal.script}</p>
                               <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                             </div>
+                            {renderLiveInfoBox(signal, `stock-${idx}`)}
                             <p data-testid={`stock-fno-signal-expiry-${signal.script.toLowerCase()}`}>Expiry: {formatExpiryDate(signal.expiry)} (monthly stock contract)</p>
                             <p>Entry: ₹{formatNumber(signal.entry_price)}</p>
                             <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
@@ -1389,12 +1403,13 @@ export default function App() {
                       </CardHeader>
                       <CardContent className="space-y-3">
                         {fnoData.top_trades?.length ? (
-                          fnoData.top_trades.map((trade) => (
+                          fnoData.top_trades.map((trade, idx) => (
                             <div key={trade.script} className="result-hover rounded-md border border-slate-800 bg-slate-900/70 p-3 text-xs" data-testid={`top4-trade-${trade.script.toLowerCase()}`}>
                               <div className="mb-2 flex items-center justify-between">
                                 <p className="font-mono text-cyan-200">{trade.script}</p>
                                 <Badge className={`border ${qualityBadge(trade.signal_quality)}`}>{trade.signal_quality}</Badge>
                               </div>
+                              {renderLiveInfoBox(trade, `top4-${idx}`)}
                               <p>Entry: ₹{formatNumber(trade.entry_price)}</p>
                               <p>SL: ₹{formatNumber(trade.stop_loss)}</p>
                               <p>T1/T2: ₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</p>
@@ -1415,6 +1430,7 @@ export default function App() {
                         </CardHeader>
                         <CardContent className="space-y-1 text-xs">
                           <p className="font-mono text-cyan-200">{fnoData.custom_signal.script}</p>
+                          {renderLiveInfoBox(fnoData.custom_signal, "custom-script-result")}
                           <p>Direction: {fnoData.custom_signal.direction}</p>
                           <p>Entry/SL/T1/T2: ₹{formatNumber(fnoData.custom_signal.entry_price)} / ₹{formatNumber(fnoData.custom_signal.stop_loss)} / ₹{formatNumber(fnoData.custom_signal.target1)} / ₹{formatNumber(fnoData.custom_signal.target2)}</p>
                           <p>Confluence: {fnoData.custom_signal.confluence_score}</p>

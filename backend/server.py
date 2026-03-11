@@ -341,6 +341,8 @@ class FNOSignalResponse(BaseModel):
     exchange: str
     lot_size: int
     underlying_ltp: float
+    underlying_day_high: float | None = None
+    underlying_day_low: float | None = None
     option_ltp: float
     direction: Literal["BULLISH", "BEARISH", "NEUTRAL"]
     strategy: str
@@ -2221,6 +2223,8 @@ def build_fno_signal(
         exchange=contract.exchange,
         lot_size=contract.lot_size,
         underlying_ltp=round(underlying_ltp, 2),
+        underlying_day_high=round(stock_core.high, 2) if stock_core.high is not None else None,
+        underlying_day_low=round(stock_core.low, 2) if stock_core.low is not None else None,
         option_ltp=round(option_ltp, 2),
         direction=direction,
         strategy=(

@@ -193,6 +193,60 @@
     animation: urgent-flash 1s infinite;
 }
 
+.fno-live-info-box {
+    margin-bottom: 6px;
+    border: 1px solid rgba(167, 139, 250, 0.8);
+    background: rgba(109, 40, 217, 0.55) !important;
+    border-radius: 8px;
+    padding: 6px 8px;
+    box-shadow: 0 4px 10px rgba(76, 29, 149, 0.35);
+    transition: color 180ms ease, background-color 180ms ease;
+}
+
+.fno-live-info-box,
+.fno-live-info-box p,
+.fno-live-info-box span {
+    color: #ffffff !important;
+    text-shadow: 0 1px 2px rgba(15, 23, 42, 0.75);
+}
+
+.fno-live-info-box:hover,
+.fno-live-info-box:hover p,
+.fno-live-info-box:hover span {
+    color: #0f172a !important;
+}
+
+.custom-position-yellow-card {
+    background: #fde68a !important;
+    border-color: #f59e0b !important;
+    color: #111827 !important;
+}
+
+.custom-position-yellow-card:hover {
+    background: #fcd34d !important;
+    color: #0f172a !important;
+}
+
+.custom-position-yellow-card p,
+.custom-position-yellow-card span,
+.custom-position-yellow-card label,
+.custom-position-yellow-card div,
+.custom-position-yellow-card small {
+    color: #111827 !important;
+}
+
+.custom-position-yellow-card [data-testid*="custom-position-alert-"] {
+    color: #fee2e2 !important;
+}
+
+.custom-position-yellow-card [data-testid*="custom-position-alert-"] * {
+    color: #fee2e2 !important;
+}
+
+.custom-position-yellow-card [data-testid*="custom-position-projected-exit-"] {
+    color: #7f1d1d !important;
+}
+
 @keyframes urgent-flash {
     0% {
         background-color: rgba(127, 29, 29, 0.35);
