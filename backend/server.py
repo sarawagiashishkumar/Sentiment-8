@@ -2501,7 +2501,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     directional_candidates = [
         item
         for item in rows
-        if item.direction != "NEUTRAL" and item.confluence_score >= 72 and item.risk_reward_target2 >= 1.5
+        if item.direction != "NEUTRAL" and item.confluence_score >= 70 and item.risk_reward_target2 >= 1.5
     ]
     by_strike: dict[float, list[FNOSignalResponse]] = defaultdict(list)
     for row in directional_candidates:
@@ -2530,15 +2530,27 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                 )
             )
 
+    weight_source = NIFTY_WEIGHT_PROXY if index_name == "NIFTY" else BANKNIFTY_WEIGHT_PROXY
+    report_rows = await asyncio.gather(*[get_stock_core(symbol) for symbol, _ in weight_source])
+    normalized_report_rows = [StockCoreNormalized(**row) for row in report_rows]
+    with_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=True)
+    without_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=False)
+
+    expected_direction: Literal["BULLISH", "BEARISH", "NEUTRAL"] = with_report.bias
+
     assured_signals = [
         item
         for item in rows
         if item.script not in paired_scripts
         and strike_range_min <= item.strike <= strike_range_max
         and item.direction != "NEUTRAL"
+        and expected_direction != "NEUTRAL"
+        and item.direction == expected_direction
         and item.confluence_score >= 80
         and item.risk_reward_target2 >= 1.8
+        and item.risk_reward_target1 >= 1.1
         and item.expiry_risk != "HIGH"
+        and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.12
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
@@ -2547,49 +2559,20 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         item
         for item in rows
         if item.direction != "NEUTRAL"
+        and item.signal_quality == "MEDIUM"
         and item.script not in paired_scripts
         and item.script not in assured_scripts
         and strike_range_min <= item.strike <= strike_range_max
-        and item.confluence_score >= 58
-        and item.risk_reward_target2 >= 1.3
+        and expected_direction != "NEUTRAL"
+        and item.direction == expected_direction
+        and 70 <= item.confluence_score < 80
+        and item.risk_reward_target1 >= 1.05
+        and item.risk_reward_target2 >= 1.45
+        and item.expiry_risk != "HIGH"
+        and item.minutes_to_expiry > 120
+        and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.1
     ]
     watchlist_signals.sort(key=lambda row: row.confluence_score, reverse=True)
-
-    weight_source = NIFTY_WEIGHT_PROXY if index_name == "NIFTY" else BANKNIFTY_WEIGHT_PROXY
-    report_rows = await asyncio.gather(*[get_stock_core(symbol) for symbol, _ in weight_source])
-    normalized_report_rows = [StockCoreNormalized(**row) for row in report_rows]
-    with_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=True)
-    without_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=False)
-
-    if not watchlist_signals:
-        inferred_bias = with_report.bias
-        if inferred_bias == "NEUTRAL":
-            day_change_pct = (
-                ((stock.ltp - stock.prev_close) / stock.prev_close) * 100
-                if stock.ltp is not None and stock.prev_close is not None and stock.prev_close > 0
-                else 0.0
-            )
-            inferred_bias = "BULLISH" if day_change_pct >= 0 else "BEARISH"
-
-        preferred_option_type = "CE" if inferred_bias == "BULLISH" else "PE"
-        fallback_candidates = [
-            item
-            for item in rows
-            if item.option_type == preferred_option_type
-            and strike_range_min <= item.strike <= strike_range_max
-        ]
-        fallback_candidates.sort(key=lambda row: row.confluence_score, reverse=True)
-
-        seeded_watchlist: list[FNOSignalResponse] = []
-        for item in fallback_candidates[:6]:
-            updates = {
-                "strategy": "Watchlist Projection (Breadth-guided)",
-                "is_potential_trade": False,
-            }
-            if item.direction == "NEUTRAL":
-                updates["direction"] = "BULLISH" if preferred_option_type == "CE" else "BEARISH"
-            seeded_watchlist.append(item.model_copy(update=updates))
-        watchlist_signals = seeded_watchlist
 
     return IndexProjectionPane(
         index_name=index_name,
