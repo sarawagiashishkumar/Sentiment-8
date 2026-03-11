@@ -97,7 +97,14 @@ const renderLiveInfoBox = (signal, suffix) => {
   return (
     <div className="fno-live-info-box" data-testid={`fno-live-info-box-${suffix}`}>
       <span className="fno-corner-delta-box" data-testid={`fno-corner-delta-box-${suffix}`}>
-        {formatSignedPct(upFromLowPct)} Day Low | {formatSignedPct(downFromHighPct)} Day High
+        <span className="fno-corner-row">
+          <span className="fno-corner-label">Day Low:</span>
+          <span className="fno-corner-value">{formatSignedPct(upFromLowPct)}</span>
+        </span>
+        <span className="fno-corner-row">
+          <span className="fno-corner-label">Day High:</span>
+          <span className="fno-corner-value">{formatSignedPct(downFromHighPct)}</span>
+        </span>
       </span>
       <p className="text-[11px] font-extrabold">
         Live Option LTP: ₹{formatNumber(signal.option_ltp)}
