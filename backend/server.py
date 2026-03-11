@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import difflib
+import hashlib
 import io
 import logging
 import os
@@ -113,6 +114,11 @@ NSE_SCRIPT_MASTER_URL = "https://archives.nseindia.com/content/equities/EQUITY_L
 ANGEL_SCRIPT_MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 KITE_SCRIPT_MASTER_URL = "https://api.kite.trade/instruments"
 DHAN_SCRIPT_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
+KITE_OPTION_MASTER_LAST_SYNC_DATE: str | None = None
+
+KITE_API_KEY = os.environ.get("KITE_API_KEY")
+KITE_API_SECRET = os.environ.get("KITE_API_SECRET")
+KITE_REDIRECT_URL = os.environ.get("KITE_REDIRECT_URL")
 
 SYMBOL_HEADERS = {
     "symbol",
@@ -742,6 +748,175 @@ async def _parse_positions_from_upload(file: UploadFile) -> list[dict]:
         return _parse_positions_from_image_bytes(payload)
 
     raise HTTPException(status_code=400, detail="Unsupported file format")
+
+
+def _today_ist() -> str:
+    return datetime.now(IST).date().isoformat()
+
+
+async def _sync_kite_option_master_daily(force: bool = False) -> None:
+    global KITE_OPTION_MASTER_LAST_SYNC_DATE
+    today = _today_ist()
+    if not force and KITE_OPTION_MASTER_LAST_SYNC_DATE == today:
+        return
+
+    meta = await db.system_meta.find_one({"key": "kite_option_master_sync"}, {"_id": 0})
+    if (not force) and meta and meta.get("date") == today and int(meta.get("updated_count", 0) or 0) > 0:
+        KITE_OPTION_MASTER_LAST_SYNC_DATE = today
+        return
+
+    if not KITE_API_KEY:
+        return
+
+    def _load_rows() -> list[dict]:
+        try:
+            response = requests.get(KITE_SCRIPT_MASTER_URL, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
+            if response.status_code != 200:
+                return []
+
+            reader = csv.DictReader(io.StringIO(response.text))
+            allowed = {"NIFTY", "BANKNIFTY", *STOCK_FNO_UNIVERSE}
+            rows: list[dict] = []
+            for row in reader:
+                exchange = str(row.get("exchange", "")).upper().strip()
+                instrument_type = str(row.get("instrument_type", "")).upper().strip()
+                if exchange != "NFO" or instrument_type not in {"CE", "PE"}:
+                    continue
+
+                expiry = str(row.get("expiry", "")).strip()
+                strike = _to_float(row.get("strike"))
+                tradingsymbol = str(row.get("tradingsymbol", "")).strip().upper()
+                if not expiry or strike is None or not tradingsymbol:
+                    continue
+
+                raw_name = str(row.get("name", "")).strip().upper()
+                underlying = _normalize_symbol_key(raw_name) if raw_name else ""
+                if not underlying:
+                    underlying = next((symbol for symbol in allowed if tradingsymbol.startswith(symbol)), "")
+                if underlying not in allowed:
+                    continue
+
+                rows.append(
+                    {
+                        "underlying": underlying,
+                        "expiry": expiry,
+                        "strike": float(strike),
+                        "option_type": instrument_type,
+                        "tradingsymbol": tradingsymbol,
+                        "instrument": f"NFO:{tradingsymbol}",
+                        "lot_size": int(_to_float(row.get("lot_size")) or LOT_SIZE_MAP.get(underlying, 1)),
+                        "updated_at": _utc_now_iso(),
+                    }
+                )
+            return rows
+        except Exception as exc:
+            logger.warning("Kite option master refresh failed: %s", exc)
+            return []
+
+    rows = await asyncio.to_thread(_load_rows)
+    if not rows:
+        return
+
+    await db.kite_option_master.delete_many({})
+    for start in range(0, len(rows), 5000):
+        await db.kite_option_master.insert_many(rows[start : start + 5000], ordered=False)
+
+    await db.system_meta.update_one(
+        {"key": "kite_option_master_sync"},
+        {
+            "$set": {
+                "key": "kite_option_master_sync",
+                "date": today,
+                "updated_count": len(rows),
+                "updated_at": _utc_now_iso(),
+            }
+        },
+        upsert=True,
+    )
+    KITE_OPTION_MASTER_LAST_SYNC_DATE = today
+
+
+async def _get_kite_access_token() -> str | None:
+    if not KITE_API_KEY:
+        return None
+    session = await db.system_meta.find_one({"key": "kite_session"}, {"_id": 0})
+    if not session:
+        return None
+    if session.get("date") != _today_ist():
+        return None
+    token = str(session.get("access_token", "")).strip()
+    return token or None
+
+
+async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
+    access_token = await _get_kite_access_token()
+    if not access_token or not KITE_API_KEY:
+        return None
+
+    await _sync_kite_option_master_daily()
+    expiry = contract.expiry
+    target_strike = float(contract.strike)
+    rows = await db.kite_option_master.find(
+        {
+            "underlying": contract.underlying,
+            "expiry": expiry,
+            "option_type": contract.option_type,
+        },
+        {"_id": 0, "instrument": 1, "strike": 1},
+    ).to_list(500)
+
+    if not rows:
+        return None
+
+    rows.sort(key=lambda item: abs(float(item.get("strike", 0.0)) - target_strike))
+    best = rows[0]
+    if abs(float(best.get("strike", 0.0)) - target_strike) > 0.01:
+        return None
+
+    instrument = str(best.get("instrument", "")).strip()
+    if not instrument:
+        return None
+
+    def _fetch_ltp() -> float | None:
+        try:
+            response = requests.get(
+                "https://api.kite.trade/quote/ltp",
+                params={"i": instrument},
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {KITE_API_KEY}:{access_token}",
+                },
+                timeout=12,
+            )
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+            data = payload.get("data", {})
+            row = data.get(instrument, {})
+            last_price = _to_float(row.get("last_price"))
+            if last_price is None or last_price <= 0:
+                return None
+            return float(last_price)
+        except Exception:
+            return None
+
+    return await asyncio.to_thread(_fetch_ltp)
+
+
+async def _fetch_live_option_ltp(contract: FNOContract) -> float:
+    kite_ltp = await _fetch_option_ltp_from_kite(contract)
+    if kite_ltp is not None and kite_ltp > 0:
+        return float(kite_ltp)
+
+    try:
+        return float(
+            await asyncio.to_thread(
+                market_data_client.fetch_option_ltp_for_contract,
+                contract.model_dump(),
+            )
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Live option LTP unavailable for {contract.script}") from exc
 
 
 def _portfolio_horizon_ranges(
@@ -1866,16 +2041,7 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
     minutes_to_expiry = get_minutes_to_expiry(contract)
     _validate_expiry_guard(minutes_to_expiry)
     stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-    try:
-        option_ltp = await asyncio.to_thread(
-            market_data_client.fetch_option_ltp_for_contract,
-            contract.model_dump(),
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Live option chain unavailable for {contract.script}",
-        ) from exc
+    option_ltp = await _fetch_live_option_ltp(contract)
     return build_fno_signal(
         contract,
         stock_data,
@@ -1980,10 +2146,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
             if minutes_to_expiry <= 15:
                 continue
             try:
-                option_ltp = await asyncio.to_thread(
-                    market_data_client.fetch_option_ltp_for_contract,
-                    contract.model_dump(),
-                )
+                option_ltp = await _fetch_live_option_ltp(contract)
                 signal = build_fno_signal(
                     contract,
                     stock,
@@ -2112,10 +2275,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                     continue
 
                 try:
-                    option_ltp = await asyncio.to_thread(
-                        market_data_client.fetch_option_ltp_for_contract,
-                        contract.model_dump(),
-                    )
+                    option_ltp = await _fetch_live_option_ltp(contract)
                 except Exception:
                     continue
 
@@ -2244,10 +2404,7 @@ async def _refresh_open_position(position: dict) -> dict:
         return updated
 
     try:
-        latest_option_ltp = await asyncio.to_thread(
-            market_data_client.fetch_option_ltp_for_contract,
-            contract.model_dump(),
-        )
+        latest_option_ltp = await _fetch_live_option_ltp(contract)
     except Exception:
         updated = await db.custom_positions.find_one_and_update(
             {"id": position["id"]},
@@ -2677,10 +2834,7 @@ async def create_custom_position(
 
     updated_user, charged = await _consume_credits(current_user, 1.0)
     try:
-        latest_option_ltp = await asyncio.to_thread(
-            market_data_client.fetch_option_ltp_for_contract,
-            contract.model_dump(),
-        )
+        latest_option_ltp = await _fetch_live_option_ltp(contract)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Unable to fetch live option LTP") from exc
 
@@ -2897,6 +3051,102 @@ async def get_potential_index_signals(refresh_nonce: str | None = Query(default=
     return rows
 
 
+@api_router.get("/kite/auth-url")
+async def get_kite_auth_url(current_user: dict = Depends(get_owner_user)):
+    _ = current_user
+    if not KITE_API_KEY or not KITE_API_SECRET or not KITE_REDIRECT_URL:
+        raise HTTPException(status_code=400, detail="Kite credentials not configured")
+    return {
+        "auth_url": f"https://kite.zerodha.com/connect/login?v=3&api_key={KITE_API_KEY}",
+        "redirect_url": KITE_REDIRECT_URL,
+    }
+
+
+@api_router.get("/kite/callback")
+async def kite_callback(request_token: str = Query(...), status: str | None = Query(default=None)):
+    _ = status
+    if not KITE_API_KEY or not KITE_API_SECRET:
+        raise HTTPException(status_code=400, detail="Kite credentials not configured")
+
+    checksum = hashlib.sha256(f"{KITE_API_KEY}{request_token}{KITE_API_SECRET}".encode()).hexdigest()
+
+    def _create_session() -> dict:
+        response = requests.post(
+            "https://api.kite.trade/session/token",
+            data={
+                "api_key": KITE_API_KEY,
+                "request_token": request_token,
+                "checksum": checksum,
+            },
+            headers={"X-Kite-Version": "3"},
+            timeout=15,
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail="Kite session exchange failed")
+        payload = response.json()
+        if payload.get("status") != "success":
+            raise HTTPException(status_code=502, detail="Kite session exchange failed")
+        return payload.get("data", {})
+
+    session_data = await asyncio.to_thread(_create_session)
+    access_token = str(session_data.get("access_token", "")).strip()
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Kite access token missing")
+
+    today = _today_ist()
+    await db.system_meta.update_one(
+        {"key": "kite_session"},
+        {
+            "$set": {
+                "key": "kite_session",
+                "date": today,
+                "api_key": KITE_API_KEY,
+                "access_token": access_token,
+                "public_token": session_data.get("public_token"),
+                "user_id": session_data.get("user_id"),
+                "user_name": session_data.get("user_name"),
+                "updated_at": _utc_now_iso(),
+            }
+        },
+        upsert=True,
+    )
+
+    await _sync_kite_option_master_daily(force=True)
+    return {
+        "connected": True,
+        "user_id": session_data.get("user_id"),
+        "updated_at": _utc_now_iso(),
+    }
+
+
+@api_router.get("/kite/status")
+async def kite_status(current_user: dict = Depends(get_owner_user)):
+    _ = current_user
+    row = await db.system_meta.find_one({"key": "kite_session"}, {"_id": 0, "access_token": 0})
+    if not row:
+        return {"connected": False}
+    return {
+        "connected": bool(row.get("date") == _today_ist()),
+        "date": row.get("date"),
+        "user_id": row.get("user_id"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+@api_router.post("/kite/refresh-option-master")
+async def kite_refresh_option_master(current_user: dict = Depends(get_owner_user)):
+    _ = current_user
+    await _sync_kite_option_master_daily(force=True)
+    meta = await db.system_meta.find_one({"key": "kite_option_master_sync"}, {"_id": 0})
+    return {"refreshed": True, "meta": meta or {}}
+
+
+@api_router.post("/kite/postback")
+async def kite_postback(payload: dict):
+    _ = payload
+    return {"received": True}
+
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -2912,6 +3162,7 @@ app.add_middleware(
 async def startup_tasks():
     await _ensure_owner_exists()
     await _sync_script_master_daily()
+    await _sync_kite_option_master_daily()
 
 
 @app.on_event("shutdown")
