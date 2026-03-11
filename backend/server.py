@@ -119,6 +119,12 @@ KITE_OPTION_MASTER_LAST_SYNC_DATE: str | None = None
 KITE_API_KEY = os.environ.get("KITE_API_KEY")
 KITE_API_SECRET = os.environ.get("KITE_API_SECRET")
 KITE_REDIRECT_URL = os.environ.get("KITE_REDIRECT_URL")
+KITE_READ_ONLY_MODE = True
+KITE_ALLOWED_DATA_ENDPOINTS = [
+    "/quote/ltp",
+    "/instruments",
+    "/instruments/historical",
+]
 
 SYMBOL_HEADERS = {
     "symbol",
@@ -3145,6 +3151,17 @@ async def kite_refresh_option_master(current_user: dict = Depends(get_owner_user
 async def kite_postback(payload: dict):
     _ = payload
     return {"received": True}
+
+
+@api_router.get("/kite/policy")
+async def kite_policy(current_user: dict = Depends(get_owner_user)):
+    _ = current_user
+    return {
+        "read_only_mode": KITE_READ_ONLY_MODE,
+        "trading_enabled": False,
+        "allowed_data_endpoints": KITE_ALLOWED_DATA_ENDPOINTS,
+        "blocked_categories": ["orders", "gtt", "positions-write", "basket-orders"],
+    }
 
 
 app.include_router(api_router)
