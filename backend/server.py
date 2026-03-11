@@ -6,11 +6,13 @@ import io
 import logging
 import os
 import re
+import socket
 import uuid
 from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Literal
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -265,6 +267,7 @@ class AdminUserProfileUpdateRequest(BaseModel):
 class DomainMappingCreateRequest(BaseModel):
     domain: str
     target_record: str
+    record_type: Literal["A"] = "A"
 
 
 class DomainMappingStatusUpdateRequest(BaseModel):
@@ -1382,6 +1385,35 @@ def _validate_domain(domain: str) -> str:
     if not re.fullmatch(r"^(?!-)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$", value):
         raise HTTPException(status_code=400, detail="Invalid domain format")
     return value
+
+
+def _split_domain_root_and_host(fqdn: str) -> tuple[str, str]:
+    parts = fqdn.split(".")
+    if len(parts) <= 2:
+        return fqdn, "@"
+    root_domain = ".".join(parts[-2:])
+    host_label = ".".join(parts[:-2])
+    return root_domain, host_label or "@"
+
+
+def _normalize_target_record(target_record: str) -> str:
+    value = target_record.strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="Target record is required")
+    if "://" in value:
+        parsed = urlparse(value)
+        if parsed.hostname:
+            return parsed.hostname.lower()
+    return value.lower()
+
+
+def _resolve_ipv4(value: str) -> str | None:
+    if re.fullmatch(r"^\d{1,3}(\.\d{1,3}){3}$", value):
+        return value
+    try:
+        return socket.gethostbyname(value)
+    except Exception:
+        return None
 
 
 def _normalize_symbol_key(value: str) -> str:
@@ -3151,6 +3183,14 @@ async def admin_get_config(owner_user: dict = Depends(get_owner_user)):
     api_controls = await _get_api_controls(force_refresh=True)
     domains = await db.domain_mappings.find({}, {"_id": 0}).sort("updated_at", -1).to_list(200)
     kite_status = await db.system_meta.find_one({"key": "kite_session"}, {"_id": 0, "access_token": 0})
+    hosting_domain = ""
+    hosting_ip = None
+    if KITE_REDIRECT_URL:
+        parsed = urlparse(KITE_REDIRECT_URL)
+        hosting_domain = parsed.hostname or ""
+        if hosting_domain:
+            hosting_ip = _resolve_ipv4(hosting_domain)
+
     return {
         "api_controls": api_controls,
         "domain_mappings": domains,
@@ -3161,7 +3201,22 @@ async def admin_get_config(owner_user: dict = Depends(get_owner_user)):
             "redirect_url": KITE_REDIRECT_URL,
             "postback_url": os.environ.get("KITE_POSTBACK_URL"),
         },
+        "hosting_dns_reference": {
+            "hosting_domain": hosting_domain,
+            "resolved_ipv4": hosting_ip,
+            "recommended_record_type": "A",
+            "example_apex_host": "@",
+            "example_subdomain_host": "trade",
+        },
         "dns_note": "A-record mapping requires DNS ownership changes at your domain registrar; app can store and verify mapping status only.",
+        "dns_instructions": [
+            "Do NOT change registrar nameservers.",
+            "Open your current DNS Control Zone for the domain.",
+            "Add/Update an A record for host '@' (apex) or your subdomain label (for example 'trade').",
+            "Set the value to the hosting IPv4 shown in hosting_dns_reference.resolved_ipv4 (or target value configured below).",
+            "Use TTL 300 seconds and remove conflicting A records for the same host.",
+            "Verify propagation using nslookup/dig after 1-10 minutes.",
+        ],
     }
 
 
@@ -3206,19 +3261,30 @@ async def admin_create_domain_mapping(
     owner_user: dict = Depends(get_owner_user),
 ):
     domain = _validate_domain(payload.domain)
-    target_record = payload.target_record.strip()
-    if not target_record:
-        raise HTTPException(status_code=400, detail="Target record is required")
+    target_record = _normalize_target_record(payload.target_record)
+    root_domain, host_label = _split_domain_root_and_host(domain)
+    resolved_target_ip = _resolve_ipv4(target_record)
 
     await db.domain_mappings.update_one(
         {"domain": domain},
         {
             "$set": {
                 "domain": domain,
+                "root_domain": root_domain,
+                "host_label": host_label,
+                "record_type": payload.record_type,
                 "target_record": target_record,
+                "resolved_target_ip": resolved_target_ip,
                 "status": "PENDING",
                 "updated_by": owner_user.get("username"),
                 "updated_at": _utc_now_iso(),
+                "instructions": [
+                    "Keep registrar nameservers unchanged.",
+                    f"DNS host to add: {host_label}",
+                    f"Record type: {payload.record_type}",
+                    f"Record value: {resolved_target_ip or target_record}",
+                    "TTL recommendation: 300 seconds",
+                ],
             }
         },
         upsert=True,
@@ -3249,6 +3315,40 @@ async def admin_update_domain_mapping(
     if not updated:
         raise HTTPException(status_code=404, detail="Domain mapping not found")
     return updated
+
+
+@api_router.get("/admin/dns-instructions")
+async def admin_dns_instructions(
+    domain: str = Query(...),
+    target_record: str | None = Query(default=None),
+    owner_user: dict = Depends(get_owner_user),
+):
+    _ = owner_user
+    fqdn = _validate_domain(domain)
+    root_domain, host_label = _split_domain_root_and_host(fqdn)
+    selected_target = _normalize_target_record(target_record) if target_record else ""
+
+    if not selected_target:
+        row = await db.domain_mappings.find_one({"domain": fqdn}, {"_id": 0, "target_record": 1, "resolved_target_ip": 1})
+        selected_target = (row or {}).get("resolved_target_ip") or (row or {}).get("target_record") or ""
+
+    resolved = _resolve_ipv4(selected_target) if selected_target else None
+    value = resolved or selected_target
+
+    return {
+        "fqdn": fqdn,
+        "root_domain": root_domain,
+        "host_label": host_label,
+        "record_type": "A",
+        "record_value": value,
+        "steps": [
+            "Do not change current nameservers at registrar.",
+            "Open DNS Zone of your current DNS provider.",
+            f"Create/Update A record: Host={host_label}, Value={value}, TTL=300.",
+            "Delete any conflicting A record for the same host label.",
+            "Wait for propagation and verify via nslookup or dig.",
+        ],
+    }
 
 
 @api_router.post("/multibagger/generate", response_model=MultibaggerGenerateResponse)

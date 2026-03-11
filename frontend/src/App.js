@@ -1809,7 +1809,7 @@ export default function App() {
                     <Input
                       value={domainForm.domain}
                       onChange={(event) => setDomainForm((prev) => ({ ...prev, domain: event.target.value }))}
-                      placeholder="Domain (example.com)"
+                      placeholder="Domain or Subdomain (example.com / trade.example.com)"
                       className="border-slate-700 bg-slate-900 text-slate-100"
                       data-testid="admin-domain-input"
                     />
@@ -1825,15 +1825,34 @@ export default function App() {
                     </Button>
                   </form>
 
+                  {adminConfig?.hosting_dns_reference ? (
+                    <div className="rounded-md border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300" data-testid="admin-hosting-dns-reference">
+                      <p>Hosting Domain: <span className="font-mono text-cyan-300">{adminConfig.hosting_dns_reference.hosting_domain || "-"}</span></p>
+                      <p>Resolved IPv4: <span className="font-mono text-cyan-300">{adminConfig.hosting_dns_reference.resolved_ipv4 || "Unavailable"}</span></p>
+                      <p>Record Type: <span className="font-mono text-cyan-300">A</span></p>
+                      <p>Apex Host Label: <span className="font-mono text-cyan-300">@</span> | Subdomain Host Label Example: <span className="font-mono text-cyan-300">trade</span></p>
+                    </div>
+                  ) : null}
+
                   <p className="text-xs text-slate-400" data-testid="admin-dns-note">
                     {adminConfig?.dns_note || "A-record update must be done in your registrar DNS settings."}
                   </p>
+
+                  {(adminConfig?.dns_instructions || []).length ? (
+                    <ul className="list-disc space-y-1 pl-5 text-xs text-slate-300" data-testid="admin-dns-instructions-list">
+                      {(adminConfig?.dns_instructions || []).map((step, idx) => (
+                        <li key={`dns-step-${idx}`}>{step}</li>
+                      ))}
+                    </ul>
+                  ) : null}
 
                   <div className="space-y-2" data-testid="admin-domain-list">
                     {(adminConfig?.domain_mappings || []).map((row) => (
                       <div key={row.domain} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-900/60 p-2">
                         <div className="text-xs text-slate-200">
                           <p><span className="text-slate-400">Domain:</span> {row.domain}</p>
+                          <p><span className="text-slate-400">Root:</span> {row.root_domain || "-"} | <span className="text-slate-400">Host:</span> {row.host_label || "@"}</p>
+                          <p><span className="text-slate-400">Record:</span> {row.record_type || "A"} → {row.resolved_target_ip || row.target_record}</p>
                           <p><span className="text-slate-400">Target:</span> {row.target_record}</p>
                           <p><span className="text-slate-400">Status:</span> {row.status}</p>
                         </div>
