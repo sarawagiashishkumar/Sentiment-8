@@ -126,6 +126,13 @@ KITE_ALLOWED_DATA_ENDPOINTS = [
     "/instruments/historical",
 ]
 
+API_CONTROL_CACHE: dict[str, object] = {
+    "kite_data_enabled": True,
+    "moneycontrol_data_enabled": True,
+    "strict_live_only": True,
+}
+API_CONTROL_CACHE_TS: datetime | None = None
+
 SYMBOL_HEADERS = {
     "symbol",
     "tradingsymbol",
@@ -250,6 +257,26 @@ class AdminSetQuotaRequest(BaseModel):
     quota_limit: int
 
 
+class AdminUserProfileUpdateRequest(BaseModel):
+    username: str | None = None
+    role: Literal["owner", "sub_admin", "user"] | None = None
+
+
+class DomainMappingCreateRequest(BaseModel):
+    domain: str
+    target_record: str
+
+
+class DomainMappingStatusUpdateRequest(BaseModel):
+    status: Literal["PENDING", "ACTIVE", "FAILED"]
+
+
+class ApiControlUpdateRequest(BaseModel):
+    kite_data_enabled: bool | None = None
+    moneycontrol_data_enabled: bool | None = None
+    strict_live_only: bool | None = None
+
+
 class StockCoreNormalized(BaseModel):
     symbol: str
     company_name: str
@@ -287,6 +314,7 @@ class MultibaggerCandidate(BaseModel):
     gtt_buy_price: float | None = None
     targeted_upside_price: dict
     targeted_upside_profit_pct: dict
+    thesis: str
     analysis_refreshed_at: str
 
 
@@ -830,6 +858,33 @@ def _today_ist() -> str:
     return datetime.now(IST).date().isoformat()
 
 
+async def _get_api_controls(force_refresh: bool = False) -> dict[str, bool]:
+    global API_CONTROL_CACHE_TS
+    now = datetime.now(IST)
+    if (
+        (not force_refresh)
+        and API_CONTROL_CACHE_TS is not None
+        and (now - API_CONTROL_CACHE_TS).total_seconds() < 45
+    ):
+        return {
+            "kite_data_enabled": bool(API_CONTROL_CACHE.get("kite_data_enabled", True)),
+            "moneycontrol_data_enabled": bool(API_CONTROL_CACHE.get("moneycontrol_data_enabled", True)),
+            "strict_live_only": bool(API_CONTROL_CACHE.get("strict_live_only", True)),
+        }
+
+    row = await db.system_meta.find_one({"key": "api_controls"}, {"_id": 0})
+    if row:
+        API_CONTROL_CACHE["kite_data_enabled"] = bool(row.get("kite_data_enabled", True))
+        API_CONTROL_CACHE["moneycontrol_data_enabled"] = bool(row.get("moneycontrol_data_enabled", True))
+        API_CONTROL_CACHE["strict_live_only"] = bool(row.get("strict_live_only", True))
+    API_CONTROL_CACHE_TS = now
+    return {
+        "kite_data_enabled": bool(API_CONTROL_CACHE.get("kite_data_enabled", True)),
+        "moneycontrol_data_enabled": bool(API_CONTROL_CACHE.get("moneycontrol_data_enabled", True)),
+        "strict_live_only": bool(API_CONTROL_CACHE.get("strict_live_only", True)),
+    }
+
+
 async def _sync_kite_option_master_daily(force: bool = False) -> None:
     global KITE_OPTION_MASTER_LAST_SYNC_DATE
     today = _today_ist()
@@ -1056,19 +1111,32 @@ async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str
 
 
 async def _fetch_live_option_ltp(contract: FNOContract) -> float:
-    kite_ltp = await _fetch_option_ltp_from_kite(contract)
-    if kite_ltp is not None and kite_ltp > 0:
-        return float(kite_ltp)
+    controls = await _get_api_controls()
 
-    try:
-        return float(
-            await asyncio.to_thread(
-                market_data_client.fetch_option_ltp_for_contract,
-                contract.model_dump(),
+    if controls.get("kite_data_enabled", True):
+        kite_ltp = await _fetch_option_ltp_from_kite(contract)
+        if kite_ltp is not None and kite_ltp > 0:
+            return float(kite_ltp)
+
+    if controls.get("moneycontrol_data_enabled", True):
+        try:
+            return float(
+                await asyncio.to_thread(
+                    market_data_client.fetch_option_ltp_for_contract,
+                    contract.model_dump(),
+                )
             )
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Live option LTP unavailable for {contract.script}") from exc
+        except Exception:
+            pass
+
+    if not controls.get("strict_live_only", True):
+        core = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
+        if core.ltp is not None:
+            modeled = _estimate_option_ltp(core.ltp, contract.strike, contract.option_type)
+            if modeled > 0:
+                return float(modeled)
+
+    raise HTTPException(status_code=502, detail=f"Live option LTP unavailable for {contract.script}")
 
 
 def _portfolio_horizon_ranges(
@@ -1306,6 +1374,13 @@ def _validate_username(username: str) -> str:
         )
     if not any(char.isalpha() for char in value) or not any(char.isdigit() for char in value):
         raise HTTPException(status_code=400, detail="Username must include at least one letter and one number")
+    return value
+
+
+def _validate_domain(domain: str) -> str:
+    value = domain.strip().lower()
+    if not re.fullmatch(r"^(?!-)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$", value):
+        raise HTTPException(status_code=400, detail="Invalid domain format")
     return value
 
 
@@ -1827,70 +1902,115 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         else None
     )
     peg_ratio_est = _safe_ratio(pe, growth_proxy_pct) if growth_proxy_pct is not None else None
-
-    tier_1_market_cap = market_cap is not None and 500 < market_cap < 1_000_000
-    tier_1_price_zone = (
-        ltp is not None
-        and year_low is not None
-        and year_high is not None
-        and ltp <= 1.15 * year_low
-        and year_high >= 1.70 * ltp
-        and ltp >= 10
-        and pb_ratio_est is not None
-        and pb_ratio_est < 5
-        and peg_ratio_est is not None
-        and peg_ratio_est < 1.5
+    day_change_pct = (
+        ((ltp - stock.prev_close) / stock.prev_close) * 100
+        if ltp is not None and stock.prev_close is not None and stock.prev_close > 0
+        else 0.0
     )
-
-    tier_2_revenue_profit_proxy = (
-        eps is not None
-        and eps > 0
-        and pe is not None
-        and pe < 45
-        and upside_to_52w_high_pct is not None
-        and upside_to_52w_high_pct >= 12
-    )
-    tier_3_profitability_proxy = (
-        pe is not None and 5 <= pe <= 40 and pb_ratio_est is not None and pb_ratio_est < 4.5
-    )
-    tier_4_balance_sheet_proxy = market_cap is not None and market_cap > 1_000 and stock.volume > 100_000
-    tier_5_governance_proxy = stock.sector != "Unknown" and market_cap is not None and market_cap > 2_000
-    tier_6_forensic_proxy = eps is not None and eps > 0 and pe is not None and 6 <= pe <= 45
-    tier_7_cwip_capex_proxy = (
-        year_high is not None and year_low is not None and year_low > 0 and year_high >= 1.20 * year_low
-    )
-
-    tier_flags = [
-        tier_1_market_cap,
-        tier_1_price_zone,
-        tier_2_revenue_profit_proxy,
-        tier_3_profitability_proxy,
-        tier_4_balance_sheet_proxy,
-        tier_5_governance_proxy,
-        tier_6_forensic_proxy,
-        tier_7_cwip_capex_proxy,
-    ]
-    tier_pass_count = sum(1 for state in tier_flags if state)
-
-    mandatory_pass = tier_1_market_cap and tier_1_price_zone
-    score = 9 * tier_pass_count + (15 if mandatory_pass else -6)
-    if upside_to_52w_high_pct is not None:
-        score += clamp(upside_to_52w_high_pct / 8, 0, 12)
-    if peg_ratio_est is not None:
-        score += 8 if peg_ratio_est < 1.5 else (4 if peg_ratio_est < 2.5 else 0)
-    if pb_ratio_est is not None:
-        score += 6 if pb_ratio_est < 3 else (3 if pb_ratio_est < 5 else 0)
-    if pe is not None and pe > 55:
-        score -= 10
-    elif pe is not None and pe < 10:
-        score -= 4
-
-    final_score = int(clamp(round(score), 0, 100))
-    is_potential_multibagger = (mandatory_pass and tier_pass_count >= 5) or (
-        tier_pass_count >= 6 and final_score >= 68
-    )
-
     position = _position_in_range(ltp, year_low, year_high)
+
+    tier_scores = {f"tier_{idx}": 0.0 for idx in range(1, 9)}
+
+    # Tier 1: Business quality (ROE/ROCE/margin/revenue CAGR proxy)
+    if market_cap is not None and market_cap >= 2_000:
+        tier_scores["tier_1"] += 7
+    if eps is not None and eps > 0:
+        tier_scores["tier_1"] += 6
+    if pe is not None and 8 <= pe <= 35:
+        tier_scores["tier_1"] += 5
+
+    # Tier 2: Financial health (leverage/liquidity proxy)
+    if pb_ratio_est is not None and pb_ratio_est <= 5:
+        tier_scores["tier_2"] += 5
+    if market_cap is not None and market_cap >= 1_000:
+        tier_scores["tier_2"] += 4
+    if stock.volume >= 120_000:
+        tier_scores["tier_2"] += 3
+
+    # Tier 3: Growth trajectory proxy
+    if growth_proxy_pct is not None:
+        tier_scores["tier_3"] += clamp(growth_proxy_pct / 10, 0, 7)
+    if ltp is not None and stock.open is not None and ltp > stock.open:
+        tier_scores["tier_3"] += 3
+    if day_change_pct > 0:
+        tier_scores["tier_3"] += 2
+
+    # Tier 4: Forensic quality proxy (Beneish/Piotroski/CFO proxy)
+    if eps is not None and eps > 0:
+        tier_scores["tier_4"] += 5
+    if pe is not None and 6 <= pe <= 45:
+        tier_scores["tier_4"] += 4
+    if stock.sector != "Unknown":
+        tier_scores["tier_4"] += 3
+
+    # Tier 5: Valuation
+    if peg_ratio_est is not None and peg_ratio_est <= 1.8:
+        tier_scores["tier_5"] += 6
+    if pe is not None and 10 <= pe <= 32:
+        tier_scores["tier_5"] += 4
+    if pb_ratio_est is not None and pb_ratio_est <= 3.5:
+        tier_scores["tier_5"] += 2
+
+    # Tier 6: Technical setup (Supertrend/50DMA/RSI proxy)
+    if position is not None and 0.30 <= position <= 0.75:
+        tier_scores["tier_6"] += 6
+    if ltp is not None and stock.prev_close is not None and ltp > stock.prev_close:
+        tier_scores["tier_6"] += 4
+    if stock.volume >= 150_000:
+        tier_scores["tier_6"] += 4
+
+    # Tier 7: Institutional interest proxy
+    if market_cap is not None and market_cap >= 12_000:
+        tier_scores["tier_7"] += 6
+    if stock.volume >= 250_000:
+        tier_scores["tier_7"] += 4
+
+    # Tier 8: Risk flags (deductions)
+    risk_deduction = 0
+    if pe is not None and pe > 60:
+        risk_deduction += 4
+    if eps is not None and eps <= 0:
+        risk_deduction += 3
+    if position is not None and position > 0.92:
+        risk_deduction += 2
+    if ltp is not None and ltp < 10:
+        risk_deduction += 3
+    tier_scores["tier_8"] = -float(risk_deduction)
+
+    # Fixed weighted score composition
+    raw_score = (
+        tier_scores["tier_1"]
+        + tier_scores["tier_2"]
+        + tier_scores["tier_3"]
+        + tier_scores["tier_4"]
+        + tier_scores["tier_5"]
+        + tier_scores["tier_6"]
+        + tier_scores["tier_7"]
+        + tier_scores["tier_8"]
+    )
+    final_score = int(clamp(round(raw_score), 0, 100))
+
+    tier_thresholds = {
+        "tier_1": 10,
+        "tier_2": 7,
+        "tier_3": 7,
+        "tier_4": 7,
+        "tier_5": 6,
+        "tier_6": 7,
+        "tier_7": 5,
+    }
+    tier_pass_count = sum(1 for key, threshold in tier_thresholds.items() if tier_scores.get(key, 0) >= threshold)
+
+    mandatory_filters = (
+        ltp is not None
+        and ltp > 10
+        and market_cap is not None
+        and market_cap >= 500
+        and eps is not None
+        and eps > 0
+    )
+    is_potential_multibagger = bool(mandatory_filters and final_score >= 70 and tier_pass_count >= 5)
+
     current_rsi_level = round(30 + (position if position is not None else 0.5) * 40, 2) if ltp is not None else None
     gtt_buy_price = None
     if ltp is not None:
@@ -1907,7 +2027,7 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         "9M": 0.27,
         "1Y": 0.34,
     }
-    momentum_adj = (final_score - 55) / 300
+    momentum_adj = (final_score - 55) / 280
     targeted_upside_price = {}
     targeted_upside_profit_pct = {}
     for key, base in duration_base.items():
@@ -1926,6 +2046,19 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         targeted_upside_price[key] = target_price
         targeted_upside_profit_pct[key] = roi_pct
 
+    thesis_parts = []
+    if final_score >= 80:
+        thesis_parts.append("Strong 8-tier score with favorable valuation/technical mix")
+    elif final_score >= 70:
+        thesis_parts.append("Balanced quality-growth setup with acceptable risk")
+    else:
+        thesis_parts.append("Needs further confirmation on quality/valuation factors")
+    if upside_to_52w_high_pct is not None:
+        thesis_parts.append(f"Potential upside to 52W high: {round(upside_to_52w_high_pct, 1)}%")
+    if peg_ratio_est is not None:
+        thesis_parts.append(f"PEG proxy: {round(peg_ratio_est, 2)}")
+    thesis = " | ".join(thesis_parts)
+
     return {
         "multibagger_score": final_score,
         "upside_to_52w_high_pct": round(upside_to_52w_high_pct, 2) if upside_to_52w_high_pct is not None else None,
@@ -1937,6 +2070,7 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         "gtt_buy_price": gtt_buy_price,
         "targeted_upside_price": targeted_upside_price,
         "targeted_upside_profit_pct": targeted_upside_profit_pct,
+        "thesis": thesis,
     }
 
 
@@ -2470,8 +2604,43 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
     return results[:14]
 
 
+async def _get_multibagger_universe() -> list[str]:
+    await _sync_script_master_daily()
+    base = [_normalize_symbol_key(symbol) for symbol in MULTIBAGGER_UNIVERSE]
+    base = [symbol for symbol in base if symbol and symbol not in {"NIFTY", "BANKNIFTY"}]
+
+    rows = await db.script_master.find({}, {"_id": 0, "canonical_symbol": 1}).to_list(5000)
+    dynamic_symbols: list[str] = []
+    for row in rows:
+        symbol = _normalize_symbol_key(str(row.get("canonical_symbol", "")))
+        if not symbol or symbol in {"NIFTY", "BANKNIFTY"}:
+            continue
+        if len(symbol) < 2 or len(symbol) > 15:
+            continue
+        dynamic_symbols.append(symbol)
+
+    merged = list(dict.fromkeys([*base, *dynamic_symbols]))
+    # Runtime guard for FastAPI response performance while still covering a broad NSE universe slice
+    return merged[:300]
+
+
 async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCandidate]:
-    results = await asyncio.gather(*[get_stock_core(symbol) for symbol in MULTIBAGGER_UNIVERSE])
+    universe = await _get_multibagger_universe()
+
+    semaphore = asyncio.Semaphore(18)
+
+    async def _fetch_one(symbol: str) -> dict | None:
+        async with semaphore:
+            try:
+                core = await get_stock_core(symbol)
+                if core.get("ltp") is None:
+                    return None
+                return core
+            except Exception:
+                return None
+
+    fetched = await asyncio.gather(*[_fetch_one(symbol) for symbol in universe])
+    results = [row for row in fetched if row is not None]
     candidates: list[MultibaggerCandidate] = []
     for row in results:
         stock = StockCoreNormalized(**row)
@@ -2499,6 +2668,7 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
                 gtt_buy_price=analysis["gtt_buy_price"],
                 targeted_upside_price=analysis["targeted_upside_price"],
                 targeted_upside_profit_pct=analysis["targeted_upside_profit_pct"],
+                thesis=analysis["thesis"],
                 analysis_refreshed_at=refreshed_at,
             )
         )
@@ -2507,7 +2677,7 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
         key=lambda row: (row.is_potential_multibagger, row.multibagger_score),
         reverse=True,
     )
-    return candidates[:30]
+    return candidates[:80]
 
 
 def _position_to_response(position: dict) -> CustomPositionResponse:
@@ -2895,6 +3065,190 @@ async def admin_delete_user(user_ref: str, admin_user: dict = Depends(get_admin_
         if session.get("user_key") == target["user_key"]:
             SESSION_STORE.pop(token, None)
     return {"deleted": True}
+
+
+@api_router.patch("/admin/users/{user_ref}/profile", response_model=AdminUserView)
+async def admin_update_user_profile(
+    user_ref: str,
+    payload: AdminUserProfileUpdateRequest,
+    owner_user: dict = Depends(get_owner_user),
+):
+    _ = owner_user
+    target = await _get_user_by_ref(user_ref)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    updates: dict[str, object] = {}
+    new_username: str | None = None
+    if payload.username is not None:
+        new_username = _validate_username(payload.username)
+        if new_username != target.get("username"):
+            existing = await _get_user_by_username(new_username)
+            if existing and existing.get("user_key") != target.get("user_key"):
+                raise HTTPException(status_code=400, detail="Username already exists")
+        updates["username"] = new_username
+
+    if payload.role is not None:
+        updates["role"] = payload.role
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No profile changes provided")
+
+    old_username = target.get("username")
+    updated = await db.app_users.find_one_and_update(
+        {"user_key": target["user_key"]},
+        {"$set": updates},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if new_username and old_username and old_username != new_username:
+        await db.app_users.update_many(
+            {"created_by": old_username},
+            {"$set": {"created_by": new_username}},
+        )
+
+    return _map_user_view(updated)
+
+
+@api_router.patch("/admin/self/username", response_model=AdminUserView)
+async def admin_update_own_username(
+    payload: AdminUserProfileUpdateRequest,
+    admin_user: dict = Depends(get_admin_user),
+):
+    if not payload.username:
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    new_username = _validate_username(payload.username)
+    if new_username != admin_user.get("username"):
+        existing = await _get_user_by_username(new_username)
+        if existing and existing.get("user_key") != admin_user.get("user_key"):
+            raise HTTPException(status_code=400, detail="Username already exists")
+
+    old_username = admin_user.get("username")
+    updated = await db.app_users.find_one_and_update(
+        {"user_key": admin_user["user_key"]},
+        {"$set": {"username": new_username}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if old_username and old_username != new_username:
+        await db.app_users.update_many(
+            {"created_by": old_username},
+            {"$set": {"created_by": new_username}},
+        )
+    return _map_user_view(updated)
+
+
+@api_router.get("/admin/config")
+async def admin_get_config(owner_user: dict = Depends(get_owner_user)):
+    _ = owner_user
+    api_controls = await _get_api_controls(force_refresh=True)
+    domains = await db.domain_mappings.find({}, {"_id": 0}).sort("updated_at", -1).to_list(200)
+    kite_status = await db.system_meta.find_one({"key": "kite_session"}, {"_id": 0, "access_token": 0})
+    return {
+        "api_controls": api_controls,
+        "domain_mappings": domains,
+        "kite": {
+            "connected": bool(kite_status and kite_status.get("date") == _today_ist()),
+            "user_id": (kite_status or {}).get("user_id"),
+            "updated_at": (kite_status or {}).get("updated_at"),
+            "redirect_url": KITE_REDIRECT_URL,
+            "postback_url": os.environ.get("KITE_POSTBACK_URL"),
+        },
+        "dns_note": "A-record mapping requires DNS ownership changes at your domain registrar; app can store and verify mapping status only.",
+    }
+
+
+@api_router.patch("/admin/api-controls")
+async def admin_update_api_controls(
+    payload: ApiControlUpdateRequest,
+    owner_user: dict = Depends(get_owner_user),
+):
+    _ = owner_user
+    current = await _get_api_controls(force_refresh=True)
+    updated = {
+        "kite_data_enabled": current.get("kite_data_enabled", True),
+        "moneycontrol_data_enabled": current.get("moneycontrol_data_enabled", True),
+        "strict_live_only": current.get("strict_live_only", True),
+    }
+    if payload.kite_data_enabled is not None:
+        updated["kite_data_enabled"] = bool(payload.kite_data_enabled)
+    if payload.moneycontrol_data_enabled is not None:
+        updated["moneycontrol_data_enabled"] = bool(payload.moneycontrol_data_enabled)
+    if payload.strict_live_only is not None:
+        updated["strict_live_only"] = bool(payload.strict_live_only)
+
+    await db.system_meta.update_one(
+        {"key": "api_controls"},
+        {
+            "$set": {
+                "key": "api_controls",
+                **updated,
+                "updated_at": _utc_now_iso(),
+                "updated_by": owner_user.get("username"),
+            }
+        },
+        upsert=True,
+    )
+    await _get_api_controls(force_refresh=True)
+    return {"updated": True, "api_controls": updated}
+
+
+@api_router.post("/admin/domain-mappings")
+async def admin_create_domain_mapping(
+    payload: DomainMappingCreateRequest,
+    owner_user: dict = Depends(get_owner_user),
+):
+    domain = _validate_domain(payload.domain)
+    target_record = payload.target_record.strip()
+    if not target_record:
+        raise HTTPException(status_code=400, detail="Target record is required")
+
+    await db.domain_mappings.update_one(
+        {"domain": domain},
+        {
+            "$set": {
+                "domain": domain,
+                "target_record": target_record,
+                "status": "PENDING",
+                "updated_by": owner_user.get("username"),
+                "updated_at": _utc_now_iso(),
+            }
+        },
+        upsert=True,
+    )
+    row = await db.domain_mappings.find_one({"domain": domain}, {"_id": 0})
+    return row
+
+
+@api_router.patch("/admin/domain-mappings/{domain}")
+async def admin_update_domain_mapping(
+    domain: str,
+    payload: DomainMappingStatusUpdateRequest,
+    owner_user: dict = Depends(get_owner_user),
+):
+    key = _validate_domain(domain)
+    updated = await db.domain_mappings.find_one_and_update(
+        {"domain": key},
+        {
+            "$set": {
+                "status": payload.status,
+                "updated_by": owner_user.get("username"),
+                "updated_at": _utc_now_iso(),
+            }
+        },
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Domain mapping not found")
+    return updated
 
 
 @api_router.post("/multibagger/generate", response_model=MultibaggerGenerateResponse)

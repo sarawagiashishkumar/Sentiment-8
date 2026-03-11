@@ -139,12 +139,21 @@ export default function App() {
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminError, setAdminError] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
+  const [adminConfig, setAdminConfig] = useState(null);
+  const [apiControlsEdit, setApiControlsEdit] = useState({
+    kite_data_enabled: true,
+    moneycontrol_data_enabled: true,
+    strict_live_only: true,
+  });
+  const [domainForm, setDomainForm] = useState({ domain: "", target_record: "" });
   const [createForm, setCreateForm] = useState({
     username: "",
     role: "user",
     initial_credits: 0,
     quota_limit: 10,
   });
+  const [usernameEdit, setUsernameEdit] = useState({});
+  const [roleEdit, setRoleEdit] = useState({});
   const [creditEdit, setCreditEdit] = useState({});
   const [quotaEdit, setQuotaEdit] = useState({});
 
@@ -527,16 +536,34 @@ export default function App() {
       setAdminUsers(rows);
       const creditMap = {};
       const quotaMap = {};
+      const usernameMap = {};
+      const roleMap = {};
       rows.forEach((row) => {
         creditMap[row.user_key] = row.credits;
         quotaMap[row.user_key] = row.quota_limit;
+        usernameMap[row.user_key] = row.username;
+        roleMap[row.user_key] = row.role;
       });
       setCreditEdit(creditMap);
       setQuotaEdit(quotaMap);
+      setUsernameEdit(usernameMap);
+      setRoleEdit(roleMap);
     } catch (error) {
       setAdminError(error?.response?.data?.detail || "Unable to load users");
     } finally {
       setAdminLoading(false);
+    }
+  };
+
+  const loadAdminConfig = async () => {
+    try {
+      const response = await axios.get(`${API}/admin/config`, { headers: authHeaders });
+      setAdminConfig(response.data);
+      if (response.data?.api_controls) {
+        setApiControlsEdit(response.data.api_controls);
+      }
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to load admin config");
     }
   };
 
@@ -575,6 +602,65 @@ export default function App() {
       await loadAdminUsers();
     } catch (error) {
       setAdminError(error?.response?.data?.detail || "Unable to update quota");
+    }
+  };
+
+  const updateUserProfile = async (userRef) => {
+    try {
+      await axios.patch(
+        `${API}/admin/users/${userRef}/profile`,
+        {
+          username: (usernameEdit[userRef] || "").trim(),
+          role: roleEdit[userRef],
+        },
+        { headers: authHeaders },
+      );
+      await loadAdminUsers();
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to update user profile");
+    }
+  };
+
+  const updateOwnUsername = async () => {
+    try {
+      await axios.patch(
+        `${API}/admin/self/username`,
+        { username: (usernameEdit[me?.user_key] || "").trim() },
+        { headers: authHeaders },
+      );
+      await hydrateMe(token);
+      await loadAdminUsers();
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to update own username");
+    }
+  };
+
+  const saveApiControls = async () => {
+    try {
+      await axios.patch(`${API}/admin/api-controls`, apiControlsEdit, { headers: authHeaders });
+      await loadAdminConfig();
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to update API controls");
+    }
+  };
+
+  const addDomainMapping = async (event) => {
+    event.preventDefault();
+    try {
+      await axios.post(`${API}/admin/domain-mappings`, domainForm, { headers: authHeaders });
+      setDomainForm({ domain: "", target_record: "" });
+      await loadAdminConfig();
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to save domain mapping");
+    }
+  };
+
+  const updateDomainStatus = async (domain, status) => {
+    try {
+      await axios.patch(`${API}/admin/domain-mappings/${encodeURIComponent(domain)}`, { status }, { headers: authHeaders });
+      await loadAdminConfig();
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to update domain status");
     }
   };
 
@@ -722,6 +808,9 @@ export default function App() {
               onClick={() => {
                 setCurrentPage("admin");
                 loadAdminUsers();
+                if (isOwner) {
+                  loadAdminConfig();
+                }
               }}
               className={currentPage === "admin" ? "bg-cyan-500 text-slate-900 hover:bg-cyan-400" : "border border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"}
               data-testid="nav-admin"
@@ -893,6 +982,12 @@ export default function App() {
                                 <Badge className={`border ${scoreBadge(row.is_potential_multibagger)}`}>
                                   {row.is_potential_multibagger ? "POTENTIAL" : "WATCH"}
                                 </Badge>
+                              </TableCell>
+                            </TableRow>
+
+                            <TableRow key={`${row.symbol}-thesis`} className="result-row" data-testid={`multibagger-thesis-row-${row.symbol.toLowerCase()}`}>
+                              <TableCell colSpan={12} className="text-xs text-slate-300">
+                                Thesis: {row.thesis || "No thesis available"}
                               </TableCell>
                             </TableRow>
                           </Fragment>
@@ -1535,8 +1630,35 @@ export default function App() {
                       <TableBody>
                         {adminUsers.map((row) => (
                           <TableRow key={row.user_key} className="result-row" data-testid={`admin-row-${row.user_key}`}>
-                            <TableCell className="font-mono text-xs text-cyan-200">{row.credential_label}</TableCell>
-                            <TableCell>{row.role}</TableCell>
+                            <TableCell>
+                              <Input
+                                value={usernameEdit[row.user_key] ?? row.username}
+                                onChange={(event) =>
+                                  setUsernameEdit((prev) => ({ ...prev, [row.user_key]: event.target.value }))
+                                }
+                                className="h-8 w-44 border-slate-700 bg-slate-900 text-xs text-cyan-200"
+                                data-testid={`admin-username-input-${row.user_key}`}
+                                disabled={!isOwner && row.user_key !== me?.user_key}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              {isOwner ? (
+                                <select
+                                  value={roleEdit[row.user_key] ?? row.role}
+                                  onChange={(event) =>
+                                    setRoleEdit((prev) => ({ ...prev, [row.user_key]: event.target.value }))
+                                  }
+                                  className="h-8 rounded-md border border-slate-700 bg-slate-900 px-2 text-xs text-slate-100"
+                                  data-testid={`admin-role-select-${row.user_key}`}
+                                >
+                                  <option value="owner">Owner</option>
+                                  <option value="sub_admin">Sub-Admin</option>
+                                  <option value="user">User</option>
+                                </select>
+                              ) : (
+                                <span>{row.role}</span>
+                              )}
+                            </TableCell>
                             <TableCell>
                               <Input
                                 type="number"
@@ -1589,6 +1711,25 @@ export default function App() {
                                   Update Quota
                                 </Button>
                               ) : null}
+                              {isOwner ? (
+                                <Button
+                                  type="button"
+                                  onClick={() => updateUserProfile(row.user_key)}
+                                  className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700"
+                                  data-testid={`admin-update-profile-${row.user_key}`}
+                                >
+                                  Update Profile
+                                </Button>
+                              ) : row.user_key === me?.user_key ? (
+                                <Button
+                                  type="button"
+                                  onClick={updateOwnUsername}
+                                  className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700"
+                                  data-testid={`admin-update-own-username-${row.user_key}`}
+                                >
+                                  Update My Login
+                                </Button>
+                              ) : null}
                               {row.role !== "owner" ? (
                                 <Button
                                   type="button"
@@ -1608,6 +1749,118 @@ export default function App() {
                 )}
               </CardContent>
             </Card>
+
+            {isOwner ? (
+              <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="admin-advanced-controls-card">
+                <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+                  <CardTitle className="text-white">Advanced Controls</CardTitle>
+                  <Button
+                    type="button"
+                    onClick={loadAdminConfig}
+                    className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+                    data-testid="admin-refresh-config-button"
+                  >
+                    Refresh Controls
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <label className="flex items-center gap-2 text-sm text-slate-200" data-testid="api-control-kite-enabled">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(apiControlsEdit.kite_data_enabled)}
+                        onChange={(event) =>
+                          setApiControlsEdit((prev) => ({ ...prev, kite_data_enabled: event.target.checked }))
+                        }
+                      />
+                      Kite data enabled
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-200" data-testid="api-control-moneycontrol-enabled">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(apiControlsEdit.moneycontrol_data_enabled)}
+                        onChange={(event) =>
+                          setApiControlsEdit((prev) => ({ ...prev, moneycontrol_data_enabled: event.target.checked }))
+                        }
+                      />
+                      Secondary API enabled
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-200" data-testid="api-control-strict-live-only">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(apiControlsEdit.strict_live_only)}
+                        onChange={(event) =>
+                          setApiControlsEdit((prev) => ({ ...prev, strict_live_only: event.target.checked }))
+                        }
+                      />
+                      Strict live-only mode
+                    </label>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={saveApiControls}
+                    className="bg-slate-800 text-slate-100 hover:bg-slate-700"
+                    data-testid="admin-save-api-controls"
+                  >
+                    Save API Controls
+                  </Button>
+
+                  <form onSubmit={addDomainMapping} className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="admin-domain-form">
+                    <Input
+                      value={domainForm.domain}
+                      onChange={(event) => setDomainForm((prev) => ({ ...prev, domain: event.target.value }))}
+                      placeholder="Domain (example.com)"
+                      className="border-slate-700 bg-slate-900 text-slate-100"
+                      data-testid="admin-domain-input"
+                    />
+                    <Input
+                      value={domainForm.target_record}
+                      onChange={(event) => setDomainForm((prev) => ({ ...prev, target_record: event.target.value }))}
+                      placeholder="A-Record target (IP/host)"
+                      className="border-slate-700 bg-slate-900 text-slate-100"
+                      data-testid="admin-domain-target-input"
+                    />
+                    <Button type="submit" className="bg-slate-800 text-slate-100 hover:bg-slate-700" data-testid="admin-domain-submit">
+                      Save Domain Mapping
+                    </Button>
+                  </form>
+
+                  <p className="text-xs text-slate-400" data-testid="admin-dns-note">
+                    {adminConfig?.dns_note || "A-record update must be done in your registrar DNS settings."}
+                  </p>
+
+                  <div className="space-y-2" data-testid="admin-domain-list">
+                    {(adminConfig?.domain_mappings || []).map((row) => (
+                      <div key={row.domain} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-900/60 p-2">
+                        <div className="text-xs text-slate-200">
+                          <p><span className="text-slate-400">Domain:</span> {row.domain}</p>
+                          <p><span className="text-slate-400">Target:</span> {row.target_record}</p>
+                          <p><span className="text-slate-400">Status:</span> {row.status}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            onClick={() => updateDomainStatus(row.domain, "ACTIVE")}
+                            className="h-8 bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-500"
+                            data-testid={`admin-domain-active-${row.domain}`}
+                          >
+                            Mark Active
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => updateDomainStatus(row.domain, "FAILED")}
+                            className="h-8 bg-rose-600 px-3 text-xs text-white hover:bg-rose-500"
+                            data-testid={`admin-domain-failed-${row.domain}`}
+                          >
+                            Mark Failed
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
           </section>
         ) : null}
 
