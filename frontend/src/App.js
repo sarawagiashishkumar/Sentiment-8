@@ -86,7 +86,7 @@ const renderLiveInfoBox = (signal, suffix) => (
       Live LTP Margin (T1): ₹{formatNumber(signal.ltp_margin_to_t1_amount)} ({formatNumber(signal.ltp_margin_to_t1_pct)}%)
     </p>
     <p className="text-[11px] font-extrabold">
-      Day H/L: ₹{formatNumber(signal.underlying_day_high)} / ₹{formatNumber(signal.underlying_day_low)}
+      Day H/L: ₹{formatNumber(signal.option_day_high ?? signal.option_ltp)} / ₹{formatNumber(signal.option_day_low ?? signal.option_ltp)}
     </p>
     <p className={`mt-1 inline-flex rounded-md border px-2 py-0.5 text-[11px] font-extrabold ${heatmapClass(signal.achievable_profit_pct)}`}>
       Heatmap Ratio: {formatNumber(signal.achievable_profit_pct)}%
@@ -136,6 +136,7 @@ export default function App() {
   const [fnoError, setFnoError] = useState("");
   const [customScript, setCustomScript] = useState("");
   const [customBuyPrice, setCustomBuyPrice] = useState("");
+  const [customLots, setCustomLots] = useState("1");
   const [customPositionLoading, setCustomPositionLoading] = useState(false);
   const [customPositionError, setCustomPositionError] = useState("");
   const [customPositions, setCustomPositions] = useState([]);
@@ -357,8 +358,13 @@ export default function App() {
       return;
     }
     const buyPriceNum = Number(customBuyPrice);
+    const lotsNum = Number(customLots);
     if (!buyPriceNum || buyPriceNum <= 0) {
       setCustomPositionError("Enter a valid buy price.");
+      return;
+    }
+    if (!lotsNum || lotsNum <= 0) {
+      setCustomPositionError("Enter valid no. of lots (minimum 1).");
       return;
     }
 
@@ -369,11 +375,13 @@ export default function App() {
         {
           script: customScript.trim().toUpperCase(),
           buy_price: buyPriceNum,
+          quantity_lots: Math.floor(lotsNum),
         },
         { headers: authHeaders },
       );
       syncCredits(response.data.credits_remaining);
       setCustomBuyPrice("");
+      setCustomLots("1");
       await loadCustomPositions();
     } catch (error) {
       setCustomPositionError(error?.response?.data?.detail || "Unable to create custom projection.");
@@ -1060,6 +1068,16 @@ export default function App() {
                     className="w-full border-slate-700 bg-slate-900 text-slate-100 lg:w-44"
                     data-testid="fno-custom-buy-price-input"
                   />
+                  <Input
+                    value={customLots}
+                    onChange={(event) => setCustomLots(event.target.value)}
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="No. of Lots"
+                    className="w-full border-slate-700 bg-slate-900 text-slate-100 lg:w-36"
+                    data-testid="fno-custom-lots-input"
+                  />
                   <Button
                     type="submit"
                     className="border border-slate-700 bg-slate-900 text-yellow-200 hover:bg-yellow-200 hover:text-slate-900"
@@ -1148,6 +1166,7 @@ export default function App() {
                           </div>
                           <div className="grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
                             <p>Buy Price: <span className="font-mono">₹{formatNumber(position.buy_price)}</span></p>
+                            <p>Lots / Units: <span className="font-mono">{position.quantity_lots} / {position.units}</span></p>
                             <p>
                               Live LTP: <span className="font-mono text-sm font-extrabold text-slate-900" data-testid={`custom-position-live-ltp-${position.id}`}>₹{formatNumber(position.latest_option_ltp)}</span>
                             </p>

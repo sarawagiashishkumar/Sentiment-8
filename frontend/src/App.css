@@ -1,7 +1,7 @@
 .dashboard-dark-bg {
     --headingTextColor: #dbeafe;
     --resultTextColor: #fde68a;
-    --hoverTextSafeColor: #0f172a;
+    --hoverTextSafeColor: #f8fafc;
 }
 
 .dashboard-grid-overlay {
@@ -61,7 +61,7 @@
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover {
     background: rgba(30, 41, 59, 0.92) !important;
     border-color: #38bdf8 !important;
-    color: inherit !important;
+    color: #f8fafc !important;
 }
 
 .result-hover:hover p,
@@ -94,13 +94,13 @@
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover span,
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover td,
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover th {
-    color: inherit !important;
+    color: #f8fafc !important;
 }
 
 [data-testid="admin-users-table"] tbody tr:hover button,
 [data-testid="portfolio-page"] tbody tr:hover button,
 .result-hover:hover button {
-    color: inherit !important;
+    color: #f8fafc !important;
 }
 
 [data-testid="admin-users-table"] tbody tr:hover button {
@@ -230,8 +230,16 @@
 }
 
 .custom-position-yellow-card:hover {
-    background: #fbbf24 !important;
-    color: #3f2f00 !important;
+    background: #92400e !important;
+    color: #ffffff !important;
+}
+
+.custom-position-yellow-card:hover p,
+.custom-position-yellow-card:hover span,
+.custom-position-yellow-card:hover label,
+.custom-position-yellow-card:hover div,
+.custom-position-yellow-card:hover small {
+    color: #ffffff !important;
 }
 
 .custom-position-yellow-card p,

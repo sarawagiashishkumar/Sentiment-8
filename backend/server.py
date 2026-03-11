@@ -344,6 +344,8 @@ class FNOSignalResponse(BaseModel):
     underlying_day_high: float | None = None
     underlying_day_low: float | None = None
     option_ltp: float
+    option_day_high: float | None = None
+    option_day_low: float | None = None
     ltp_margin_to_t1_amount: float
     ltp_margin_to_t1_pct: float
     achievable_profit_pct: float
@@ -479,6 +481,7 @@ class PortfolioAnalyzeResponse(BaseModel):
 class CustomPositionCreateRequest(BaseModel):
     script: str
     buy_price: float
+    quantity_lots: int = Field(default=1, ge=1, le=500)
 
 
 class CustomPositionSellRequest(BaseModel):
@@ -1013,7 +1016,7 @@ async def _resolve_kite_instrument_for_contract(contract: FNOContract) -> str | 
     return instrument or None
 
 
-async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
+async def _fetch_option_snapshot_from_kite(contract: FNOContract) -> dict | None:
     access_token = await _get_kite_access_token()
     if not access_token or not KITE_API_KEY:
         return None
@@ -1023,10 +1026,10 @@ async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
     if not instrument:
         return None
 
-    def _fetch_ltp() -> float | None:
+    def _fetch_snapshot() -> dict | None:
         try:
             response = requests.get(
-                "https://api.kite.trade/quote/ltp",
+                "https://api.kite.trade/quote",
                 params={"i": instrument},
                 headers={
                     "X-Kite-Version": "3",
@@ -1042,11 +1045,25 @@ async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
             last_price = _to_float(row.get("last_price"))
             if last_price is None or last_price <= 0:
                 return None
-            return float(last_price)
+            ohlc = row.get("ohlc") or {}
+            day_high = _to_float(ohlc.get("high"))
+            day_low = _to_float(ohlc.get("low"))
+            return {
+                "ltp": float(last_price),
+                "day_high": float(day_high) if day_high is not None else None,
+                "day_low": float(day_low) if day_low is not None else None,
+            }
         except Exception:
             return None
 
-    return await asyncio.to_thread(_fetch_ltp)
+    return await asyncio.to_thread(_fetch_snapshot)
+
+
+async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
+    snapshot = await _fetch_option_snapshot_from_kite(contract)
+    if not snapshot:
+        return None
+    return _to_float(snapshot.get("ltp"))
 
 
 async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str, float]:
@@ -1123,22 +1140,101 @@ async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str
     return response
 
 
-async def _fetch_live_option_ltp(contract: FNOContract) -> float:
+async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dict[str, dict]:
+    access_token = await _get_kite_access_token()
+    if not access_token or not KITE_API_KEY or not contracts:
+        return {}
+
+    await _sync_kite_option_master_daily()
+    script_to_instrument: dict[str, str] = {}
+    grouped: dict[tuple[str, str, str], list[FNOContract]] = defaultdict(list)
+    for contract in contracts:
+        grouped[(contract.underlying, contract.expiry, contract.option_type)].append(contract)
+
+    for (underlying, expiry, option_type), group_contracts in grouped.items():
+        rows = await db.kite_option_master.find(
+            {
+                "underlying": underlying,
+                "expiry": expiry,
+                "option_type": option_type,
+            },
+            {"_id": 0, "instrument": 1, "strike": 1},
+        ).to_list(2000)
+        if not rows:
+            continue
+        by_strike = {round(float(row.get("strike", 0.0)), 2): str(row.get("instrument", "")).strip() for row in rows}
+        for contract in group_contracts:
+            instrument = by_strike.get(round(float(contract.strike), 2))
+            if instrument:
+                script_to_instrument[contract.script] = instrument
+
+    if not script_to_instrument:
+        return {}
+
+    unique_instruments = list(dict.fromkeys(script_to_instrument.values()))
+    instrument_snapshot: dict[str, dict] = {}
+
+    def _fetch_batch(batch: list[str]) -> dict[str, dict]:
+        params = [("i", item) for item in batch]
+        try:
+            response = requests.get(
+                "https://api.kite.trade/quote",
+                params=params,
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {KITE_API_KEY}:{access_token}",
+                },
+                timeout=15,
+            )
+            if response.status_code != 200:
+                return {}
+            payload = response.json()
+            data = payload.get("data", {})
+            rows: dict[str, dict] = {}
+            for instrument, row in data.items():
+                ltp = _to_float((row or {}).get("last_price"))
+                ohlc = (row or {}).get("ohlc") or {}
+                if ltp is None or ltp <= 0:
+                    continue
+                rows[instrument] = {
+                    "ltp": float(ltp),
+                    "day_high": _to_float(ohlc.get("high")),
+                    "day_low": _to_float(ohlc.get("low")),
+                }
+            return rows
+        except Exception:
+            return {}
+
+    for idx in range(0, len(unique_instruments), 200):
+        batch = unique_instruments[idx : idx + 200]
+        rows = await asyncio.to_thread(_fetch_batch, batch)
+        instrument_snapshot.update(rows)
+
+    response: dict[str, dict] = {}
+    for script, instrument in script_to_instrument.items():
+        row = instrument_snapshot.get(instrument)
+        if row and _to_float(row.get("ltp")):
+            response[script] = row
+    return response
+
+
+async def _fetch_live_option_snapshot(contract: FNOContract) -> dict:
     controls = await _get_api_controls()
 
     if controls.get("kite_data_enabled", True):
-        kite_ltp = await _fetch_option_ltp_from_kite(contract)
-        if kite_ltp is not None and kite_ltp > 0:
-            return float(kite_ltp)
+        kite_snapshot = await _fetch_option_snapshot_from_kite(contract)
+        if kite_snapshot and _to_float(kite_snapshot.get("ltp")):
+            return kite_snapshot
 
     if controls.get("moneycontrol_data_enabled", True):
         try:
-            return float(
+            ltp = float(
                 await asyncio.to_thread(
                     market_data_client.fetch_option_ltp_for_contract,
                     contract.model_dump(),
                 )
             )
+            return {"ltp": ltp, "day_high": None, "day_low": None}
         except Exception:
             pass
 
@@ -1147,9 +1243,14 @@ async def _fetch_live_option_ltp(contract: FNOContract) -> float:
         if core.ltp is not None:
             modeled = _estimate_option_ltp(core.ltp, contract.strike, contract.option_type)
             if modeled > 0:
-                return float(modeled)
+                return {"ltp": float(modeled), "day_high": None, "day_low": None}
 
     raise HTTPException(status_code=502, detail=f"Live option LTP unavailable for {contract.script}")
+
+
+async def _fetch_live_option_ltp(contract: FNOContract) -> float:
+    snapshot = await _fetch_live_option_snapshot(contract)
+    return float(snapshot.get("ltp"))
 
 
 def _portfolio_horizon_ranges(
@@ -2130,6 +2231,8 @@ def build_fno_signal(
     option_ltp: float,
     refreshed_at: str,
     minutes_to_expiry: int,
+    option_day_high: float | None = None,
+    option_day_low: float | None = None,
 ) -> FNOSignalResponse:
     underlying_ltp = stock_core.ltp
     if underlying_ltp is None:
@@ -2236,6 +2339,8 @@ def build_fno_signal(
         underlying_day_high=round(stock_core.high, 2) if stock_core.high is not None else None,
         underlying_day_low=round(stock_core.low, 2) if stock_core.low is not None else None,
         option_ltp=round(option_ltp, 2),
+        option_day_high=round(option_day_high, 2) if option_day_high is not None else None,
+        option_day_low=round(option_day_low, 2) if option_day_low is not None else None,
         ltp_margin_to_t1_amount=ltp_margin_to_t1_amount,
         ltp_margin_to_t1_pct=ltp_margin_to_t1_pct,
         achievable_profit_pct=achievable_profit_pct,
@@ -2385,13 +2490,16 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
     minutes_to_expiry = get_minutes_to_expiry(contract)
     _validate_expiry_guard(minutes_to_expiry)
     stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-    option_ltp = await _fetch_live_option_ltp(contract)
+    snapshot = await _fetch_live_option_snapshot(contract)
+    option_ltp = float(snapshot.get("ltp"))
     return build_fno_signal(
         contract,
         stock_data,
         option_ltp,
         refreshed_at,
         minutes_to_expiry,
+        option_day_high=_to_float(snapshot.get("day_high")),
+        option_day_low=_to_float(snapshot.get("day_low")),
     )
 
 
@@ -2492,20 +2600,23 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     if not contracts:
         raise HTTPException(status_code=502, detail=f"No active contracts available for {index_name}")
 
-    kite_map = await _fetch_option_ltps_from_kite(contracts)
+    kite_map = await _fetch_option_snapshots_from_kite(contracts)
     rows: list[FNOSignalResponse] = []
     for contract in contracts:
         minutes_to_expiry = get_minutes_to_expiry(contract)
         try:
-            option_ltp = kite_map.get(contract.script)
-            if option_ltp is None:
-                option_ltp = await _fetch_live_option_ltp(contract)
+            snapshot = kite_map.get(contract.script)
+            if snapshot is None:
+                snapshot = await _fetch_live_option_snapshot(contract)
+            option_ltp = float(snapshot.get("ltp"))
             signal = build_fno_signal(
                 contract,
                 stock,
                 option_ltp,
                 refreshed_at,
                 minutes_to_expiry,
+                option_day_high=_to_float(snapshot.get("day_high")),
+                option_day_low=_to_float(snapshot.get("day_low")),
             )
             rows.append(signal)
         except HTTPException:
@@ -2732,7 +2843,8 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                     continue
 
                 try:
-                    option_ltp = await _fetch_live_option_ltp(contract)
+                    snapshot = await _fetch_live_option_snapshot(contract)
+                    option_ltp = float(snapshot.get("ltp"))
                 except Exception:
                     continue
 
@@ -2740,7 +2852,15 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                     continue
 
                 try:
-                    signal = build_fno_signal(contract, core, float(option_ltp), refreshed_at, minutes_to_expiry)
+                    signal = build_fno_signal(
+                        contract,
+                        core,
+                        float(option_ltp),
+                        refreshed_at,
+                        minutes_to_expiry,
+                        option_day_high=_to_float(snapshot.get("day_high")),
+                        option_day_low=_to_float(snapshot.get("day_low")),
+                    )
                 except HTTPException:
                     continue
 
@@ -3621,7 +3741,8 @@ async def create_custom_position(
 
     updated_user, charged = await _consume_credits(current_user, 1.0)
     try:
-        latest_option_ltp = await _fetch_live_option_ltp(contract)
+        latest_snapshot = await _fetch_live_option_snapshot(contract)
+        latest_option_ltp = float(latest_snapshot.get("ltp"))
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Unable to fetch live option LTP") from exc
 
@@ -3637,7 +3758,7 @@ async def create_custom_position(
         "strike": contract.strike,
         "option_type": contract.option_type,
         "lot_size": contract.lot_size,
-        "quantity_lots": 1,
+        "quantity_lots": int(payload.quantity_lots),
         "buy_price": round(float(payload.buy_price), 2),
         "created_at": now_iso,
         "last_update": now_iso,
