@@ -54,6 +54,14 @@ const formatTime = (iso) => {
   });
 };
 
+const formatExpiryDate = (isoDate) => {
+  if (!isoDate) return "-";
+  const match = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return isoDate;
+  const [, year, month, day] = match;
+  return `${day}-${month}-${year}`;
+};
+
 const directionBadge = (direction) => {
   if (direction === "BULLISH") return "bg-emerald-600 text-white border-emerald-700";
   if (direction === "BEARISH") return "bg-rose-600 text-white border-rose-700";
@@ -900,7 +908,7 @@ export default function App() {
                                       <span className="font-mono text-cyan-200">{signal.script}</span>
                                       <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                                     </div>
-                                    <p>Expiry: {signal.expiry}</p>
+                                    <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
                                   </div>
@@ -958,7 +966,7 @@ export default function App() {
                               <p className="font-mono text-cyan-200">{signal.script}</p>
                               <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                             </div>
-                            <p data-testid={`stock-fno-signal-expiry-${signal.script.toLowerCase()}`}>Expiry: {signal.expiry} (monthly stock contract)</p>
+                            <p data-testid={`stock-fno-signal-expiry-${signal.script.toLowerCase()}`}>Expiry: {formatExpiryDate(signal.expiry)} (monthly stock contract)</p>
                             <p>Entry: ₹{formatNumber(signal.entry_price)}</p>
                             <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
                             <p>T1/T2: ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>

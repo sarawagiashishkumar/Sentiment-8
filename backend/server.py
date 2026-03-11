@@ -93,8 +93,19 @@ LOT_SIZE_MAP = {
 
 STOCK_FNO_UNIVERSE = [
     "RELIANCE",
-    "SBIN",
     "TCS",
+    "SBIN",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INFY",
+    "LT",
+    "ITC",
+    "AXISBANK",
+    "KOTAKBANK",
+    "HDFCLIFE",
+    "SBILIFE",
+    "ULTRACEMCO",
+    "BAJFINANCE",
 ]
 
 SCRIPT_MASTER_LAST_SYNC_DATE: str | None = None
@@ -1113,7 +1124,17 @@ async def _sync_script_master_daily(force: bool = False) -> None:
         asyncio.to_thread(_fetch_dhan_rows),
     )
 
-    source_rows = [*nse_rows, *angel_rows, *kite_rows, *dhan_rows]
+    nse_equity_symbols = {symbol for symbol, _ in nse_rows}
+    allow_symbols = {_normalize_symbol_key(symbol) for symbol in seed_symbols}
+    allow_symbols.update({"NIFTY", "BANKNIFTY"})
+
+    source_rows = []
+    for symbol, name in [*nse_rows, *angel_rows, *kite_rows, *dhan_rows]:
+        canonical = _normalize_symbol_key(symbol)
+        if not canonical:
+            continue
+        if canonical in allow_symbols or canonical in nse_equity_symbols:
+            source_rows.append((canonical, name))
     script_records: dict[str, dict] = {}
 
     for symbol in seed_symbols:
@@ -1245,6 +1266,11 @@ async def _resolve_symbol_input(value: str) -> str:
         normalized_variants.add(f"{cleaned[:-3]}LIMITED")
     if cleaned.endswith("LIMITED"):
         normalized_variants.add(f"{cleaned[:-7]}LTD")
+    query_tokens = [
+        _normalize_symbol_key(token)
+        for token in re.split(r"\s+|[,&./()-]", raw_query)
+        if _normalize_symbol_key(token) and len(_normalize_symbol_key(token)) >= 3
+    ]
 
     row = await db.script_master.find_one(
         {
@@ -1263,27 +1289,33 @@ async def _resolve_symbol_input(value: str) -> str:
             "$or": [
                 {
                     "normalized_aliases": {
-                        "$regex": "|".join(re.escape(item) for item in normalized_variants)
+                        "$regex": "|".join(
+                            re.escape(item)
+                            for item in [*normalized_variants, *query_tokens]
+                        )
                     }
                 },
                 {"display_name": {"$regex": re.escape(raw_query), "$options": "i"}},
             ]
         },
         {"_id": 0, "canonical_symbol": 1, "display_name": 1, "normalized_aliases": 1},
-    ).to_list(250)
+    ).to_list(5000)
     if regex_candidates:
         def _candidate_sort_key(item: dict) -> tuple[int, int]:
             normalized_aliases = item.get("normalized_aliases", [])
             exact = 1 if any(candidate in normalized_aliases for candidate in normalized_variants) else 0
             starts_with = 1 if any(
-                str(alias).startswith(candidate)
+                (str(alias).startswith(candidate) or candidate.startswith(str(alias)))
                 for alias in normalized_aliases
                 for candidate in normalized_variants
             ) else 0
+            token_hits = sum(
+                1 for token in query_tokens if any(token in str(alias) for alias in normalized_aliases)
+            )
             score = (exact * 100) + (starts_with * 50)
             display = _normalize_symbol_key(str(item.get("display_name", "")))
             similarity = int(difflib.SequenceMatcher(None, cleaned, display).ratio() * 100)
-            return (score, similarity)
+            return (score, token_hits, similarity)
 
         best = sorted(regex_candidates, key=_candidate_sort_key, reverse=True)[0]
         candidate = best.get("canonical_symbol")
@@ -2137,7 +2169,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
     built = await asyncio.gather(*[_build_for_symbol(symbol, normalized_cores[idx]) for idx, symbol in enumerate(symbols)])
     results = [item for item in built if item is not None]
     results.sort(key=lambda row: row.confluence_score, reverse=True)
-    return results
+    return results[:14]
 
 
 async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCandidate]:
