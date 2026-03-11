@@ -594,9 +594,12 @@ def _normalize_positions_from_rows(rows: list[list[object]], headers: list[str])
 
         if not symbol or avg_price is None or quantity is None or quantity <= 0:
             continue
+        cleaned_symbol = re.sub(r"\s+", " ", str(symbol).strip().upper())
+        if len(re.sub(r"[^A-Z0-9]", "", cleaned_symbol)) < 2:
+            continue
         positions.append(
             {
-                "symbol": re.sub(r"[^A-Z0-9]", "", symbol),
+                "symbol": cleaned_symbol,
                 "avg_price": round(avg_price, 4),
                 "quantity": round(quantity, 4),
             }
@@ -604,20 +607,70 @@ def _normalize_positions_from_rows(rows: list[list[object]], headers: list[str])
     return positions
 
 
+def _detect_qty_avg_orientation(lines: list[str]) -> Literal["QTY_FIRST", "AVG_FIRST"] | None:
+    for line in lines[:8]:
+        normalized = _normalize_header(line)
+        if not normalized:
+            continue
+        tokens = normalized.split()
+        qty_index = next((idx for idx, token in enumerate(tokens) if token in {"qty", "quantity", "holding", "units", "shares"}), None)
+        avg_index = next((idx for idx, token in enumerate(tokens) if token in {"avg", "average", "cost", "buy", "price", "acquisition"}), None)
+        if qty_index is None or avg_index is None:
+            continue
+        return "QTY_FIRST" if qty_index < avg_index else "AVG_FIRST"
+    return None
+
+
+def _pick_avg_and_qty(
+    first_num: float,
+    second_num: float,
+    orientation: Literal["QTY_FIRST", "AVG_FIRST"] | None,
+) -> tuple[float, float]:
+    if orientation == "QTY_FIRST":
+        return second_num, first_num
+    if orientation == "AVG_FIRST":
+        return first_num, second_num
+
+    first_is_int = abs(first_num - round(first_num)) < 1e-9
+    second_is_int = abs(second_num - round(second_num)) < 1e-9
+
+    if first_is_int and not second_is_int:
+        return second_num, first_num
+    if second_is_int and not first_is_int:
+        return first_num, second_num
+
+    if first_num > 10000 and second_num <= 10000:
+        return second_num, first_num
+    if second_num > 10000 and first_num <= 10000:
+        return first_num, second_num
+
+    if first_num <= 10 and second_num >= 20:
+        return second_num, first_num
+    if second_num <= 10 and first_num >= 20:
+        return first_num, second_num
+
+    return first_num, second_num
+
+
 def _extract_positions_from_text_lines(text: str) -> list[dict]:
     positions: list[dict] = []
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    pattern = re.compile(r"([A-Za-z0-9&.-]{2,})\s+([0-9,.]+)\s+([0-9,.]+)")
+    orientation = _detect_qty_avg_orientation(lines)
+    pattern = re.compile(r"^([A-Za-z][A-Za-z0-9&.\- ]+?)\s+([0-9][0-9,\.]*?)\s+([0-9][0-9,\.]*)(?:\s|$)")
     for line in lines:
         match = pattern.search(line)
         if not match:
             continue
-        symbol, avg_txt, qty_txt = match.groups()
-        avg_price = _to_float(avg_txt)
-        quantity = _to_float(qty_txt)
+        symbol, first_txt, second_txt = match.groups()
+        first_num = _to_float(first_txt)
+        second_num = _to_float(second_txt)
+        if first_num is None or second_num is None:
+            continue
+
+        avg_price, quantity = _pick_avg_and_qty(first_num, second_num, orientation)
         if avg_price is None or quantity is None or quantity <= 0:
             continue
-        cleaned = re.sub(r"[^A-Z0-9]", "", symbol.upper())
+        cleaned = re.sub(r"\s+", " ", symbol.upper()).strip()
         if len(cleaned) < 2:
             continue
         positions.append({"symbol": cleaned, "avg_price": avg_price, "quantity": quantity})
@@ -732,7 +785,9 @@ def _parse_positions_from_image_bytes(content: bytes) -> list[dict]:
     enhanced = image.point(lambda px: 0 if px < 160 else 255, mode="1")
     candidates = [
         pytesseract.image_to_string(image, config="--psm 6"),
+        pytesseract.image_to_string(image, config="--psm 11"),
         pytesseract.image_to_string(enhanced, config="--psm 6"),
+        pytesseract.image_to_string(enhanced, config="--psm 11"),
         pytesseract.image_to_data(enhanced, output_type=pytesseract.Output.STRING),
     ]
 

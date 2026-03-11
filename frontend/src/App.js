@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
   AlertTriangle,
@@ -123,6 +123,7 @@ export default function App() {
   const [sellPriceInput, setSellPriceInput] = useState("");
   const [sellConfirmChecked, setSellConfirmChecked] = useState(false);
   const [sellLoading, setSellLoading] = useState(false);
+  const urgentBuzzedRef = useRef(new Set());
 
   const [portfolioFile, setPortfolioFile] = useState(null);
   const [portfolioRows, setPortfolioRows] = useState([
@@ -184,6 +185,36 @@ export default function App() {
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  useEffect(() => {
+    if (!Array.isArray(customPositions) || customPositions.length === 0) return;
+    if (typeof window === "undefined" || document.hidden) return;
+
+    const urgentAlerts = new Set(["EXIT_URGENT_TIME", "EXIT_URGENT_LOSS", "RISKY_PREMIUM", "EXIT_NOW_HIGH_LOSS", "EXIT_URGENT_NO_RECOVERY"]);
+    const freshUrgent = customPositions.filter((position) => urgentAlerts.has(position.alert) && !urgentBuzzedRef.current.has(position.id));
+    if (!freshUrgent.length) return;
+
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "square";
+      oscillator.frequency.setValueAtTime(980, ctx.currentTime);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.5);
+    } catch {
+      // ignore autoplay/audio restrictions
+    }
+
+    freshUrgent.forEach((position) => urgentBuzzedRef.current.add(position.id));
+  }, [customPositions]);
 
   const syncCredits = (credits) => {
     setMe((prev) => (prev ? { ...prev, credits } : prev));
