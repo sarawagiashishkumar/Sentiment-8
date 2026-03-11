@@ -1866,48 +1866,23 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
     minutes_to_expiry = get_minutes_to_expiry(contract)
     _validate_expiry_guard(minutes_to_expiry)
     stock_data = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-    data_source: Literal["LIVE_OPTION_CHAIN", "MODELED_FROM_SPOT"] = "LIVE_OPTION_CHAIN"
     try:
         option_ltp = await asyncio.to_thread(
             market_data_client.fetch_option_ltp_for_contract,
             contract.model_dump(),
         )
-    except Exception:
-        if stock_data.ltp is None:
-            raise
-        if contract.underlying == "NIFTY":
-            step = 50
-        elif contract.underlying == "BANKNIFTY":
-            step = 100
-        else:
-            step = 20 if stock_data.ltp > 300 else 10
-
-        fallback_contract = contract.model_copy(
-            update={"strike": float(round(stock_data.ltp / step) * step)}
-        )
-        try:
-            option_ltp = await asyncio.to_thread(
-                market_data_client.fetch_option_ltp_for_contract,
-                fallback_contract.model_dump(),
-            )
-        except Exception:
-            option_ltp = _estimate_option_ltp(stock_data.ltp, contract.strike, contract.option_type)
-            data_source = "MODELED_FROM_SPOT"
-    signal = build_fno_signal(
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Live option chain unavailable for {contract.script}",
+        ) from exc
+    return build_fno_signal(
         contract,
         stock_data,
         option_ltp,
         refreshed_at,
         minutes_to_expiry,
     )
-    if data_source == "MODELED_FROM_SPOT":
-        signal = signal.model_copy(
-            update={
-                "data_source": "MODELED_FROM_SPOT",
-                "trigger_factors": [*signal.trigger_factors, "OptionLTP=MODELED"],
-            }
-        )
-    return signal
 
 
 async def _safe_signal(contract: FNOContract, refreshed_at: str, sem: asyncio.Semaphore) -> FNOSignalResponse | None:
@@ -2004,8 +1979,11 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
             minutes_to_expiry = get_minutes_to_expiry(contract)
             if minutes_to_expiry <= 15:
                 continue
-            option_ltp = _estimate_option_ltp(stock.ltp, float(strike), option_type)
             try:
+                option_ltp = await asyncio.to_thread(
+                    market_data_client.fetch_option_ltp_for_contract,
+                    contract.model_dump(),
+                )
                 signal = build_fno_signal(
                     contract,
                     stock,
@@ -2013,15 +1991,14 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                     refreshed_at,
                     minutes_to_expiry,
                 )
-                signal = signal.model_copy(
-                    update={
-                        "data_source": "MODELED_FROM_SPOT",
-                        "trigger_factors": [*signal.trigger_factors, "OptionLTP=MODELED"],
-                    }
-                )
                 rows.append(signal)
             except HTTPException:
                 continue
+            except Exception:
+                continue
+
+    if not rows:
+        raise HTTPException(status_code=502, detail=f"No live option-chain strikes available for {index_name}")
 
     potential = [item for item in rows if item.is_potential_trade]
     by_strike: dict[float, list[FNOSignalResponse]] = defaultdict(list)
@@ -2140,7 +2117,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         contract.model_dump(),
                     )
                 except Exception:
-                    option_ltp = _estimate_option_ltp(core.ltp, float(strike), option_type)
+                    continue
 
                 if option_ltp is None or option_ltp <= 0:
                     continue
@@ -2272,15 +2249,20 @@ async def _refresh_open_position(position: dict) -> dict:
             contract.model_dump(),
         )
     except Exception:
-        spot_row = StockCoreNormalized(**(await get_stock_core(position["underlying"])))
-        if spot_row.ltp is not None:
-            latest_option_ltp = _estimate_option_ltp(
-                spot_row.ltp,
-                float(position["strike"]),
-                str(position["option_type"]),
-            )
-        else:
-            latest_option_ltp = float(position.get("latest_option_ltp") or position["buy_price"])
+        updated = await db.custom_positions.find_one_and_update(
+            {"id": position["id"]},
+            {
+                "$set": {
+                    "alert": "LIVE_LTP_UNAVAILABLE",
+                    "minutes_to_expiry": minutes_to_expiry,
+                    "last_update": _utc_now_iso(),
+                    "revised_exit_plan": "Live option feed unavailable; showing last confirmed option LTP.",
+                }
+            },
+            projection={"_id": 0},
+            return_document=ReturnDocument.AFTER,
+        )
+        return updated
     buy_price = float(position["buy_price"])
     pnl_pct = ((latest_option_ltp - buy_price) / buy_price) if buy_price > 0 else 0.0
     revised_target1 = round(max(buy_price * 1.12, latest_option_ltp * 1.05), 2)
@@ -2699,11 +2681,8 @@ async def create_custom_position(
             market_data_client.fetch_option_ltp_for_contract,
             contract.model_dump(),
         )
-    except Exception:
-        core = StockCoreNormalized(**(await get_stock_core(contract.underlying)))
-        if core.ltp is None:
-            raise HTTPException(status_code=502, detail="Unable to fetch live option LTP")
-        latest_option_ltp = _estimate_option_ltp(core.ltp, contract.strike, contract.option_type)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Unable to fetch live option LTP") from exc
 
     position_id = str(uuid.uuid4())
     now_iso = _utc_now_iso()
