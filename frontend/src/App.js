@@ -1290,6 +1290,27 @@ export default function App() {
                             )}
                           </div>
 
+                          <div data-testid={`pane-watchlist-${pane.index_name.toLowerCase()}`}>
+                            <p className="mb-2 text-sm font-semibold text-emerald-300">Watchlist (Medium Conviction)</p>
+                            {pane.watchlist_signals?.length ? (
+                              <div className="space-y-2">
+                                {pane.watchlist_signals.map((signal) => (
+                                  <div key={`${signal.script}-watch`} className="result-hover rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs">
+                                    <div className="mb-1 flex items-center justify-between">
+                                      <span className="font-mono text-emerald-200">{signal.script}</span>
+                                      <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
+                                    </div>
+                                    <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
+                                    <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
+                                    <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400">No medium-conviction watchlist setup right now.</p>
+                            )}
+                          </div>
+
                           <div data-testid={`pane-nondirectional-${pane.index_name.toLowerCase()}`}>
                             <p className="mb-2 text-sm font-semibold text-amber-300">Non-Directional Strategies</p>
                             {pane.non_directional_strategies.length ? (

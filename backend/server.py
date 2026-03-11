@@ -385,6 +385,7 @@ class IndexProjectionPane(BaseModel):
     strike_range_min: float
     strike_range_max: float
     assured_signals: List[FNOSignalResponse]
+    watchlist_signals: List[FNOSignalResponse]
     non_directional_strategies: List[NonDirectionalStrategy]
     with_consolidated_report: IndexAnalysisReport
     without_consolidated_report: IndexAnalysisReport
@@ -2525,6 +2526,19 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
+    assured_scripts = {item.script for item in assured_signals}
+    watchlist_signals = [
+        item
+        for item in rows
+        if item.direction != "NEUTRAL"
+        and item.script not in paired_scripts
+        and item.script not in assured_scripts
+        and strike_range_min <= item.strike <= strike_range_max
+        and item.confluence_score >= 60
+        and item.risk_reward_target2 >= 1.4
+    ]
+    watchlist_signals.sort(key=lambda row: row.confluence_score, reverse=True)
+
     weight_source = NIFTY_WEIGHT_PROXY if index_name == "NIFTY" else BANKNIFTY_WEIGHT_PROXY
     report_rows = await asyncio.gather(*[get_stock_core(symbol) for symbol, _ in weight_source])
     normalized_report_rows = [StockCoreNormalized(**row) for row in report_rows]
@@ -2537,6 +2551,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         strike_range_min=float(strike_range_min),
         strike_range_max=float(strike_range_max),
         assured_signals=assured_signals,
+        watchlist_signals=watchlist_signals[:8],
         non_directional_strategies=non_directional,
         with_consolidated_report=with_report,
         without_consolidated_report=without_report,
@@ -3380,6 +3395,7 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
             strike_range_min=0,
             strike_range_max=0,
             assured_signals=[],
+            watchlist_signals=[],
             non_directional_strategies=[],
             with_consolidated_report=IndexAnalysisReport(
                 report_type="with_consolidated",
@@ -3408,6 +3424,7 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
             strike_range_min=0,
             strike_range_max=0,
             assured_signals=[],
+            watchlist_signals=[],
             non_directional_strategies=[],
             with_consolidated_report=IndexAnalysisReport(
                 report_type="with_consolidated",
