@@ -124,6 +124,9 @@ export default function App() {
   const [sellConfirmChecked, setSellConfirmChecked] = useState(false);
   const [sellLoading, setSellLoading] = useState(false);
   const urgentBuzzedRef = useRef(new Set());
+  const audioContextRef = useRef(null);
+  const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
+  const [showSoundPrompt, setShowSoundPrompt] = useState(false);
 
   const [portfolioFile, setPortfolioFile] = useState(null);
   const [portfolioRows, setPortfolioRows] = useState([
@@ -162,6 +165,10 @@ export default function App() {
   };
 
   useEffect(() => {
+    document.title = "AI Trading Dashboard";
+  }, []);
+
+  useEffect(() => {
     const bootstrap = async () => {
       if (!token) return;
       try {
@@ -189,6 +196,7 @@ export default function App() {
   useEffect(() => {
     if (!Array.isArray(customPositions) || customPositions.length === 0) return;
     if (typeof window === "undefined" || document.hidden) return;
+    if (!alertSoundEnabled) return;
 
     const urgentAlerts = new Set(["EXIT_URGENT_TIME", "EXIT_URGENT_LOSS", "RISKY_PREMIUM", "EXIT_NOW_HIGH_LOSS", "EXIT_URGENT_NO_RECOVERY"]);
     const freshUrgent = customPositions.filter((position) => urgentAlerts.has(position.alert) && !urgentBuzzedRef.current.has(position.id));
@@ -197,7 +205,13 @@ export default function App() {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;
-      const ctx = new AudioCtx();
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioCtx();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === "suspended") {
+        ctx.resume();
+      }
       const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
       oscillator.type = "square";
@@ -214,7 +228,7 @@ export default function App() {
     }
 
     freshUrgent.forEach((position) => urgentBuzzedRef.current.add(position.id));
-  }, [customPositions]);
+  }, [customPositions, alertSoundEnabled]);
 
   const syncCredits = (credits) => {
     setMe((prev) => (prev ? { ...prev, credits } : prev));
@@ -304,6 +318,10 @@ export default function App() {
   const createCustomProjection = async (event) => {
     event.preventDefault();
     setCustomPositionError("");
+    if (!alertSoundEnabled) {
+      setShowSoundPrompt(true);
+      return;
+    }
     if (!customScript.trim()) {
       setCustomPositionError("Please enter a script or symbol.");
       return;
@@ -352,6 +370,41 @@ export default function App() {
     setSellPriceInput("");
     setSellConfirmChecked(false);
     setSellDialogOpen(true);
+  };
+
+  const enableAlertSound = async () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        setCustomPositionError("Audio alert is not supported in this browser.");
+        return;
+      }
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioCtx();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "square";
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.1, ctx.currentTime + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.3);
+
+      setAlertSoundEnabled(true);
+      setShowSoundPrompt(false);
+      setCustomPositionError("");
+    } catch {
+      setCustomPositionError("Unable to enable buzzer. Please check browser audio settings.");
+    }
   };
 
   const submitSoldPosition = async (event) => {
@@ -899,6 +952,46 @@ export default function App() {
                     {customPositionLoading ? "Saving..." : "RUN CUSTOM PROJECTION (-1)"}
                   </Button>
                 </form>
+                <div className="flex items-center gap-2 text-xs text-slate-300" data-testid="fno-alert-sound-control">
+                  <Button
+                    type="button"
+                    onClick={enableAlertSound}
+                    className="h-8 border border-cyan-500/60 bg-cyan-500/10 px-3 text-cyan-200 hover:bg-cyan-500/20"
+                    data-testid="enable-alert-buzzer-button"
+                  >
+                    {alertSoundEnabled ? "Buzzer Enabled" : "Enable Alert Buzzer"}
+                  </Button>
+                  <span>
+                    System can buzz alert during unfortunate trades / urgent exit conditions.
+                  </span>
+                </div>
+                {showSoundPrompt ? (
+                  <div className="rounded-md border border-cyan-500/40 bg-cyan-500/10 p-3 text-xs text-cyan-100" data-testid="sound-permission-note">
+                    <p className="mb-2 font-semibold">Enable alert sound before custom projection?</p>
+                    <p className="mb-2">For urgent trade reversals and high-loss exit alerts, buzzer sound will be triggered.</p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        onClick={enableAlertSound}
+                        className="h-8 bg-cyan-500 px-3 text-slate-900 hover:bg-cyan-400"
+                        data-testid="sound-permission-enable"
+                      >
+                        Allow Buzzer
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setAlertSoundEnabled(false);
+                          setShowSoundPrompt(false);
+                        }}
+                        className="h-8 border border-slate-600 bg-transparent px-3 text-slate-300 hover:bg-slate-800"
+                        data-testid="sound-permission-skip"
+                      >
+                        Continue Without Sound
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
                 {customPositionError ? (
                   <p className="text-sm text-rose-400" data-testid="fno-custom-position-error">{customPositionError}</p>
                 ) : null}
@@ -1221,7 +1314,7 @@ export default function App() {
                   <p className="text-sm text-slate-200">Upload Portfolio File (.txt, .csv, .xls, .xlsx, .pdf, .jpg, .jpeg, .bmp, .png, .webp)</p>
                   <Input
                     type="file"
-                    accept=".txt,.csv,.xls,.xlsx,.pdf,.jpg,.jpeg,.bmp,.png,.webp"
+                    accept=".txt,.csv,.CSV,text/csv,application/csv,application/vnd.ms-excel,.xls,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,application/pdf,.jpg,.jpeg,.bmp,.png,.webp,image/*"
                     onChange={(event) => setPortfolioFile(event.target.files?.[0] || null)}
                     className="border-slate-700 bg-slate-900 text-slate-100"
                     data-testid="portfolio-file-input"
