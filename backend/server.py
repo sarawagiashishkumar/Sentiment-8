@@ -3215,16 +3215,19 @@ def _infer_stock_option_type(core: StockCoreNormalized) -> Literal["CE", "PE"] |
 
 async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]:
     symbols = STOCK_FNO_UNIVERSE
+    logger.info(f"Building stock F&O signals for {len(symbols)} symbols: {symbols}")
     cores = await asyncio.gather(*[get_stock_core(symbol) for symbol in symbols])
     normalized_cores = [StockCoreNormalized(**row) for row in cores]
     semaphore = asyncio.Semaphore(4)
 
     async def _build_for_symbol(symbol: str, core: StockCoreNormalized) -> FNOSignalResponse | None:
         if core.ltp is None:
+            logger.warning(f"{symbol}: No LTP available")
             return None
 
         step = 20 if core.ltp > 400 else 10
         strike = round(core.ltp / step) * step
+        logger.info(f"{symbol}: LTP={core.ltp}, Strike={strike}")
 
         async with semaphore:
             expiry = await _get_nearest_expiry(symbol, prefer_monthly=True)
@@ -3242,15 +3245,18 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                 )
                 minutes_to_expiry = get_minutes_to_expiry(contract)
                 if minutes_to_expiry <= 15:
+                    logger.warning(f"{symbol} {option_type}: Expiry too soon ({minutes_to_expiry}m)")
                     continue
 
                 try:
                     snapshot = await _fetch_live_option_snapshot(contract)
                     option_ltp = float(snapshot.get("ltp"))
-                except Exception:
+                except Exception as exc:
+                    logger.warning(f"{symbol} {option_type}: Failed to fetch snapshot: {exc}")
                     continue
 
                 if option_ltp is None or option_ltp <= 0:
+                    logger.warning(f"{symbol} {option_type}: Invalid LTP: {option_ltp}")
                     continue
 
                 try:
@@ -3263,29 +3269,46 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         option_day_high=_to_float(snapshot.get("day_high")),
                         option_day_low=_to_float(snapshot.get("day_low")),
                     )
-                except HTTPException:
+                    logger.info(f"{symbol} {option_type}: Signal generated - Direction={signal.direction}, Confluence={signal.confluence_score}, Conviction={signal.conviction_level}")
+                except HTTPException as exc:
+                    logger.warning(f"{symbol} {option_type}: Signal generation failed: {exc.detail}")
                     continue
 
                 if signal.direction != "NEUTRAL":
                     symbol_rows.append(signal)
+                else:
+                    logger.info(f"{symbol} {option_type}: Direction is NEUTRAL, skipping")
 
             if not symbol_rows:
+                logger.info(f"{symbol}: No non-NEUTRAL signals")
                 return None
 
+            logger.info(f"{symbol}: {len(symbol_rows)} signals before filtering")
+            
             potential = [
                 row
                 for row in symbol_rows
-                if row.is_potential_trade
-                and row.confluence_score >= 60
-                and row.risk_reward_target2 >= 1.2
+                if row.confluence_score >= 60
+                and row.risk_reward_target2 >= 0.8
                 and row.expiry_risk != "HIGH"
-                and (row.target1 - row.entry_price) / max(row.entry_price, 0.01) <= 0.15
             ]
+            
             if potential:
                 potential.sort(key=lambda row: row.confluence_score, reverse=True)
+                logger.info(f"{symbol}: ✅ QUALIFIED - Confluence={potential[0].confluence_score}, Conviction={potential[0].conviction_level}")
                 return potential[0]
-
-            return None
+            else:
+                for row in symbol_rows:
+                    reasons = []
+                    if row.confluence_score < 60:
+                        reasons.append(f"Confluence {row.confluence_score} < 60")
+                    if row.risk_reward_target2 < 0.8:
+                        reasons.append(f"R:R {row.risk_reward_target2} < 0.8")
+                    if row.expiry_risk == "HIGH":
+                        reasons.append("HIGH expiry risk")
+                    if reasons:
+                        logger.info(f"{symbol} {row.option_type}: {', '.join(reasons)}")
+                return None
 
     built = await asyncio.gather(*[_build_for_symbol(symbol, normalized_cores[idx]) for idx, symbol in enumerate(symbols)])
     results = [item for item in built if item is not None]
