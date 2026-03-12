@@ -2468,7 +2468,15 @@ async def build_fno_signal(
 
     entry_price = round(option_ltp, 2)
     
-    candles = await _fetch_historical_candles_from_kite(contract, interval="minute", candles=10)
+    try:
+        candles = await asyncio.wait_for(
+            _fetch_historical_candles_from_kite(contract, interval="minute", candles=10),
+            timeout=5.0
+        )
+    except asyncio.TimeoutError:
+        candles = None
+    except Exception:
+        candles = None
     
     if candles and len(candles) >= 5:
         dip_analysis = _analyze_micro_dip_prediction(candles, option_ltp)
@@ -2500,9 +2508,54 @@ async def build_fno_signal(
             entry_price = round(option_ltp * 0.995, 2)
             trigger_factors.append("EntryOptimized=Minimal")
 
+    entry_discount_pct = ((option_ltp - entry_price) / option_ltp) * 100 if option_ltp > entry_price else 0.5
+    
+    typical_recovery_multiplier = 1.0 + (entry_discount_pct / 100) * 0.8
+    
+    option_price_level = "HIGH" if option_ltp > 100 else ("MID" if option_ltp > 30 else "LOW")
+    
+    if option_price_level == "HIGH":
+        base_t1_pct = 0.08
+        base_t2_pct = 0.25
+    elif option_price_level == "MID":
+        base_t1_pct = 0.10
+        base_t2_pct = 0.35
+    else:
+        base_t1_pct = 0.12
+        base_t2_pct = 0.50
+    
+    if minutes_to_expiry < 180:
+        time_adjustment = 0.7
+    elif minutes_to_expiry < 360:
+        time_adjustment = 0.85
+    else:
+        time_adjustment = 1.0
+    
+    volatility_factor = 1.0
+    if option_day_high is not None and option_day_low is not None and option_day_low > 0:
+        intraday_range_pct = ((option_day_high - option_day_low) / option_day_low) * 100
+        if intraday_range_pct > 15:
+            volatility_factor = 1.15
+        elif intraday_range_pct > 10:
+            volatility_factor = 1.10
+        elif intraday_range_pct < 5:
+            volatility_factor = 0.90
+    
+    adjusted_t1_pct = base_t1_pct * time_adjustment * volatility_factor * typical_recovery_multiplier
+    adjusted_t2_pct = base_t2_pct * time_adjustment * volatility_factor * typical_recovery_multiplier
+    
+    adjusted_t1_pct = min(adjusted_t1_pct, 0.15)
+    adjusted_t2_pct = min(adjusted_t2_pct, 0.60)
+    
+    target1 = round(entry_price * (1 + adjusted_t1_pct), 2)
+    target2 = round(entry_price * (1 + adjusted_t2_pct), 2)
+    
     stop_loss = round(entry_price * 0.75, 2)
-    target1 = round(entry_price * 1.12, 2)
-    target2 = round(entry_price * 1.5, 2)
+    
+    if target1 > option_ltp * 1.20:
+        target1 = round(option_ltp * 1.15, 2)
+    if target2 > option_ltp * 1.80:
+        target2 = round(option_ltp * 1.65, 2)
 
     if minutes_to_expiry < 60 and entry_price > 0:
         required_gain = (target1 - entry_price) / entry_price
