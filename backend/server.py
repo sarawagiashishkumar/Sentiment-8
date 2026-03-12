@@ -2416,14 +2416,14 @@ def _calculate_confluence_score_master_spec(
     option_day_low: float | None,
 ) -> tuple[int, str]:
     """
-    Master Spec Confluence Scoring (0-100):
-    - TechnicalAlignmentScore (0-30)
-    - VolumeScore (0-20)
-    - BreadthScore (0-10)
-    - PCRScore (0-10)
-    - VIXScore (0-10)
-    - GEXScore (0-10)
-    - FundamentalQualityScore (0-10)
+    Enhanced Master Spec Confluence Scoring with proxies (0-100):
+    - TechnicalAlignmentScore (0-30): Bias, direction, R:R, position
+    - VolumeScore (0-20): Volume vs average, volume trend
+    - BreadthScore (0-10): 52W position, price action
+    - PCRScore (0-10): Entry discount proxy, option positioning
+    - VIXScore (0-10): Intraday volatility, ATR proxy
+    - GEXScore (0-10): Option price level, liquidity
+    - FundamentalQualityScore (0-10): Screener metrics proxy
     
     Returns: (confluence_score, conviction_level)
     """
@@ -2436,22 +2436,24 @@ def _calculate_confluence_score_master_spec(
     gex_score = 5
     fundamental_score = 0
     
-    if abs(bias_score) > 1.5:
-        technical_score += 10
-    elif abs(bias_score) > 0.8:
-        technical_score += 6
+    if abs(bias_score) > 2.0:
+        technical_score += 12
+    elif abs(bias_score) > 1.0:
+        technical_score += 8
     elif abs(bias_score) > 0.3:
-        technical_score += 3
+        technical_score += 4
     
     if direction != "NEUTRAL":
-        technical_score += 12
+        technical_score += 10
     
-    if risk_reward_target2 >= 2.0:
+    if risk_reward_target2 >= 2.5:
         technical_score += 8
+    elif risk_reward_target2 >= 2.0:
+        technical_score += 6
     elif risk_reward_target2 >= 1.5:
-        technical_score += 5
+        technical_score += 4
     elif risk_reward_target2 >= 1.2:
-        technical_score += 3
+        technical_score += 2
     
     technical_score = min(technical_score, 30)
     
@@ -2460,18 +2462,20 @@ def _calculate_confluence_score_master_spec(
         if hasattr(stock_core, 'avg_volume') and stock_core.avg_volume and stock_core.avg_volume > 0:
             volume_ratio = stock_core.volume / stock_core.avg_volume
         
-        if volume_ratio >= 2.0:
+        if volume_ratio >= 3.0:
             volume_score = 20
+        elif volume_ratio >= 2.0:
+            volume_score = 17
         elif volume_ratio >= 1.5:
-            volume_score = 15
+            volume_score = 14
         elif volume_ratio >= 1.2:
             volume_score = 12
         elif volume_ratio >= 1.0:
             volume_score = 10
         elif volume_ratio >= 0.8:
-            volume_score = 6
+            volume_score = 7
         else:
-            volume_score = 3
+            volume_score = 4
     else:
         volume_score = 10
     
@@ -2482,53 +2486,88 @@ def _calculate_confluence_score_master_spec(
     if ltp and year_high and year_low and year_high > year_low:
         position = (ltp - year_low) / (year_high - year_low)
         
-        if direction == "BULLISH" and position < 0.3:
-            breadth_score = 10
-        elif direction == "BULLISH" and position < 0.5:
-            breadth_score = 7
-        elif direction == "BEARISH" and position > 0.7:
-            breadth_score = 10
-        elif direction == "BEARISH" and position > 0.5:
-            breadth_score = 7
+        if direction == "BULLISH":
+            if position < 0.25:
+                breadth_score = 10
+            elif position < 0.40:
+                breadth_score = 8
+            elif position < 0.60:
+                breadth_score = 6
+            else:
+                breadth_score = 3
+        elif direction == "BEARISH":
+            if position > 0.75:
+                breadth_score = 10
+            elif position > 0.60:
+                breadth_score = 8
+            elif position > 0.40:
+                breadth_score = 6
+            else:
+                breadth_score = 3
         else:
-            breadth_score = 4
+            if 0.4 <= position <= 0.6:
+                breadth_score = 6
+            else:
+                breadth_score = 4
     else:
         breadth_score = 5
     
     if option_day_high and option_day_low and option_day_low > 0:
         volatility_pct = ((option_day_high - option_day_low) / option_day_low) * 100
         
-        if volatility_pct > 20:
+        if volatility_pct > 25:
+            vix_score = 10
+        elif volatility_pct > 15:
             vix_score = 8
         elif volatility_pct > 10:
             vix_score = 6
-        else:
+        elif volatility_pct > 5:
             vix_score = 4
+        else:
+            vix_score = 2
     
-    if entry_discount_pct >= 5.0:
+    if entry_discount_pct >= 6.0:
         pcr_score = 10
+    elif entry_discount_pct >= 4.0:
+        pcr_score = 9
     elif entry_discount_pct >= 3.0:
-        pcr_score = 8
+        pcr_score = 7
     elif entry_discount_pct >= 2.0:
         pcr_score = 6
+    elif entry_discount_pct >= 1.0:
+        pcr_score = 4
     
-    if option_ltp >= 100:
-        gex_score = 8
+    if option_ltp >= 150:
+        gex_score = 10
+    elif option_ltp >= 100:
+        gex_score = 9
     elif option_ltp >= 50:
-        gex_score = 7
+        gex_score = 8
     elif option_ltp >= 20:
-        gex_score = 6
+        gex_score = 7
+    elif option_ltp >= 10:
+        gex_score = 5
     elif option_ltp < 5:
         gex_score = 2
     
-    fundamental_score = 5
+    if ltp and year_high and year_low and year_high > year_low:
+        position = (ltp - year_low) / (year_high - year_low)
+        if 0.3 <= position <= 0.7:
+            fundamental_score = 8
+        elif position < 0.3 or position > 0.7:
+            fundamental_score = 6
+        else:
+            fundamental_score = 5
+    else:
+        fundamental_score = 5
     
     if minutes_to_expiry < 60:
-        technical_score = int(technical_score * 0.5)
-        volume_score = int(volume_score * 0.5)
+        technical_score = int(technical_score * 0.6)
+        volume_score = int(volume_score * 0.6)
+        pcr_score = int(pcr_score * 0.7)
     elif minutes_to_expiry < 180:
-        technical_score = int(technical_score * 0.75)
-        volume_score = int(volume_score * 0.75)
+        technical_score = int(technical_score * 0.8)
+        volume_score = int(volume_score * 0.8)
     
     total_confluence = technical_score + volume_score + breadth_score + pcr_score + vix_score + gex_score + fundamental_score
     
@@ -2604,6 +2643,34 @@ async def build_fno_signal(
         direction: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "BULLISH"
     elif contract.option_type == "PE" and underlying_bias == "BEARISH":
         direction = "BEARISH"
+    elif underlying_bias == "NEUTRAL":
+        if pos is not None:
+            if pos < 0.3 and contract.option_type == "CE":
+                direction = "BULLISH"
+                trigger_factors.append("NearLow_CE_Opportunity")
+            elif pos > 0.7 and contract.option_type == "PE":
+                direction = "BEARISH"
+                trigger_factors.append("NearHigh_PE_Opportunity")
+            elif 0.3 <= pos <= 0.7:
+                if contract.option_type == "CE" and option_ltp < underlying_ltp * 0.05:
+                    direction = "BULLISH"
+                    trigger_factors.append("CheapCE_Neutral")
+                elif contract.option_type == "PE" and option_ltp < underlying_ltp * 0.05:
+                    direction = "BEARISH"
+                    trigger_factors.append("CheapPE_Neutral")
+                else:
+                    direction = "NEUTRAL"
+            else:
+                direction = "NEUTRAL"
+        else:
+            if contract.option_type == "CE" and option_ltp < underlying_ltp * 0.04:
+                direction = "BULLISH"
+                trigger_factors.append("VeryC heapCE")
+            elif contract.option_type == "PE" and option_ltp < underlying_ltp * 0.04:
+                direction = "BEARISH"
+                trigger_factors.append("VeryC heapPE")
+            else:
+                direction = "NEUTRAL"
     else:
         direction = "NEUTRAL"
 
