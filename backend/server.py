@@ -3126,30 +3126,56 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         and expected_direction != "NEUTRAL"
         and item.direction == expected_direction
         and item.confluence_score >= 60
-        and item.risk_reward_target2 >= 1.2
+        and item.risk_reward_target2 >= 1.0
         and item.risk_reward_target1 >= 0.8
         and item.expiry_risk != "HIGH"
-        and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.15
+        and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.18
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
     watchlist_signals: list[FNOSignalResponse] = []
 
-    if not assured_signals:
-        fallback_assured = [
+    if len(assured_signals) < 2:
+        fallback_candidates = [
             item
             for item in rows
-            if strike_range_min <= item.strike <= strike_range_max
+            if item.script not in paired_scripts
+            and strike_range_min <= item.strike <= strike_range_max
             and item.expiry_risk != "HIGH"
             and item.direction != "NEUTRAL"
-            and item.confluence_score >= 58
-            and (expected_direction == "NEUTRAL" or item.direction == expected_direction)
+            and item.confluence_score >= 45
         ]
-        fallback_assured.sort(key=lambda row: row.confluence_score, reverse=True)
-        assured_signals = [
-            row.model_copy(update={"strategy": "High-Probability Projection (Dynamic Entry Optimized)"})
-            for row in fallback_assured[:2]
-        ]
+        fallback_candidates.sort(key=lambda row: row.confluence_score, reverse=True)
+        
+        existing_scripts = {s.script for s in assured_signals}
+        for candidate in fallback_candidates:
+            if candidate.script not in existing_scripts:
+                assured_signals.append(
+                    candidate.model_copy(update={
+                        "strategy": f"{candidate.conviction_level} Conviction Trade (Neutral Market)"
+                    })
+                )
+                if len(assured_signals) >= 2:
+                    break
+        
+        if len(assured_signals) < 2 and len(rows) > 0:
+            all_available = [
+                item for item in rows
+                if item.expiry_risk != "HIGH"
+                and item.script not in paired_scripts
+            ]
+            all_available.sort(key=lambda row: row.confluence_score, reverse=True)
+            
+            existing_scripts = {s.script for s in assured_signals}
+            for candidate in all_available:
+                if candidate.script not in existing_scripts:
+                    assured_signals.append(
+                        candidate.model_copy(update={
+                            "strategy": f"Best Available Trade (Score: {candidate.confluence_score})"
+                        })
+                    )
+                    if len(assured_signals) >= 2:
+                        break
 
     directional_count = len([item for item in rows if item.direction != "NEUTRAL"])
     high_conf_count = len([item for item in rows if item.confluence_score >= 80])
@@ -3313,7 +3339,9 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
     built = await asyncio.gather(*[_build_for_symbol(symbol, normalized_cores[idx]) for idx, symbol in enumerate(symbols)])
     results = [item for item in built if item is not None]
     results.sort(key=lambda row: row.confluence_score, reverse=True)
-    return results[:14]
+    
+    logger.info(f"Stock F&O signals: {len(results)} total, returning top 20")
+    return results[:20]
 
 
 async def _get_multibagger_universe() -> list[str]:
