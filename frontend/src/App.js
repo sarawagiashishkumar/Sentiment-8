@@ -421,10 +421,12 @@ export default function App() {
   };
 
   const removeCustomProjection = async (positionId) => {
+    setCustomPositions((prev) => prev.filter((position) => position.id !== positionId));
     try {
       await axios.delete(`${API}/fno/custom-position/${positionId}`, { headers: authHeaders });
       await loadCustomPositions();
     } catch (error) {
+      await loadCustomPositions();
       setCustomPositionError(error?.response?.data?.detail || "Unable to remove custom projection.");
     }
   };
