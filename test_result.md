@@ -116,6 +116,54 @@ frontend:
         - working: true
           agent: "testing"
           comment: "Login page renders correctly with username input field (data-testid='login-username-input'). Input is enabled and accepts user input. Login with @shish123 successful."
+  
+  - task: "F&O custom script form with No. of Lots input"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Custom script form (data-testid='fno-custom-script-form') has all three inputs correctly positioned: Script input (data-testid='fno-custom-script-input'), Buy Price input (data-testid='fno-custom-buy-price-input'), and No. of Lots input (data-testid='fno-custom-lots-input'). Buy Price and Lots inputs are on the same row (y-coordinate difference: 0.0px). Lots input has correct placeholder 'No. of Lots'. Layout verified on 1920x1080 desktop viewport."
+  
+  - task: "F&O custom cards 3-column grid layout"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Custom position list container (data-testid='custom-position-list') correctly implements 3-column grid on large viewport. CSS classes verified: 'grid grid-cols-1 gap-3 lg:grid-cols-3'. On desktop viewport (1920x1080), cards render in 3-column layout as expected."
+  
+  - task: "F&O custom cards Close (X) button"
+    implemented: true
+    working: false
+    file: "/app/frontend/src/App.js"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: "CRITICAL ISSUE: Close (X) button exists on all custom position cards including SOLD cards (data-testid='custom-position-close-{id}'). Button is visible, enabled, and contains X icon. However, clicking the button does NOT remove the card from UI. Backend logs show DELETE API returns 200 OK, but subsequent GET /api/fno/custom-positions polling fails with 401 Unauthorized. This prevents UI from refreshing with updated card list. Issue is in authentication/token handling for polling requests, not in the close button itself. Cards tested: 3 OPEN cards and 1 SOLD card - all have close button but none can be removed."
+  
+  - task: "F&O result cards corner Day Low/High percentage box with hover color flip"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "testing"
+          comment: "Corner delta box (Day Low/High percentage) is implemented in renderLiveInfoBox function (lines 90-125) with correct positioning (position:absolute, bottom:6px, right:6px), CSS classes (.fno-corner-delta-box), and hover color flip styles (default: yellow bg #fde047 + dark text; hover: blue bg #1d4ed8 + yellow text). HOWEVER, these corner boxes only appear in F&O PROJECTION RESULT CARDS (Nifty pane, BankNifty pane, Top 4 trades, stock signals), NOT in custom position cards (yellow cards). Custom position cards only have P/L boxes. Unable to verify actual rendering because F&O projections were not generated successfully during test (possibly due to authentication issues). Code implementation is correct per requirements, but physical verification incomplete. Need clarification: should corner boxes also appear on custom position cards?"
 
   - task: "Portfolio page file input with correct accept attribute"
     implemented: true
@@ -156,16 +204,20 @@ frontend:
 metadata:
   created_by: "testing_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: true
 
 test_plan:
   current_focus:
-    - "All core features tested and verified"
-  stuck_tasks: []
-  test_all: true
+    - "F&O custom cards Close (X) button"
+    - "F&O result cards corner Day Low/High percentage box with hover color flip"
+  stuck_tasks:
+    - "F&O custom cards Close (X) button"
+  test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "testing"
       message: "Comprehensive Playwright testing completed successfully. All requirements from review request verified: (1) Login page renders and accepts username input ✅ (2) Login with @shish123 works ✅ (3) Portfolio file input has correct accept attributes ✅ (4) F&O custom projection shows urgent alert cards and projected exit text correctly ✅ (5) No console errors or blank screens ✅. Application is production-ready."
+    - agent: "testing"
+      message: "F&O Custom Projection UI Validation (Review Request) - PARTIAL PASS with CRITICAL ISSUE: ✅(1) Login with @shish123 works. ✅(2) F&O page navigation successful. ✅(3) Custom script form has all three inputs (Script, Buy Price, No. of Lots) positioned correctly on same row. ✅(4) Custom cards render in 3-column grid (lg:grid-cols-3 class confirmed). ✅(5) All custom cards including SOLD cards have Close (X) button at bottom-right. ❌(6) CRITICAL: Close button does NOT remove cards - API returns 200 OK but subsequent polling fails with 401 Unauthorized causing UI to not update. ❌(7) Corner Day Low/Day High percentage boxes NOT FOUND - these boxes are implemented in code but only appear in F&O projection result cards (Nifty/BankNifty panes, Top 4 trades, stock signals), NOT in custom position cards. Custom position cards only have P/L boxes, not corner delta boxes. Need main agent to clarify requirements and fix authentication issue."

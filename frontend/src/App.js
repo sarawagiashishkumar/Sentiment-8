@@ -420,16 +420,12 @@ export default function App() {
     }
   };
 
-  const closeCustomProjection = async (positionId) => {
+  const removeCustomProjection = async (positionId) => {
     try {
-      await axios.post(
-        `${API}/fno/custom-position/${positionId}/close`,
-        {},
-        { headers: authHeaders },
-      );
+      await axios.delete(`${API}/fno/custom-position/${positionId}`, { headers: authHeaders });
       await loadCustomPositions();
     } catch (error) {
-      setCustomPositionError(error?.response?.data?.detail || "Unable to close custom projection.");
+      setCustomPositionError(error?.response?.data?.detail || "Unable to remove custom projection.");
     }
   };
 
@@ -1179,20 +1175,9 @@ export default function App() {
                         >
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <p className="font-mono text-slate-900" data-testid={`custom-position-script-${position.id}`}>{position.script}</p>
-                            {position.status === "OPEN" ? (
-                              <Button
-                                type="button"
-                                onClick={() => closeCustomProjection(position.id)}
-                                className="h-7 border border-rose-500 bg-transparent px-2 text-rose-300 hover:bg-rose-500/20"
-                                data-testid={`custom-position-close-${position.id}`}
-                              >
-                                <X size={14} />
-                              </Button>
-                            ) : (
-                              <Badge className="border border-emerald-600 bg-emerald-500/20 text-emerald-200" data-testid={`custom-position-status-${position.id}`}>
-                                {position.status}
-                              </Badge>
-                            )}
+                            <Badge className="border border-emerald-600 bg-emerald-500/20 text-emerald-200" data-testid={`custom-position-status-${position.id}`}>
+                              {position.status}
+                            </Badge>
                           </div>
                           <div className="grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
                             <p>Buy Price: <span className="font-mono">₹{formatNumber(position.buy_price)}</span></p>
@@ -1228,8 +1213,8 @@ export default function App() {
                               </p>
                             ) : null}
                           </div>
-                          {position.can_sell ? (
-                            <div className="mt-2">
+                          <div className="mt-3 flex items-center justify-end gap-2">
+                            {position.can_sell ? (
                               <Button
                                 type="button"
                                 onClick={() => openSellDialog(position)}
@@ -1238,8 +1223,16 @@ export default function App() {
                               >
                                 Sold
                               </Button>
-                            </div>
-                          ) : null}
+                            ) : null}
+                            <Button
+                              type="button"
+                              onClick={() => removeCustomProjection(position.id)}
+                              className="h-8 border border-rose-600 bg-rose-500/10 px-3 text-rose-800 hover:bg-rose-500/20"
+                              data-testid={`custom-position-close-${position.id}`}
+                            >
+                              <X size={14} />
+                            </Button>
+                          </div>
                           {urgent ? (
                             <div className="mt-2 flex items-center gap-2 rounded-md border border-red-500 bg-red-500/20 px-2 py-1 text-xs font-bold text-red-100" data-testid={`custom-position-alert-${position.id}`}>
                               <AlertTriangle size={14} />

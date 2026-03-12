@@ -2315,6 +2315,12 @@ def build_fno_signal(
         direction = "NEUTRAL"
 
     entry_price = round(option_ltp, 2)
+    if option_day_low is not None and option_day_low > 0 and option_day_low < option_ltp:
+        dip_buffer = (option_ltp - option_day_low) * 0.18
+        optimized_entry = max(option_day_low, option_ltp - dip_buffer)
+        entry_price = round(optimized_entry, 2)
+        trigger_factors.append("EntryOptimized=DipBuffer")
+
     stop_loss = round(entry_price * 0.75, 2)
     target1 = round(entry_price * 1.12, 2)
     target2 = round(entry_price * 1.5, 2)
@@ -2709,79 +2715,31 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         and item.direction != "NEUTRAL"
         and expected_direction != "NEUTRAL"
         and item.direction == expected_direction
-        and item.confluence_score >= 80
-        and item.risk_reward_target2 >= 1.8
-        and item.risk_reward_target1 >= 1.1
+        and item.confluence_score >= 76
+        and item.risk_reward_target2 >= 1.55
+        and item.risk_reward_target1 >= 1.0
         and item.expiry_risk != "HIGH"
         and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.12
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
-    assured_scripts = {item.script for item in assured_signals}
-    watchlist_signals = [
-        item
-        for item in rows
-        if item.direction != "NEUTRAL"
-        and item.signal_quality == "MEDIUM"
-        and item.script not in paired_scripts
-        and item.script not in assured_scripts
-        and strike_range_min <= item.strike <= strike_range_max
-        and expected_direction != "NEUTRAL"
-        and item.direction == expected_direction
-        and 70 <= item.confluence_score < 80
-        and item.risk_reward_target1 >= 1.05
-        and item.risk_reward_target2 >= 1.45
-        and item.expiry_risk != "HIGH"
-        and item.minutes_to_expiry > 120
-        and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.1
-    ]
-    watchlist_signals.sort(key=lambda row: row.confluence_score, reverse=True)
+    watchlist_signals: list[FNOSignalResponse] = []
 
-    min_required_trades = 2
-    combined_count = len(assured_signals) + len(watchlist_signals)
-    if combined_count < min_required_trades:
-        fallback_pool = [
+    if not assured_signals:
+        fallback_assured = [
             item
-            for item in rows
+            for item in directional_candidates
             if item.script not in paired_scripts
-            and item.script not in assured_scripts
             and strike_range_min <= item.strike <= strike_range_max
             and item.expiry_risk != "HIGH"
-            and item.minutes_to_expiry > 60
-            and item.risk_reward_target1 >= 0.85
-            and item.confluence_score >= 55
-            and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.14
+            and item.risk_reward_target1 >= 1.0
+            and item.risk_reward_target2 >= 1.55
+            and item.confluence_score >= 74
+            and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.12
+            and (expected_direction == "NEUTRAL" or item.direction == expected_direction)
         ]
-        fallback_pool.sort(key=lambda row: row.confluence_score, reverse=True)
-
-        if not fallback_pool:
-            fallback_pool = [
-                item
-                for item in rows
-                if item.script not in paired_scripts
-                and item.script not in assured_scripts
-                and strike_range_min <= item.strike <= strike_range_max
-                and item.expiry_risk != "HIGH"
-                and item.minutes_to_expiry > 60
-            ]
-            fallback_pool.sort(key=lambda row: row.confluence_score, reverse=True)
-
-        seen = {item.script for item in watchlist_signals}
-        for item in fallback_pool:
-            if item.script in seen:
-                continue
-            updates = {
-                "strategy": "CAUTION: Probable T1 setup (strict risk control)",
-                "signal_quality": "MEDIUM",
-                "is_potential_trade": False,
-            }
-            if item.direction == "NEUTRAL":
-                updates["direction"] = "BULLISH" if item.option_type == "CE" else "BEARISH"
-            watchlist_signals.append(item.model_copy(update=updates))
-            seen.add(item.script)
-            combined_count = len(assured_signals) + len(watchlist_signals)
-            if combined_count >= min_required_trades:
-                break
+        fallback_assured.sort(key=lambda row: row.confluence_score, reverse=True)
+        assured_signals = fallback_assured[:2]
 
     directional_count = len([item for item in rows if item.direction != "NEUTRAL"])
     high_conf_count = len([item for item in rows if item.confluence_score >= 80])
@@ -2792,7 +2750,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         else 0
     )
     rejection_note = None
-    if not assured_signals and not watchlist_signals:
+    if not assured_signals:
         if expected_direction == "NEUTRAL":
             rejection_note = (
                 f"No trade: weighted {index_name} bias is NEUTRAL. "
@@ -2905,14 +2863,19 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                 return None
 
             potential = [
-                row for row in symbol_rows if row.is_potential_trade and row.confluence_score >= 72
+                row
+                for row in symbol_rows
+                if row.is_potential_trade
+                and row.confluence_score >= 76
+                and row.risk_reward_target2 >= 1.55
+                and row.expiry_risk != "HIGH"
+                and (row.target1 - row.entry_price) / max(row.entry_price, 0.01) <= 0.12
             ]
             if potential:
                 potential.sort(key=lambda row: row.confluence_score, reverse=True)
                 return potential[0]
 
-            symbol_rows.sort(key=lambda row: (row.confluence_score, row.risk_reward_target2), reverse=True)
-            return symbol_rows[0]
+            return None
 
     built = await asyncio.gather(*[_build_for_symbol(symbol, normalized_cores[idx]) for idx, symbol in enumerate(symbols)])
     results = [item for item in built if item is not None]
@@ -3935,6 +3898,19 @@ async def close_custom_position(position_id: str, current_user: dict = Depends(g
     if not updated:
         raise HTTPException(status_code=404, detail="Custom position not found")
     return {"closed": True, "id": position_id}
+
+
+@api_router.delete("/fno/custom-position/{position_id}")
+async def remove_custom_position(position_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.custom_positions.delete_one(
+        {
+            "id": position_id,
+            "user_key": current_user["user_key"],
+        }
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Custom position not found")
+    return {"removed": True, "id": position_id}
 
 
 @api_router.post("/portfolio/analyze", response_model=PortfolioAnalyzeResponse)
