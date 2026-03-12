@@ -2536,7 +2536,7 @@ def _calculate_confluence_score_master_spec(
     
     if confluence_score >= 80:
         conviction_level = "HIGH"
-    elif confluence_score >= 60:
+    elif confluence_score >= 58:
         conviction_level = "MEDIUM"
     else:
         conviction_level = "LOW"
@@ -2691,7 +2691,7 @@ async def build_fno_signal(
     target1 = round(entry_price * (1 + adjusted_t1_pct), 2)
     target2 = round(entry_price * (1 + adjusted_t2_pct), 2)
     
-    stop_loss = round(entry_price * 0.75, 2)
+    stop_loss = round(entry_price * 0.80, 2)
     
     if target1 > option_ltp * 1.20:
         target1 = round(option_ltp * 1.15, 2)
@@ -2709,6 +2709,11 @@ async def build_fno_signal(
     risk = max(entry_price - stop_loss, 0.01)
     risk_reward_target1 = round((target1 - entry_price) / risk, 2)
     risk_reward_target2 = round((target2 - entry_price) / risk, 2)
+    
+    if risk_reward_target2 < 1.2:
+        min_target2_needed = entry_price + (1.2 * risk)
+        target2 = round(max(target2, min_target2_needed), 2)
+        risk_reward_target2 = round((target2 - entry_price) / risk, 2)
 
     entry_discount_pct = ((option_ltp - entry_price) / option_ltp) * 100 if option_ltp > entry_price else 0.5
     
@@ -2726,17 +2731,22 @@ async def build_fno_signal(
     
     signal_quality = _get_signal_quality(confluence_score)
 
-    if direction != "NEUTRAL" and 60 <= confluence_score < 80:
-        target1 = round(max(entry_price * 1.05, min(target1, entry_price * 1.1)), 2)
-        target2 = round(max(entry_price * 1.12, min(target2, entry_price * 1.22)), 2)
+    if direction != "NEUTRAL" and 58 <= confluence_score < 80:
+        target1 = round(max(entry_price * 1.05, min(target1, entry_price * 1.12)), 2)
+        target2 = round(max(entry_price * 1.20, min(target2, entry_price * 1.30)), 2)
         risk_reward_target1 = round((target1 - entry_price) / risk, 2)
         risk_reward_target2 = round((target2 - entry_price) / risk, 2)
+    
+    if risk_reward_target2 < 1.2:
+        min_target2_needed = entry_price + (1.2 * risk)
+        target2 = round(max(target2, min_target2_needed), 2)
+        risk_reward_target2 = 1.2
 
     ltp_margin_to_t1_amount = round(max(target1 - option_ltp, 0.0), 2)
     ltp_margin_to_t1_pct = round(((target1 - option_ltp) / max(option_ltp, 0.01)) * 100, 2)
     achievable_profit_pct = round(((target1 - entry_price) / max(entry_price, 0.01)) * 100, 2)
 
-    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 60 and risk_reward_target2 >= 1.2
+    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 58 and risk_reward_target2 >= 1.2
     if is_potential_trade:
         trigger_factors.append(f"Conviction={conviction_level}")
 
@@ -3125,8 +3135,8 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         and item.direction != "NEUTRAL"
         and expected_direction != "NEUTRAL"
         and item.direction == expected_direction
-        and item.confluence_score >= 60
-        and item.risk_reward_target2 >= 1.0
+        and item.confluence_score >= 58
+        and item.risk_reward_target2 >= 1.2
         and item.risk_reward_target1 >= 0.8
         and item.expiry_risk != "HIGH"
         and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.18
@@ -3144,6 +3154,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
             and item.expiry_risk != "HIGH"
             and item.direction != "NEUTRAL"
             and item.confluence_score >= 45
+            and item.risk_reward_target2 >= 1.2
         ]
         fallback_candidates.sort(key=lambda row: row.confluence_score, reverse=True)
         
@@ -3163,6 +3174,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                 item for item in rows
                 if item.expiry_risk != "HIGH"
                 and item.script not in paired_scripts
+                and item.risk_reward_target2 >= 1.2
             ]
             all_available.sort(key=lambda row: row.confluence_score, reverse=True)
             
@@ -3314,8 +3326,8 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
             potential = [
                 row
                 for row in symbol_rows
-                if row.confluence_score >= 60
-                and row.risk_reward_target2 >= 0.8
+                if row.confluence_score >= 58
+                and row.risk_reward_target2 >= 1.2
                 and row.expiry_risk != "HIGH"
             ]
             
@@ -3326,10 +3338,10 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
             else:
                 for row in symbol_rows:
                     reasons = []
-                    if row.confluence_score < 60:
-                        reasons.append(f"Confluence {row.confluence_score} < 60")
-                    if row.risk_reward_target2 < 0.8:
-                        reasons.append(f"R:R {row.risk_reward_target2} < 0.8")
+                    if row.confluence_score < 58:
+                        reasons.append(f"Confluence {row.confluence_score} < 58")
+                    if row.risk_reward_target2 < 1.2:
+                        reasons.append(f"R:R {row.risk_reward_target2:.2f} < 1.2")
                     if row.expiry_risk == "HIGH":
                         reasons.append("HIGH expiry risk")
                     if reasons:
