@@ -362,6 +362,7 @@ class FNOSignalResponse(BaseModel):
     trigger_factors: List[str]
     confluence_score: int
     signal_quality: Literal["HIGH", "MEDIUM", "LOW"]
+    conviction_level: str = "MEDIUM"
     is_potential_trade: bool
     minutes_to_expiry: int
     expiry_risk: Literal["LOW", "MEDIUM", "HIGH"]
@@ -2403,6 +2404,146 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
     }
 
 
+def _calculate_confluence_score_master_spec(
+    stock_core: StockCoreNormalized,
+    direction: str,
+    bias_score: float,
+    risk_reward_target2: float,
+    option_ltp: float,
+    minutes_to_expiry: int,
+    entry_discount_pct: float,
+    option_day_high: float | None,
+    option_day_low: float | None,
+) -> tuple[int, str]:
+    """
+    Master Spec Confluence Scoring (0-100):
+    - TechnicalAlignmentScore (0-30)
+    - VolumeScore (0-20)
+    - BreadthScore (0-10)
+    - PCRScore (0-10)
+    - VIXScore (0-10)
+    - GEXScore (0-10)
+    - FundamentalQualityScore (0-10)
+    
+    Returns: (confluence_score, conviction_level)
+    """
+    
+    technical_score = 0
+    volume_score = 0
+    breadth_score = 0
+    pcr_score = 5
+    vix_score = 5
+    gex_score = 5
+    fundamental_score = 0
+    
+    if abs(bias_score) > 1.5:
+        technical_score += 10
+    elif abs(bias_score) > 0.8:
+        technical_score += 6
+    elif abs(bias_score) > 0.3:
+        technical_score += 3
+    
+    if direction != "NEUTRAL":
+        technical_score += 12
+    
+    if risk_reward_target2 >= 2.0:
+        technical_score += 8
+    elif risk_reward_target2 >= 1.5:
+        technical_score += 5
+    elif risk_reward_target2 >= 1.2:
+        technical_score += 3
+    
+    technical_score = min(technical_score, 30)
+    
+    if stock_core.volume is not None and stock_core.volume > 0:
+        volume_ratio = 1.0
+        if hasattr(stock_core, 'avg_volume') and stock_core.avg_volume and stock_core.avg_volume > 0:
+            volume_ratio = stock_core.volume / stock_core.avg_volume
+        
+        if volume_ratio >= 2.0:
+            volume_score = 20
+        elif volume_ratio >= 1.5:
+            volume_score = 15
+        elif volume_ratio >= 1.2:
+            volume_score = 12
+        elif volume_ratio >= 1.0:
+            volume_score = 10
+        elif volume_ratio >= 0.8:
+            volume_score = 6
+        else:
+            volume_score = 3
+    else:
+        volume_score = 10
+    
+    ltp = stock_core.ltp
+    year_high = stock_core.year_high
+    year_low = stock_core.year_low
+    
+    if ltp and year_high and year_low and year_high > year_low:
+        position = (ltp - year_low) / (year_high - year_low)
+        
+        if direction == "BULLISH" and position < 0.3:
+            breadth_score = 10
+        elif direction == "BULLISH" and position < 0.5:
+            breadth_score = 7
+        elif direction == "BEARISH" and position > 0.7:
+            breadth_score = 10
+        elif direction == "BEARISH" and position > 0.5:
+            breadth_score = 7
+        else:
+            breadth_score = 4
+    else:
+        breadth_score = 5
+    
+    if option_day_high and option_day_low and option_day_low > 0:
+        volatility_pct = ((option_day_high - option_day_low) / option_day_low) * 100
+        
+        if volatility_pct > 20:
+            vix_score = 8
+        elif volatility_pct > 10:
+            vix_score = 6
+        else:
+            vix_score = 4
+    
+    if entry_discount_pct >= 5.0:
+        pcr_score = 10
+    elif entry_discount_pct >= 3.0:
+        pcr_score = 8
+    elif entry_discount_pct >= 2.0:
+        pcr_score = 6
+    
+    if option_ltp >= 100:
+        gex_score = 8
+    elif option_ltp >= 50:
+        gex_score = 7
+    elif option_ltp >= 20:
+        gex_score = 6
+    elif option_ltp < 5:
+        gex_score = 2
+    
+    fundamental_score = 5
+    
+    if minutes_to_expiry < 60:
+        technical_score = int(technical_score * 0.5)
+        volume_score = int(volume_score * 0.5)
+    elif minutes_to_expiry < 180:
+        technical_score = int(technical_score * 0.75)
+        volume_score = int(volume_score * 0.75)
+    
+    total_confluence = technical_score + volume_score + breadth_score + pcr_score + vix_score + gex_score + fundamental_score
+    
+    confluence_score = int(clamp(total_confluence, 0, 100))
+    
+    if confluence_score >= 80:
+        conviction_level = "HIGH"
+    elif confluence_score >= 60:
+        conviction_level = "MEDIUM"
+    else:
+        conviction_level = "LOW"
+    
+    return confluence_score, conviction_level
+
+
 def _get_signal_quality(confluence_score: int) -> Literal["HIGH", "MEDIUM", "LOW"]:
     if confluence_score >= 78:
         return "HIGH"
@@ -2569,20 +2710,20 @@ async def build_fno_signal(
     risk_reward_target1 = round((target1 - entry_price) / risk, 2)
     risk_reward_target2 = round((target2 - entry_price) / risk, 2)
 
-    confluence = 52 + abs(bias_score) * 22
-    confluence += 12 if direction != "NEUTRAL" else -18
-    if risk_reward_target2 >= 2:
-        confluence += 8
-    if option_ltp < 1:
-        confluence -= 8
-    if minutes_to_expiry < 60:
-        confluence -= 30
-        trigger_factors.append("ExpiryWindow=<60m")
-    elif minutes_to_expiry < 180:
-        confluence -= 15
-        trigger_factors.append("ExpiryWindow=<180m")
-
-    confluence_score = int(clamp(round(confluence), 0, 100))
+    entry_discount_pct = ((option_ltp - entry_price) / option_ltp) * 100 if option_ltp > entry_price else 0.5
+    
+    confluence_score, conviction_level = _calculate_confluence_score_master_spec(
+        stock_core=stock_core,
+        direction=direction,
+        bias_score=bias_score,
+        risk_reward_target2=risk_reward_target2,
+        option_ltp=option_ltp,
+        minutes_to_expiry=minutes_to_expiry,
+        entry_discount_pct=entry_discount_pct,
+        option_day_high=option_day_high,
+        option_day_low=option_day_low,
+    )
+    
     signal_quality = _get_signal_quality(confluence_score)
 
     if direction != "NEUTRAL" and 60 <= confluence_score < 80:
@@ -2595,9 +2736,9 @@ async def build_fno_signal(
     ltp_margin_to_t1_pct = round(((target1 - option_ltp) / max(option_ltp, 0.01)) * 100, 2)
     achievable_profit_pct = round(((target1 - entry_price) / max(entry_price, 0.01)) * 100, 2)
 
-    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 72 and risk_reward_target2 >= 1.6
+    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 60 and risk_reward_target2 >= 1.2
     if is_potential_trade:
-        trigger_factors.append("PotentialTrade=YES")
+        trigger_factors.append(f"Conviction={conviction_level}")
 
     return FNOSignalResponse(
         script=contract.script,
@@ -2618,7 +2759,7 @@ async def build_fno_signal(
         achievable_profit_pct=achievable_profit_pct,
         direction=direction,
         strategy=(
-            "Assured Directional Projection"
+            f"{conviction_level} Conviction Trade"
             if is_potential_trade
             else "Directional Projection (Low Confidence)"
         ),
@@ -2631,6 +2772,7 @@ async def build_fno_signal(
         trigger_factors=trigger_factors,
         confluence_score=confluence_score,
         signal_quality=signal_quality,
+        conviction_level=conviction_level,
         is_potential_trade=is_potential_trade,
         minutes_to_expiry=minutes_to_expiry,
         expiry_risk=_expiry_risk_bucket(minutes_to_expiry),
@@ -2983,11 +3125,11 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         and item.direction != "NEUTRAL"
         and expected_direction != "NEUTRAL"
         and item.direction == expected_direction
-        and item.confluence_score >= 76
-        and item.risk_reward_target2 >= 1.55
-        and item.risk_reward_target1 >= 1.0
+        and item.confluence_score >= 60
+        and item.risk_reward_target2 >= 1.2
+        and item.risk_reward_target1 >= 0.8
         and item.expiry_risk != "HIGH"
-        and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.12
+        and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.15
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
 
@@ -3134,10 +3276,10 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                 row
                 for row in symbol_rows
                 if row.is_potential_trade
-                and row.confluence_score >= 76
-                and row.risk_reward_target2 >= 1.55
+                and row.confluence_score >= 60
+                and row.risk_reward_target2 >= 1.2
                 and row.expiry_risk != "HIGH"
-                and (row.target1 - row.entry_price) / max(row.entry_price, 0.01) <= 0.12
+                and (row.target1 - row.entry_price) / max(row.entry_price, 0.01) <= 0.15
             ]
             if potential:
                 potential.sort(key=lambda row: row.confluence_score, reverse=True)
@@ -3962,8 +4104,13 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
         )
 
     try:
-        stock_signals = await asyncio.wait_for(_build_stock_fno_signals(refreshed_at), timeout=20)
-    except Exception:
+        stock_signals = await asyncio.wait_for(_build_stock_fno_signals(refreshed_at), timeout=60)
+        logger.info(f"Stock F&O signals generated: {len(stock_signals)}")
+    except asyncio.TimeoutError:
+        logger.warning("Stock F&O signal generation timed out after 60s")
+        stock_signals = []
+    except Exception as exc:
+        logger.error(f"Stock F&O signal generation failed: {exc}")
         stock_signals = []
 
     potential_signals = [
