@@ -1301,6 +1301,144 @@ async def _fetch_live_option_ltp(contract: FNOContract) -> float:
     return float(snapshot.get("ltp"))
 
 
+async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: str = "minute", candles: int = 10) -> list[dict] | None:
+    """
+    Fetch historical OHLCV candles from Kite for micro-trend analysis.
+    interval: 'minute', '3minute', '5minute', etc.
+    candles: number of candles to fetch (default 10 = last 10 minutes for 1-min)
+    """
+    access_token = await _get_kite_access_token()
+    if not access_token or not KITE_API_KEY:
+        return None
+
+    await _sync_kite_option_master_daily()
+    instrument = await _resolve_kite_instrument_for_contract(contract)
+    if not instrument:
+        return None
+
+    def _fetch_candles() -> list[dict] | None:
+        try:
+            from_date = datetime.now(IST) - timedelta(minutes=candles + 5)
+            to_date = datetime.now(IST)
+            
+            response = requests.get(
+                f"https://api.kite.trade/instruments/historical/{instrument}/{interval}",
+                params={
+                    "from": from_date.strftime("%Y-%m-%d %H:%M:%S"),
+                    "to": to_date.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {KITE_API_KEY}:{access_token}",
+                },
+                timeout=15,
+            )
+            if response.status_code != 200:
+                return None
+            
+            payload = response.json()
+            data = payload.get("data", {})
+            candles_data = data.get("candles", [])
+            
+            if not candles_data:
+                return None
+            
+            parsed = []
+            for candle in candles_data[-candles:]:
+                if len(candle) >= 6:
+                    parsed.append({
+                        "timestamp": candle[0],
+                        "open": float(candle[1]),
+                        "high": float(candle[2]),
+                        "low": float(candle[3]),
+                        "close": float(candle[4]),
+                        "volume": int(candle[5]),
+                    })
+            return parsed if parsed else None
+        except Exception as exc:
+            logger.warning("Failed to fetch historical candles: %s", exc)
+            return None
+
+    return await asyncio.to_thread(_fetch_candles)
+
+
+def _analyze_micro_dip_prediction(candles: list[dict], current_ltp: float) -> dict:
+    """
+    Analyze 1-min candles to predict if a micro-dip is imminent.
+    Returns: {
+        'dip_expected': bool,
+        'predicted_dip_price': float,
+        'confidence': float (0-1),
+        'reason': str
+    }
+    """
+    if not candles or len(candles) < 5:
+        return {
+            "dip_expected": False,
+            "predicted_dip_price": current_ltp,
+            "confidence": 0.0,
+            "reason": "Insufficient candle data",
+        }
+
+    recent_candles = candles[-5:]
+    
+    closes = [c["close"] for c in recent_candles]
+    volumes = [c["volume"] for c in recent_candles]
+    lows = [c["low"] for c in recent_candles]
+    
+    avg_volume = sum(volumes) / len(volumes)
+    latest_volume = volumes[-1]
+    recent_low = min(lows[-3:])
+    
+    price_momentum = (closes[-1] - closes[0]) / max(closes[0], 0.01)
+    volume_spike = latest_volume / max(avg_volume, 1)
+    
+    distance_to_recent_low = ((current_ltp - recent_low) / max(current_ltp, 0.01)) * 100
+    
+    dip_indicators = []
+    confidence_score = 0.0
+    
+    if price_momentum < -0.01:
+        dip_indicators.append("DownwardMomentum")
+        confidence_score += 0.25
+    
+    if volume_spike > 1.5:
+        dip_indicators.append("VolumeSpike")
+        confidence_score += 0.20
+    
+    if distance_to_recent_low > 2.0:
+        dip_indicators.append("AboveRecentLow")
+        confidence_score += 0.15
+    
+    consecutive_red = sum(1 for i in range(1, len(recent_candles)) if recent_candles[i]["close"] < recent_candles[i]["open"])
+    if consecutive_red >= 3:
+        dip_indicators.append(f"ConsecutiveRed={consecutive_red}")
+        confidence_score += 0.25
+    
+    last_3_range = max(lows[-3:]) - min(lows[-3:])
+    volatility_pct = (last_3_range / max(current_ltp, 0.01)) * 100
+    if volatility_pct > 3.0:
+        dip_indicators.append(f"HighVolatility={volatility_pct:.1f}%")
+        confidence_score += 0.15
+    
+    dip_expected = confidence_score >= 0.35
+    
+    if dip_expected:
+        dip_depth_pct = min(0.05 + (confidence_score - 0.35) * 0.15, 0.08)
+        predicted_dip = current_ltp * (1 - dip_depth_pct)
+        
+        predicted_dip = max(predicted_dip, recent_low * 0.98)
+    else:
+        predicted_dip = current_ltp * 0.995
+    
+    return {
+        "dip_expected": dip_expected,
+        "predicted_dip_price": round(predicted_dip, 2),
+        "confidence": round(min(confidence_score, 1.0), 2),
+        "reason": f"Indicators: {', '.join(dip_indicators) if dip_indicators else 'No significant dip signals'}",
+    }
+
+
 def _portfolio_horizon_ranges(
     value_flag: str,
     price_zone: str,
@@ -2273,7 +2411,7 @@ def _get_signal_quality(confluence_score: int) -> Literal["HIGH", "MEDIUM", "LOW
     return "LOW"
 
 
-def build_fno_signal(
+async def build_fno_signal(
     contract: FNOContract,
     stock_core: StockCoreNormalized,
     option_ltp: float,
@@ -2329,11 +2467,38 @@ def build_fno_signal(
         direction = "NEUTRAL"
 
     entry_price = round(option_ltp, 2)
-    if option_day_low is not None and option_day_low > 0 and option_day_low < option_ltp:
-        dip_buffer = (option_ltp - option_day_low) * 0.18
-        optimized_entry = max(option_day_low, option_ltp - dip_buffer)
-        entry_price = round(optimized_entry, 2)
-        trigger_factors.append("EntryOptimized=DipBuffer")
+    
+    candles = await _fetch_historical_candles_from_kite(contract, interval="minute", candles=10)
+    
+    if candles and len(candles) >= 5:
+        dip_analysis = _analyze_micro_dip_prediction(candles, option_ltp)
+        
+        if dip_analysis["dip_expected"] and dip_analysis["confidence"] >= 0.35:
+            predicted_dip = dip_analysis["predicted_dip_price"]
+            entry_price = round(predicted_dip, 2)
+            trigger_factors.append(f"MicroDipEntry=Conf{int(dip_analysis['confidence']*100)}%")
+            trigger_factors.append(dip_analysis["reason"][:50])
+        else:
+            if option_day_low is not None and option_day_low > 0 and option_day_low < option_ltp:
+                conservative_entry = option_ltp * 0.98
+                entry_price = round(max(conservative_entry, option_day_low), 2)
+                trigger_factors.append("EntryOptimized=Conservative")
+    else:
+        if option_day_low is not None and option_day_low > 0 and option_day_low < option_ltp:
+            distance_to_low_pct = ((option_ltp - option_day_low) / option_ltp) * 100
+            
+            if distance_to_low_pct > 3.0:
+                predicted_dip_pct = min(0.03 + (distance_to_low_pct - 3.0) * 0.01, 0.06)
+                predicted_dip = option_ltp * (1 - predicted_dip_pct)
+                entry_price = round(max(predicted_dip, option_day_low * 1.01), 2)
+                trigger_factors.append(f"SmartDipEntry={predicted_dip_pct*100:.1f}%Below")
+            else:
+                conservative_entry = option_ltp * 0.985
+                entry_price = round(max(conservative_entry, option_day_low), 2)
+                trigger_factors.append("EntryOptimized=Conservative")
+        else:
+            entry_price = round(option_ltp * 0.995, 2)
+            trigger_factors.append("EntryOptimized=Minimal")
 
     stop_loss = round(entry_price * 0.75, 2)
     target1 = round(entry_price * 1.12, 2)
@@ -2546,7 +2711,7 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
     stock_data = StockCoreNormalized(**(await _get_stock_core_cached(contract.underlying)))
     snapshot = await _fetch_live_option_snapshot(contract)
     option_ltp = float(snapshot.get("ltp"))
-    return build_fno_signal(
+    return await build_fno_signal(
         contract,
         stock_data,
         option_ltp,
@@ -2680,7 +2845,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                 if snapshot is None:
                     snapshot = await _fetch_live_option_snapshot(contract)
                 option_ltp = float(snapshot.get("ltp"))
-                signal = build_fno_signal(
+                signal = await build_fno_signal(
                     contract,
                     stock,
                     option_ltp,
@@ -2894,7 +3059,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                     continue
 
                 try:
-                    signal = build_fno_signal(
+                    signal = await build_fno_signal(
                         contract,
                         core,
                         float(option_ltp),
