@@ -1207,12 +1207,18 @@ export default function App() {
                             <p>
                               LTP vs Buy: <span className={`font-mono font-semibold ${ltpDeltaClass}`} data-testid={`custom-position-buy-diff-${position.id}`}>{formatSignedInr(position.buy_to_ltp_diff)}</span>
                             </p>
-                            <p className="md:col-span-2 custom-position-pnl-box" data-testid={`custom-position-pnl-box-${position.id}`}>
-                              P/L (Lot Size Based):
-                              <span className={`ml-1 font-mono font-extrabold ${Number(position.floating_pnl_amount || 0) >= 0 ? "text-emerald-100" : "text-rose-100"}`}>
-                                {formatSignedInr(position.floating_pnl_amount)} ({position.floating_pnl_pct !== null && position.floating_pnl_pct !== undefined ? `${position.floating_pnl_pct > 0 ? "+" : ""}${formatNumber(position.floating_pnl_pct)}%` : "-"})
-                              </span>
-                            </p>
+                            {position.sold_price !== null && position.sold_price !== undefined ? (
+                              <p className="md:col-span-2 custom-position-pnl-box" data-testid={`custom-position-realized-pnl-${position.id}`}>
+                                Sold @ <span className="font-mono">₹{formatNumber(position.sold_price)}</span> | Realized P&L: <span className={`ml-1 font-mono font-extrabold ${Number(position.realized_pnl || 0) >= 0 ? "text-emerald-100" : "text-rose-100"}`}>{formatSignedInr(position.realized_pnl)}</span>
+                              </p>
+                            ) : (
+                              <p className="md:col-span-2 custom-position-pnl-box" data-testid={`custom-position-pnl-box-${position.id}`}>
+                                P/L (Lot Size Based):
+                                <span className={`ml-1 font-mono font-extrabold ${Number(position.floating_pnl_amount || 0) >= 0 ? "text-emerald-100" : "text-rose-100"}`}>
+                                  {formatSignedInr(position.floating_pnl_amount)} ({position.floating_pnl_pct !== null && position.floating_pnl_pct !== undefined ? `${position.floating_pnl_pct > 0 ? "+" : ""}${formatNumber(position.floating_pnl_pct)}%` : "-"})
+                                </span>
+                              </p>
+                            )}
                             <p>Target1 / Target2: <span className="font-mono">₹{formatNumber(position.target1)} / ₹{formatNumber(position.target2)}</span></p>
                             <p>
                               To T1 / T2: <span className="font-mono" data-testid={`custom-position-target-diff-${position.id}`}>₹{formatNumber(position.ltp_to_t1_diff)} / ₹{formatNumber(position.ltp_to_t2_diff)}</span>
