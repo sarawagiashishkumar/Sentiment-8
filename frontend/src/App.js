@@ -1,9 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import * as XLSX from "xlsx";
+import html2canvas from "html2canvas";
 import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
+  Download,
   FileUp,
   GaugeCircle,
   Home,
@@ -87,6 +90,159 @@ const formatSignedPct = (value) => {
   return `${sign}${numeric.toFixed(2)}%`;
 };
 
+// ── F&O Export Utilities ──────────────────────────────────────────────────────
+
+/**
+ * Converts an FNOSignalResponse object to the standardized export row format.
+ * Columns: Script | Bias | Lot | Entry ₹ | Investment (₹) | SL | T1 | T1% | T1 Profit ₹ | T2 | T2% | T2 Profit ₹ | Conf
+ */
+const buildExportRow = (signal) => {
+  const entry = Number(signal.entry_price || 0);
+  const lot = Number(signal.lot_size || 1);
+  const t1 = Number(signal.target1 || 0);
+  const t2 = Number(signal.target2 || 0);
+  const sl = Number(signal.stop_loss || 0);
+  const conf = Number(signal.confluence_score || 0);
+  const investment = Math.round(entry * lot);
+  const t1Pct = entry > 0 ? Number(((t1 - entry) / entry * 100).toFixed(2)) : 0;
+  const t2Pct = entry > 0 ? Number(((t2 - entry) / entry * 100).toFixed(2)) : 0;
+  const t1Profit = Math.round((t1 - entry) * lot);
+  const t2Profit = Math.round((t2 - entry) * lot);
+
+  return {
+    Script: signal.script || "-",
+    Bias: signal.direction || "-",
+    Lot: lot,
+    "Entry ₹": entry,
+    "Investment (₹)": investment,
+    SL: sl,
+    T1: t1,
+    "T1%": `${t1Pct.toFixed(2)}%`,
+    "T1 Profit ₹": t1Profit,
+    T2: t2,
+    "T2%": `${t2Pct.toFixed(2)}%`,
+    "T2 Profit ₹": t2Profit,
+    Conf: conf,
+  };
+};
+
+/**
+ * Collects all F&O signals from fnoData into a flat sorted array.
+ * Priority: top_trades → NIFTY assured → BANKNIFTY assured → stock_signals
+ */
+const collectAllFnoSignals = (fnoData) => {
+  if (!fnoData) return [];
+  const seen = new Set();
+  const rows = [];
+  const addSignal = (sig) => {
+    if (!sig || seen.has(sig.script)) return;
+    seen.add(sig.script);
+    rows.push(sig);
+  };
+
+  // Add all sections
+  (fnoData.top_trades || []).forEach(addSignal);
+  (fnoData.nifty_projection?.assured_signals || []).forEach(addSignal);
+  (fnoData.banknifty_projection?.assured_signals || []).forEach(addSignal);
+  (fnoData.stock_signals || []).forEach(addSignal);
+
+  // Sort by confluence descending
+  return rows.sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0));
+};
+
+/** Export F&O data as CSV */
+const exportFnoAsCSV = (fnoData) => {
+  const signals = collectAllFnoSignals(fnoData);
+  if (!signals.length) return;
+  const rows = signals.map(buildExportRow);
+  const headers = Object.keys(rows[0]);
+  const csvLines = [
+    headers.join(","),
+    ...rows.map((row) =>
+      headers.map((h) => {
+        const val = row[h];
+        const str = String(val ?? "");
+        return str.includes(",") ? `"${str}"` : str;
+      }).join(",")
+    ),
+    "",
+    `"Note: Investment = Entry Price × Lot Size (1 lot premium cost) | NSE lot sizes verified | Generated: ${new Date().toLocaleString("en-IN")}"`,
+  ];
+  const blob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `FnO_Signals_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+/** Export F&O data as XLS (Excel) */
+const exportFnoAsXLS = (fnoData) => {
+  const signals = collectAllFnoSignals(fnoData);
+  if (!signals.length) return;
+  const rows = signals.map(buildExportRow);
+
+  const wb = XLSX.utils.book_new();
+  const wsData = [
+    ["Stock Options — Correct Lot Sizes के साथ"],
+    [],
+    Object.keys(rows[0]),
+    ...rows.map((row) => Object.values(row)),
+    [],
+    [`Note: Investment = Entry Price × Lot Size (1 lot premium cost) | NSE lot sizes verified | Generated: ${new Date().toLocaleString("en-IN")}`],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Column widths
+  ws["!cols"] = [
+    { wch: 28 }, // Script
+    { wch: 10 }, // Bias
+    { wch: 8 },  // Lot
+    { wch: 10 }, // Entry
+    { wch: 14 }, // Investment
+    { wch: 10 }, // SL
+    { wch: 10 }, // T1
+    { wch: 8 },  // T1%
+    { wch: 14 }, // T1 Profit
+    { wch: 10 }, // T2
+    { wch: 8 },  // T2%
+    { wch: 14 }, // T2 Profit
+    { wch: 8 },  // Conf
+  ];
+
+  // Merge title row
+  ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }];
+
+  XLSX.utils.book_append_sheet(wb, ws, "F&O Signals");
+  XLSX.writeFile(wb, `FnO_Signals_${new Date().toISOString().slice(0, 10)}.xlsx`);
+};
+
+/** Export F&O table as JPG image */
+const exportFnoAsJPG = async (tableRef) => {
+  if (!tableRef?.current) return;
+  try {
+    const canvas = await html2canvas(tableRef.current, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      useCORS: true,
+      logging: false,
+    });
+    const url = canvas.toDataURL("image/jpeg", 0.92);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `FnO_Signals_${new Date().toISOString().slice(0, 10)}.jpg`;
+    a.click();
+  } catch (err) {
+    console.error("JPG export failed:", err);
+  }
+};
+
+// ── End Export Utilities ──────────────────────────────────────────────────────
+
+
+
 const renderLiveInfoBox = (signal, suffix) => {
   const ltp = Number(signal.option_ltp);
   const dayLow = Number(signal.option_day_low);
@@ -162,6 +318,20 @@ export default function App() {
   const [multibaggerError, setMultibaggerError] = useState("");
 
   const [fnoData, setFnoData] = useState(null);
+  const exportTableRef = useRef(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
+  // Close export menu on outside click
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const handler = (e) => {
+      if (!e.target.closest("[data-testid='fno-export-btn']") && !e.target.closest("[data-testid='fno-export-menu']")) {
+        setExportMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [exportMenuOpen]);
   const [fnoLoading, setFnoLoading] = useState(false);
   const [fnoError, setFnoError] = useState("");
   const [customScript, setCustomScript] = useState("");
@@ -1385,9 +1555,51 @@ export default function App() {
                     Nothing shown yet. Click <strong>Generate F&O Projections (-2)</strong> for live analysis.
                   </p>
                 ) : (
-                  <p className="text-xs text-slate-400" data-testid="fno-refreshed-at">
-                    Refreshed at: {formatTime(fnoData.analysis_refreshed_at)} | Charged: {fnoData.cost_charged}
-                  </p>
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <p className="text-xs text-slate-400" data-testid="fno-refreshed-at">
+                      Refreshed at: {formatTime(fnoData.analysis_refreshed_at)} | Charged: {fnoData.cost_charged}
+                    </p>
+                    {/* Export Results Button */}
+                    <div className="relative">
+                      <Button
+                        data-testid="fno-export-btn"
+                        variant="outline"
+                        size="sm"
+                        className="border-cyan-700 bg-cyan-900/30 text-cyan-300 hover:bg-cyan-800/50 gap-1.5"
+                        onClick={() => setExportMenuOpen((v) => !v)}
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        Export Results
+                      </Button>
+                      {exportMenuOpen && (
+                        <div
+                          className="absolute right-0 top-9 z-50 flex flex-col gap-0.5 rounded-lg border border-cyan-800 bg-slate-900 p-1 shadow-xl"
+                          data-testid="fno-export-menu"
+                        >
+                          {[
+                            { label: "Export as CSV", ext: "csv", icon: "📄", testid: "export-csv" },
+                            { label: "Export as XLS", ext: "xls", icon: "📊", testid: "export-xls" },
+                            { label: "Export as JPG", ext: "jpg", icon: "🖼", testid: "export-jpg" },
+                          ].map(({ label, ext, icon, testid }) => (
+                            <button
+                              key={ext}
+                              data-testid={testid}
+                              className="flex items-center gap-2 rounded px-4 py-2 text-sm text-slate-200 hover:bg-cyan-900/50 hover:text-white transition-colors whitespace-nowrap"
+                              onClick={() => {
+                                setExportMenuOpen(false);
+                                if (ext === "csv") exportFnoAsCSV(fnoData);
+                                else if (ext === "xls") exportFnoAsXLS(fnoData);
+                                else exportFnoAsJPG(exportTableRef);
+                              }}
+                            >
+                              <span>{icon}</span>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -1631,6 +1843,62 @@ export default function App() {
                 </div>
               </div>
             ) : null}
+
+            {/* Hidden Export Table for JPG capture */}
+            {fnoData && (
+              <div
+                ref={exportTableRef}
+                style={{
+                  position: "absolute",
+                  left: "-9999px",
+                  top: 0,
+                  width: "1100px",
+                  background: "#ffffff",
+                  padding: "24px",
+                  fontFamily: "Arial, sans-serif",
+                  fontSize: "13px",
+                  color: "#1a1a1a",
+                }}
+              >
+                <h2 style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px" }}>
+                  Stock Options — Correct Lot Sizes के साथ
+                </h2>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f3f4f6" }}>
+                      {["Script", "Bias", "Lot", "Entry ₹", "Investment (₹)", "SL", "T1", "T1%", "T1 Profit ₹", "T2", "T2%", "T2 Profit ₹", "Conf"].map((h) => (
+                        <th key={h} style={{ border: "1px solid #d1d5db", padding: "6px 8px", textAlign: "center", fontWeight: "600", fontSize: "12px" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {collectAllFnoSignals(fnoData).map((sig, i) => {
+                      const row = buildExportRow(sig);
+                      return (
+                        <tr key={sig.script} style={{ background: i % 2 === 0 ? "#ffffff" : "#f9fafb" }}>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", fontWeight: "500" }}>{row["Script"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", color: row["Bias"] === "BULLISH" ? "#059669" : "#dc2626", fontWeight: "600" }}>{row["Bias"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>{row["Lot"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>₹{row["Entry ₹"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>₹{Number(row["Investment (₹)"]).toLocaleString("en-IN")}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#dc2626" }}>{row["SL"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>{row["T1"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{row["T1%"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T1 Profit ₹"]).toLocaleString("en-IN")}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>{row["T2"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{row["T2%"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T2 Profit ₹"]).toLocaleString("en-IN")}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", fontWeight: "600" }}>{row["Conf"]}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <p style={{ marginTop: "12px", fontSize: "11px", color: "#6b7280" }}>
+                  Note: सभी lot sizes NSE verified हैं (March 2026 – dhan.co) — Investment = Entry Price × Lot Size (1 lot premium cost) | Generated: {new Date().toLocaleString("en-IN")}
+                </p>
+              </div>
+            )}
           </section>
         ) : null}
 

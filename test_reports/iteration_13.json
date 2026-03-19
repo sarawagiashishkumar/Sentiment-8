@@ -1,0 +1,44 @@
+{
+  "summary": "Comprehensive testing of F&O Export Results feature - all 11 acceptance criteria verified using API route mocking with mock fnoData. All tests passed: export button visibility, dropdown with 3 options (CSV/XLS/JPG), outside-click close, column calculations, deduplication, hidden JPG table, and all 3 export downloads triggered successfully.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "MINOR: T1% and T2% columns in CSV/XLS exports are string values (e.g. '28.00%') not numeric. In Excel, this means percentage columns won't sort numerically. Low priority since it's display-only.",
+    "NOTE: The fno-export-btn is conditionally rendered only when fnoData is not null - this is correct behavior confirmed in testing.",
+    "NOTE: The close-on-outside-click handler (useEffect on exportMenuOpen) checks both fno-export-btn and fno-export-menu data-testids - correctly prevents false closes."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A - frontend-only testing",
+    "frontend": "100% - all 11 acceptance criteria passed"
+  },
+  "seed_data_creation": "Used API route mocking (page.route) to inject mock fnoData without real Kite connection. Login used: @shish123",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "F&O Export feature fully tested and working. Test approach: login as @shish123, navigate to F&O page, intercept **/api/fno/generate route with mock data containing all required projection fields (non_directional_strategies, with_consolidated_report, without_consolidated_report). Export button visible only after data loads. All 3 export formats (CSV/XLS/JPG) trigger file downloads. Columns and calculations all verified.",
+  "test_details": {
+    "TEST1": "PASS - Export button (fno-export-btn) NOT visible before generating signals (fnoData is null)",
+    "TEST2": "PASS - Export button visible AFTER generating signals",
+    "TEST3a": "PASS - Export menu (fno-export-menu) opens on button click",
+    "TEST3b": "PASS - All 3 options visible with correct data-testids: export-csv, export-xls, export-jpg",
+    "TEST4": "PASS - Export menu closes when clicking outside",
+    "TEST5": "PASS - Hidden export table div (left: -9999px) with ref=exportTableRef exists when fnoData is present",
+    "TEST5b": "PASS - All 13 column headers match prescribed format: Script|Bias|Lot|Entry ₹|Investment (₹)|SL|T1|T1%|T1 Profit ₹|T2|T2%|T2 Profit ₹|Conf",
+    "TEST6": "PASS - All calculations correct: Investment=₹12,500 (250×50), T1%=28.00%, T1 Profit=₹3,500 ((320-250)×50), T2%=52.00%, T2 Profit=₹6,500",
+    "TEST7": "PASS - Deduplication: NIFTY15FEB26500CE in both top_trades and nifty_projection.assured_signals appears only once",
+    "TEST7b": "PASS - collectAllFnoSignals collects from top_trades + nifty_projection + banknifty_projection + stock_signals, sorted by confluence descending",
+    "TEST8": "PASS - CSV export triggers download: FnO_Signals_YYYY-MM-DD.csv",
+    "TEST9": "PASS - XLS export triggers download: FnO_Signals_YYYY-MM-DD.xlsx",
+    "TEST10": "PASS - JPG export triggers download: FnO_Signals_YYYY-MM-DD.jpg (html2canvas)",
+    "TEST11": "PASS - Sort order: NIFTY (conf=85) correctly appears first"
+  }
+}
