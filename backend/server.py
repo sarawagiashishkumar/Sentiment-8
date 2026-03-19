@@ -570,6 +570,7 @@ class CustomPositionResponse(BaseModel):
     realized_pnl: float | None = None
     projected_exit_price: float | None = None
     best_exit_price: float | None = None
+    best_exit_days: int | None = None
     recovery_potential: float | None = None
     minutes_to_expiry: int
     revised_exit_plan: str
@@ -4269,6 +4270,7 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
         realized_pnl=realized_pnl,
         projected_exit_price=position.get("projected_exit_price"),
         best_exit_price=position.get("best_exit_price"),
+        best_exit_days=position.get("best_exit_days"),
         recovery_potential=position.get("recovery_potential"),
         minutes_to_expiry=int(position.get("minutes_to_expiry", 0)),
         revised_exit_plan=position.get("revised_exit_plan", ""),
@@ -4344,6 +4346,18 @@ async def _refresh_open_position(position: dict) -> dict:
         max_recoverable_pct = 0.14
     recovery_potential = max(0.0, min(raw_recovery_potential, max_recoverable_pct))
     best_exit_price = None
+    best_exit_days: int | None = None
+
+    # Compute best_exit_days based on time remaining
+    days_to_expiry = minutes_to_expiry / (60 * 6.25)  # NSE trading day = 6.25 hrs
+    if days_to_expiry > 14:
+        best_exit_days = max(1, int(days_to_expiry * 0.6))
+    elif days_to_expiry > 7:
+        best_exit_days = max(1, int(days_to_expiry * 0.7))
+    elif days_to_expiry > 3:
+        best_exit_days = 2
+    else:
+        best_exit_days = 1
 
     alert = None
     revised_exit_plan = "Hold with trailing stop once target1 hits"
@@ -4376,6 +4390,7 @@ async def _refresh_open_position(position: dict) -> dict:
                 "alert": alert,
                 "projected_exit_price": projected_exit_price,
                 "best_exit_price": best_exit_price,
+                "best_exit_days": best_exit_days,
                 "recovery_potential": round(recovery_potential, 4),
                 "last_update": _utc_now_iso(),
                 "revised_exit_plan": revised_exit_plan,
@@ -5037,6 +5052,7 @@ async def create_custom_position(
         "target2": round(float(payload.buy_price) * 1.5, 2),
         "projected_exit_price": None,
         "best_exit_price": None,
+        "best_exit_days": None,
         "recovery_potential": None,
         "sold_price": None,
         "realized_pnl": None,

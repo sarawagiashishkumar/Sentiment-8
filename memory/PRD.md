@@ -1,72 +1,138 @@
-# PRD — Final Trading Dashboard (Structured Upgrade)
+# PRD — Trading Research Dashboard
 
-## Latest User Request Implemented
-A) Global text/hover visibility rules with separate heading/result color roles.
-B) Expanded dynamic “Profitable F&O Signals – Individual Stocks” universe (not hard-capped).
-C) New Portfolio Analysis module with:
-- File upload (.txt/.csv/.xls/.xlsx/.pdf/.jpg/.jpeg/.bmp)
-- Manual dynamic row entry (+/- rows)
-- Deep per-stock analysis output with horizons and recommendation/comments.
+## Original Problem Statement
+Build a minimalist full-stack stock analysis web app using FastAPI (Python) backend, React + Vite frontend, and MongoDB. The app provides F&O signal generation, portfolio analysis, multibagger screening, custom position tracking, and admin management.
 
-## What Was Built
-### 1) Text & Hover Visibility (Global)
-- Added distinct text roles:
-  - `headingTextColor` (fixed headings/labels)
-  - `resultTextColor` (dynamic values/numbers/scores)
-- Applied safe contrast rules across Multibagger, F&O, Portfolio, Admin.
-- Added explicit hover-safe text color for result rows/cards/tables to avoid invisible text.
+## Tech Stack
+- **Frontend:** React, Tailwind CSS, Shadcn/UI components
+- **Backend:** FastAPI (Python), MongoDB (Motor async driver)
+- **Auth:** JWT-based sessions with RBAC (owner/sub_admin/user)
+- **Data:** Kite Connect API v3 for live market data, yfinance for fundamental data
+- **Deployed:** Kubernetes container, supervisor-managed
 
-### 2) F&O Individual Stock Signals (Expanded & Dynamic)
-- Extended stock F&O universe to liquid names (10–20 set).
-- Stock-only opportunities now use the same confluence/risk/expiry-aware filters.
-- UI renders all qualifying stock signals returned by backend (no forced limit to 3).
+## Core User Personas
+- **Owner/Trader:** Technical Indian equity trader tracking F&O positions, screening multibaggers, analyzing portfolio
+- **Admin:** Manages user access, credits, Kite API connection
 
-### 3) Portfolio Analysis
-#### Backend
-- `POST /api/portfolio/analyze`
-  - Manual JSON input: `positions[{symbol, avg_price, quantity}]`
-- `POST /api/portfolio/analyze-upload`
-  - Upload parser for txt/csv/xls/xlsx/pdf/jpg/jpeg/bmp
-  - Flexible header alias detection for symbol/avg price/quantity
-  - OCR/PDF text heuristic extraction support where parser data is available
-- Deep per-stock output includes:
-  - live/fundamental fields
-  - position metrics (`pnl_pct`, `allocation_pct`)
-  - `value_flag`, `price_zone`, `momentum_proxy`, `quality_proxy`
-  - `expected_ranges` for 1W/1M/3M/6M/9M/1Y with GREEN/RED flags
-  - `recommendation`, `comments`
+---
 
-#### Frontend
-- New Portfolio page in persistent navigation and landing module.
-- Left: upload flow.
-- Right: manual dynamic table with + / - row controls and submit.
-- Results render per-stock cards + mini horizon table + recommendation/comments.
+## What's Been Implemented (as of Mar 2026)
 
-## Existing Capabilities Preserved
-- Username login with RBAC (owner/sub_admin/user)
-- Owner CRUD + sub-admin quotas
-- Admin credit exemption
-- Expiry-aware F&O logic and custom sticky projections in MongoDB
-- Top 4 Best Trade sticky panel
-- SEBI educational/personal testing disclaimers
+### Authentication & RBAC
+- Username-only login (no password), JWT sessions in memory
+- Owner/sub_admin/user role hierarchy
+- Credit system with per-user quota limits and admin exemptions
+- Owner bootstrap: `@shish123`
 
-## Validation Status
-- Regression via testing agent iteration_7: PASS
-- Backend tests executed by testing agent: 15 passed for requested scope
-- Frontend browser automation validated:
-  - F&O generate (dual panes + top4 + stock cards)
-  - Portfolio upload/manual flows
-  - hover contrast visibility
-- No API flow mocked
+### F&O Signal Generation
+- NIFTY/BANKNIFTY assured signals (index options)
+- Stock F&O signals for 20+ liquid NSE stocks
+- **Master Spec Confluence Scoring (0-100)** with:
+  - Real India VIX via yfinance (`^NSEINDVIX`, 5-min cache)
+  - Real PCR (Put-Call Ratio) computed from Kite option chain OI data
+  - ORB (Opening Range Breakout) strategy detection
+  - VWAP Reversion strategy detection
+  - Technical alignment, volume, breadth, GEX, fundamental quality
+- Multi-tier entry optimization ("SmartDipEntry") at predicted micro-dip
+- Dynamic targets (T1, T2) and stop-loss based on volatility + time-to-expiry
+- Minimum R:R ratio ≥ 1.2 enforced
+- **⭐BEST EXIT** shown in all F&O result cards (NIFTY, BANKNIFTY, Stocks, Top 4, Custom)
+- `trigger_factors` list with ORB/VWAP tags and market metadata
+- Expiry risk bucketing (SAFE/CAUTION/DANGER/EXPIRED)
 
-## Next Tasks (P0/P1/P2)
-### P0
-- Add robust OCR fallback package detection messaging for unsupported image/PDF environments.
-- Add file-level parse diagnostics (which rows parsed/skipped).
+### Custom F&O Sticky Cards
+- Create/track custom F&O positions (buy_price, lot_size, quantity_lots)
+- Live refresh with LTP, floating P/L, T1/T2 achievement, alert system
+- **Sell any OPEN position** (no T1/T2 requirement)
+- Realized P/L shown when sold (replaces floating P/L — no duplicate)
+- `best_exit_days` computed and stored in DB for "T+N @ ₹X" display
+- BEST EXIT display on each card
 
-### P1
-- Add downloadable portfolio analysis report (CSV/PDF).
-- Add per-horizon confidence score visualization.
+### Portfolio Analysis
+- Manual entry or file upload (.txt/.csv/.xls/.xlsx/.pdf/.jpg)
+- Per-stock analysis: LTP, P/L, value_flag, price_zone, momentum/quality proxy
+- Horizon analysis: 1W/1M/3M/6M/9M/1Y
+- **Max Low (Downside)** column showing `min_expected_price` for each horizon
+- Recommendation + comments with risk flags
 
-### P2
-- Split large `server.py` into modules (`auth`, `fno`, `portfolio`, `admin`, `parsers`) for maintainability.
+### Multibagger Screener
+- 200+ stock universe screened with 8-tier scoring
+- **Real fundamental data via yfinance** (24h MongoDB cache):
+  - ROE, ROCE, EPS growth
+  - **Piotroski F-score (0-9)** from financial statements
+  - **Beneish M-score** for earnings manipulation detection
+  - Debt/Equity, Current Ratio, Gross Margin
+- **Detailed thesis** with score breakdown, tier pass list, per-metric commentary
+- **Fundamentals row** in table showing ROE/ROCE/Piotroski/Beneish color-coded
+- Hover effect on all rows (lighter bg)
+- GTT buy price, upside targets by horizon, PEG proxy
+
+### UI/UX
+- Dark theme with cyan/emerald/rose accent palette
+- **DayChange** and **BiasScore** shown as separate colored badges (not combined)
+- Portfolio: Max Low (Downside) column with rose-colored values
+- Multibagger: fundamentals row + detailed pipe-separated thesis
+- White/light bg hover effect on Portfolio and Multibagger blocks
+- Connect Kite button with status indicator in Admin panel
+
+### Admin Panel
+- User management (create/edit/delete sub_admin and user accounts)
+- Credit management with per-user quota
+- **Connect Kite** section with live status indicator
+- System meta display
+
+---
+
+## Key API Endpoints
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/auth/access` | POST | Login with username |
+| `/api/fno/generate` | GET | Generate all F&O signals |
+| `/api/fno/custom-position` | POST | Create custom position |
+| `/api/fno/custom-position/{id}/sell` | POST | Sell (any OPEN position) |
+| `/api/portfolio/analyze` | POST | Analyze portfolio positions |
+| `/api/multibagger/candidates` | GET | Multibagger screener |
+| `/api/kite/auth-url` | GET | Kite OAuth URL |
+| `/api/admin/kite/status` | GET | Kite connection status |
+
+---
+
+## DB Collections
+- `app_users`: user accounts with RBAC
+- `custom_positions`: F&O sticky cards
+- `system_meta`: Kite session, config
+- `fundamental_cache`: yfinance fundamentals (24h TTL)
+
+---
+
+## Known Limitations / Blockers
+- **Kite Historical API (403):** `kiteconnect.historical_data` blocked — requires higher subscription plan. ORB/VWAP logic uses proxy calculations instead.
+- **yfinance speed:** First multibagger run is slow (~60s for 200 stocks). Subsequent runs use 24h cache.
+- **Kite OAuth:** Must be refreshed daily via `/api/kite/auth-url`. F&O signals fall back to limited data when not connected.
+
+---
+
+## P0/P1/P2 Backlog
+### P0 (Done)
+- [x] can_sell without T1/T2 restriction
+- [x] min_expected_price in portfolio (Max Low column)
+- [x] DayChange/BiasScore separate badges
+- [x] Detailed multibagger thesis
+- [x] Piotroski + Beneish + ROE + ROCE in multibagger
+- [x] Real PCR from option chain OI
+- [x] India VIX from yfinance
+- [x] ORB/VWAP strategy classification
+- [x] BEST EXIT in all F&O cards + custom cards with best_exit_days
+
+### P1 (Upcoming)
+- [ ] Historical API workaround (use cached 5-min data from Kite quotes)
+- [ ] Better VWAP calculation (accumulate intraday price points in cache)
+- [ ] Kite SSO for portfolio holdings sync
+
+### P2 (Backlog)
+- [ ] Codebase refactor: split server.py → routes/, models/, services/
+- [ ] Codebase refactor: split App.js → pages/ with lazy loading
+- [ ] Mobile app / PWA
+- [ ] Real-time WebSocket for live P/L updates
+- [ ] Backtesting module for signals
+- [ ] Email/SMS alerts for target hits
