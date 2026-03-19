@@ -345,6 +345,8 @@ class FNOSignalResponse(BaseModel):
     underlying_ltp: float
     underlying_day_high: float | None = None
     underlying_day_low: float | None = None
+    underlying_day_change_pct: float | None = None
+    underlying_bias_score: float | None = None
     option_ltp: float
     option_day_high: float | None = None
     option_day_low: float | None = None
@@ -359,6 +361,9 @@ class FNOSignalResponse(BaseModel):
     target2: float
     risk_reward_target1: float
     risk_reward_target2: float
+    max_ltp_projection: float | None = None
+    best_exit_days: int | None = None
+    best_exit_price: float | None = None
     trigger_factors: List[str]
     confluence_score: int
     signal_quality: Literal["HIGH", "MEDIUM", "LOW"]
@@ -2781,6 +2786,29 @@ async def build_fno_signal(
         min_target2_needed = entry_price + (1.2 * risk)
         target2 = round(max(target2, min_target2_needed), 2)
         risk_reward_target2 = round((target2 - entry_price) / risk, 2)
+    
+    days_to_expiry = max(minutes_to_expiry / (60 * 24), 0.1)
+    
+    if days_to_expiry >= 5:
+        best_exit_days = min(int(days_to_expiry * 0.6), 10)
+        max_ltp_multiplier = 1.4
+    elif days_to_expiry >= 3:
+        best_exit_days = min(int(days_to_expiry * 0.7), 5)
+        max_ltp_multiplier = 1.25
+    elif days_to_expiry >= 1:
+        best_exit_days = 1
+        max_ltp_multiplier = 1.15
+    else:
+        best_exit_days = 0
+        max_ltp_multiplier = 1.05
+    
+    max_ltp_projection = round(entry_price * max_ltp_multiplier, 2)
+    max_ltp_projection = min(max_ltp_projection, target2)
+    best_exit_price = max_ltp_projection
+    
+    underlying_day_change_pct = None
+    if stock_core.prev_close and stock_core.prev_close > 0:
+        underlying_day_change_pct = round(((stock_core.ltp - stock_core.prev_close) / stock_core.prev_close) * 100, 2)
 
     entry_discount_pct = ((option_ltp - entry_price) / option_ltp) * 100 if option_ltp > entry_price else 0.5
     
@@ -2828,6 +2856,8 @@ async def build_fno_signal(
         underlying_ltp=round(underlying_ltp, 2),
         underlying_day_high=round(stock_core.high, 2) if stock_core.high is not None else None,
         underlying_day_low=round(stock_core.low, 2) if stock_core.low is not None else None,
+        underlying_day_change_pct=underlying_day_change_pct,
+        underlying_bias_score=round(bias_score, 2),
         option_ltp=round(option_ltp, 2),
         option_day_high=round(option_day_high, 2) if option_day_high is not None else None,
         option_day_low=round(option_day_low, 2) if option_day_low is not None else None,
@@ -2846,6 +2876,9 @@ async def build_fno_signal(
         target2=target2,
         risk_reward_target1=risk_reward_target1,
         risk_reward_target2=risk_reward_target2,
+        max_ltp_projection=max_ltp_projection,
+        best_exit_days=best_exit_days,
+        best_exit_price=best_exit_price,
         trigger_factors=trigger_factors,
         confluence_score=confluence_score,
         signal_quality=signal_quality,
