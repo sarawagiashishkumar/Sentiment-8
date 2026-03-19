@@ -137,6 +137,14 @@ API_CONTROL_CACHE_TS: datetime | None = None
 STOCK_CORE_CACHE: dict[str, dict] = {}
 STOCK_CORE_CACHE_TTL_SECONDS = 20
 
+# India VIX cache (5-minute TTL)
+INDIA_VIX_CACHE: dict = {}
+INDIA_VIX_CACHE_TTL_SECONDS = 300
+
+# Fundamental data in-memory cache (24h TTL)  
+FUNDAMENTAL_CACHE: dict[str, dict] = {}
+FUNDAMENTAL_CACHE_TTL_SECONDS = 86400
+
 SYMBOL_HEADERS = {
     "symbol",
     "tradingsymbol",
@@ -321,6 +329,40 @@ class MultibaggerCandidate(BaseModel):
     targeted_upside_profit_pct: dict
     thesis: str
     analysis_refreshed_at: str
+    # Fundamental data fields
+    roe: float | None = None
+    roce: float | None = None
+    piotroski_score: int | None = None
+    beneish_m_score: float | None = None
+    eps_growth_pct: float | None = None
+    debt_to_equity: float | None = None
+    current_ratio: float | None = None
+    gross_margin: float | None = None
+
+    from pydantic import model_validator
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sanitize_nan_floats(cls, values):
+        import math
+        _float_fields = {
+            "ltp", "market_cap_cr", "pe_ratio", "year_high", "year_low",
+            "upside_to_52w_high_pct", "pb_ratio_est", "peg_ratio_est",
+            "current_rsi_level", "gtt_buy_price",
+            "roe", "roce", "beneish_m_score", "eps_growth_pct",
+            "debt_to_equity", "current_ratio", "gross_margin",
+        }
+        if isinstance(values, dict):
+            for field in _float_fields:
+                v = values.get(field)
+                if v is not None:
+                    try:
+                        f = float(v)
+                        if math.isnan(f) or math.isinf(f):
+                            values[field] = None
+                    except (TypeError, ValueError):
+                        values[field] = None
+        return values
 
 
 class FNOContract(BaseModel):
@@ -450,6 +492,7 @@ class PortfolioHorizonRange(BaseModel):
 
 class PortfolioExpectedSignal(BaseModel):
     max_expected_price: float
+    min_expected_price: float | None = None
     amount_signal: str
     percent_signal: str
     direction: Literal["PROFIT", "LOSS"]
@@ -545,6 +588,20 @@ class ScriptSearchResult(BaseModel):
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def _sanitize_float(value) -> float | None:
+    """Return None if value is NaN, Infinity or not a valid finite float."""
+    import math
+    if value is None:
+        return None
+    try:
+        f = float(value)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
 
 
 def _utc_now_iso() -> str:
@@ -1254,6 +1311,8 @@ async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dic
                     "ltp": float(ltp),
                     "day_high": _to_float(ohlc.get("high")),
                     "day_low": _to_float(ohlc.get("low")),
+                    "oi": _to_float(row.get("oi")),
+                    "volume": _to_float(row.get("volume")),
                 }
             return rows
         except Exception:
@@ -1576,12 +1635,14 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         expected_signals: dict[str, PortfolioExpectedSignal] = {}
         for horizon, hr in expected_ranges.items():
             max_expected_price = round(stock.ltp * (1 + (hr.upside_pct / 100)), 2)
+            min_expected_price = round(stock.ltp * (1 + (hr.downside_pct / 100)), 2)
             delta_amount = max_expected_price - row["avg_price"]
             delta_pct = (delta_amount / row["avg_price"]) * 100 if row["avg_price"] > 0 else 0.0
             amount_signal = f"{delta_amount:+.2f}"
             percent_signal = f"{delta_pct:+.2f}%"
             expected_signals[horizon] = PortfolioExpectedSignal(
                 max_expected_price=max_expected_price,
+                min_expected_price=min_expected_price,
                 amount_signal=amount_signal,
                 percent_signal=percent_signal,
                 direction="PROFIT" if delta_amount >= 0 else "LOSS",
@@ -2216,7 +2277,410 @@ async def get_owner_user(current_user: dict = Depends(get_current_user)) -> dict
     return current_user
 
 
-def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
+# ─── India VIX ────────────────────────────────────────────────────────────────
+
+async def _get_india_vix() -> float | None:
+    """Fetch India VIX via yfinance with 5-minute cache."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+    cached = INDIA_VIX_CACHE.get("value")
+    cached_ts = INDIA_VIX_CACHE.get("ts", 0.0)
+    if cached is not None and (now_ts - cached_ts) < INDIA_VIX_CACHE_TTL_SECONDS:
+        return float(cached)
+
+    def _fetch_vix() -> float | None:
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker("^NSEINDVIX")
+            hist = ticker.history(period="1d")
+            if hist is not None and not hist.empty:
+                return float(hist["Close"].iloc[-1])
+            info = ticker.info or {}
+            val = info.get("regularMarketPrice") or info.get("previousClose")
+            return float(val) if val else None
+        except Exception as exc:
+            logger.warning("India VIX fetch failed: %s", exc)
+            return None
+
+    try:
+        vix = await asyncio.wait_for(asyncio.to_thread(_fetch_vix), timeout=8.0)
+    except Exception:
+        vix = None
+
+    if vix is not None:
+        INDIA_VIX_CACHE["value"] = vix
+        INDIA_VIX_CACHE["ts"] = now_ts
+    return vix
+
+
+# ─── yfinance Fundamental Data ────────────────────────────────────────────────
+
+def _compute_piotroski_score_from_data(info: dict, fin: object, bs: object, cf: object) -> int:
+    """
+    Compute simplified Piotroski F-score (0-9) from yfinance data.
+    Returns integer score. Higher = better quality.
+    """
+    import pandas as pd
+    score = 0
+    try:
+        # 1. ROA > 0
+        roa = info.get("returnOnAssets")
+        if roa is not None and float(roa) > 0:
+            score += 1
+
+        # 2. Operating cash flow > 0
+        if cf is not None and not cf.empty:
+            ocf_row = None
+            for lbl in ["Operating Cash Flow", "Total Cash From Operating Activities", "Cash From Operations"]:
+                if lbl in cf.index:
+                    ocf_row = cf.loc[lbl]
+                    break
+            if ocf_row is not None and len(ocf_row) > 0:
+                if float(ocf_row.iloc[0]) > 0:
+                    score += 1
+
+        # 3. ROA change YoY > 0
+        if bs is not None and not bs.empty and fin is not None and not fin.empty:
+            net_income_row = None
+            total_assets_row = None
+            for lbl in ["Net Income", "Net Income Applicable To Common Shares", "Net Income From Continuing Ops"]:
+                if lbl in fin.index:
+                    net_income_row = fin.loc[lbl]
+                    break
+            for lbl in ["Total Assets"]:
+                if lbl in bs.index:
+                    total_assets_row = bs.loc[lbl]
+                    break
+            if net_income_row is not None and total_assets_row is not None and len(net_income_row) >= 2:
+                ta_0 = float(total_assets_row.iloc[0]) if len(total_assets_row) > 0 else 1
+                ta_1 = float(total_assets_row.iloc[1]) if len(total_assets_row) > 1 else ta_0
+                roa_0 = float(net_income_row.iloc[0]) / max(ta_0, 1)
+                roa_1 = float(net_income_row.iloc[1]) / max(ta_1, 1)
+                if roa_0 > roa_1:
+                    score += 1
+
+        # 4. Cash flow > ROA (accruals)
+        if cf is not None and not cf.empty and bs is not None and not bs.empty:
+            ocf_row = None
+            total_assets_row = None
+            net_income_row = None
+            for lbl in ["Operating Cash Flow", "Total Cash From Operating Activities"]:
+                if lbl in cf.index:
+                    ocf_row = cf.loc[lbl]
+                    break
+            for lbl in ["Total Assets"]:
+                if lbl in bs.index:
+                    total_assets_row = bs.loc[lbl]
+                    break
+            for lbl in ["Net Income", "Net Income Applicable To Common Shares"]:
+                if lbl in fin.index:
+                    net_income_row = fin.loc[lbl]
+                    break
+            if ocf_row is not None and total_assets_row is not None and net_income_row is not None:
+                ta = float(total_assets_row.iloc[0]) if len(total_assets_row) > 0 else 1
+                ocf = float(ocf_row.iloc[0]) if len(ocf_row) > 0 else 0
+                ni = float(net_income_row.iloc[0]) if len(net_income_row) > 0 else 0
+                if (ocf / max(ta, 1)) > (ni / max(ta, 1)):
+                    score += 1
+
+        # 5. Leverage decrease (long-term debt)
+        if bs is not None and not bs.empty:
+            ltd_row = None
+            ta_row = None
+            for lbl in ["Long Term Debt", "LongTermDebt", "Long-Term Debt"]:
+                if lbl in bs.index:
+                    ltd_row = bs.loc[lbl]
+                    break
+            for lbl in ["Total Assets"]:
+                if lbl in bs.index:
+                    ta_row = bs.loc[lbl]
+                    break
+            if ltd_row is not None and ta_row is not None and len(ltd_row) >= 2:
+                lev_0 = float(ltd_row.iloc[0]) / max(float(ta_row.iloc[0]), 1)
+                lev_1 = float(ltd_row.iloc[1]) / max(float(ta_row.iloc[1]) if len(ta_row) > 1 else float(ta_row.iloc[0]), 1)
+                if lev_0 < lev_1:
+                    score += 1
+
+        # 6. Current ratio improvement
+        cr = info.get("currentRatio")
+        if cr is not None and float(cr) > 1.0:
+            score += 1
+
+        # 7. No new shares issued (proxy: shares outstanding not increased)
+        shares = info.get("sharesOutstanding")
+        float_shares = info.get("floatShares")
+        if shares and float_shares and float(float_shares) <= float(shares) * 1.02:
+            score += 1
+
+        # 8. Gross margin > 0
+        gm = info.get("grossMargins")
+        if gm is not None and float(gm) > 0:
+            score += 1
+
+        # 9. Asset turnover: proxy via revenue / total assets
+        if fin is not None and not fin.empty and bs is not None and not bs.empty:
+            rev_row = None
+            ta_row = None
+            for lbl in ["Total Revenue", "Revenue"]:
+                if lbl in fin.index:
+                    rev_row = fin.loc[lbl]
+                    break
+            for lbl in ["Total Assets"]:
+                if lbl in bs.index:
+                    ta_row = bs.loc[lbl]
+                    break
+            if rev_row is not None and ta_row is not None and len(rev_row) >= 2:
+                at_0 = float(rev_row.iloc[0]) / max(float(ta_row.iloc[0]), 1)
+                at_1 = float(rev_row.iloc[1]) / max(float(ta_row.iloc[1]) if len(ta_row) > 1 else float(ta_row.iloc[0]), 1)
+                if at_0 > at_1:
+                    score += 1
+    except Exception as exc:
+        logger.debug("Piotroski score error: %s", exc)
+    return score
+
+
+def _compute_beneish_m_score_from_data(fin: object, bs: object) -> float | None:
+    """
+    Compute simplified Beneish M-score from yfinance data.
+    M-score > -2.22 suggests potential earnings manipulation.
+    """
+    try:
+        if fin is None or bs is None or fin.empty or bs.empty:
+            return None
+        if len(fin.columns) < 2:
+            return None
+
+        def _get(df, labels):
+            import math
+            for lbl in labels:
+                if lbl in df.index:
+                    row = df.loc[lbl]
+                    v0_raw = float(row.iloc[0]) if len(row) > 0 else 0
+                    v1_raw = float(row.iloc[1]) if len(row) > 1 else v0_raw
+                    # Sanitize NaN/Inf from pandas
+                    v0 = 0.0 if (math.isnan(v0_raw) or math.isinf(v0_raw)) else v0_raw
+                    v1 = 0.0 if (math.isnan(v1_raw) or math.isinf(v1_raw)) else v1_raw
+                    return v0, v1
+            return None, None
+
+        rev_0, rev_1 = _get(fin, ["Total Revenue", "Revenue"])
+        cogs_0, cogs_1 = _get(fin, ["Cost Of Revenue", "Cost of Goods Sold", "Cost Of Goods Sold"])
+        ni_0, ni_1 = _get(fin, ["Net Income", "Net Income Applicable To Common Shares"])
+        sga_0, sga_1 = _get(fin, ["Selling General Administrative", "Selling General And Administration"])
+        ta_0, ta_1 = _get(bs, ["Total Assets"])
+        ca_0, ca_1 = _get(bs, ["Total Current Assets", "Current Assets"])
+        cl_0, cl_1 = _get(bs, ["Total Current Liabilities", "Current Liabilities"])
+        ar_0, ar_1 = _get(bs, ["Net Receivables", "Accounts Receivable"])
+        ppe_0, ppe_1 = _get(bs, ["Net PPE", "Property Plant Equipment Net", "Property Plant And Equipment Net"])
+        dep_0, dep_1 = _get(fin, ["Depreciation", "Depreciation And Amortization"])
+        ltd_0, ltd_1 = _get(bs, ["Long Term Debt"])
+
+        if not all([rev_0, rev_1, ta_0, ta_1]):
+            return None
+
+        # DSRI: Days Sales Receivable Index
+        ar_0 = ar_0 or 0
+        ar_1 = ar_1 or 0
+        dsri = (ar_0 / max(rev_0, 1)) / max(ar_1 / max(rev_1, 1), 0.001) if rev_1 and ar_1 else 1.0
+
+        # GMI: Gross Margin Index
+        gm_0 = (rev_0 - (cogs_0 or 0)) / max(rev_0, 1)
+        gm_1 = (rev_1 - (cogs_1 or 0)) / max(rev_1, 1)
+        gmi = gm_1 / max(gm_0, 0.001) if gm_0 else 1.0
+
+        # AQI: Asset Quality Index
+        ca_0 = ca_0 or ta_0 * 0.3
+        ca_1 = ca_1 or ta_1 * 0.3
+        ppe_0 = ppe_0 or ta_0 * 0.3
+        ppe_1 = ppe_1 or ta_1 * 0.3
+        aq_0 = 1 - (ca_0 + ppe_0) / max(ta_0, 1)
+        aq_1 = 1 - (ca_1 + ppe_1) / max(ta_1, 1)
+        aqi = aq_0 / max(aq_1, 0.001)
+
+        # SGI: Sales Growth Index
+        sgi = rev_0 / max(rev_1, 1)
+
+        # DEPI: Depreciation Index
+        dep_0 = dep_0 or 0
+        dep_1 = dep_1 or 0
+        depi_0 = dep_0 / max(dep_0 + ppe_0, 1)
+        depi_1 = dep_1 / max(dep_1 + ppe_1, 1)
+        depi = depi_1 / max(depi_0, 0.001) if depi_0 else 1.0
+
+        # SGAI: SGA Index
+        sga_0 = sga_0 or rev_0 * 0.1
+        sga_1 = sga_1 or rev_1 * 0.1
+        sgai_0 = sga_0 / max(rev_0, 1)
+        sgai_1 = sga_1 / max(rev_1, 1)
+        sgai = sgai_0 / max(sgai_1, 0.001)
+
+        # LVGI: Leverage Index
+        ltd_0 = ltd_0 or 0
+        ltd_1 = ltd_1 or 0
+        cl_0 = cl_0 or ta_0 * 0.2
+        cl_1 = cl_1 or ta_1 * 0.2
+        lev_0 = (ltd_0 + cl_0) / max(ta_0, 1)
+        lev_1 = (ltd_1 + cl_1) / max(ta_1, 1)
+        lvgi = lev_0 / max(lev_1, 0.001)
+
+        # TATA: Total Accruals to Total Assets (proxy)
+        ni_0 = ni_0 or 0
+        tata = (ni_0 - (dep_0 or 0)) / max(ta_0, 1)
+
+        m_score = (
+            -4.84
+            + 0.92 * dsri
+            + 0.528 * gmi
+            + 0.404 * aqi
+            + 0.892 * sgi
+            + 0.115 * depi
+            - 0.172 * sgai
+            + 4.679 * tata
+            - 0.327 * lvgi
+        )
+        result = round(float(m_score), 3)
+        import math
+        if math.isnan(result) or math.isinf(result):
+            return None
+        return result
+    except Exception as exc:
+        logger.debug("Beneish M-score error: %s", exc)
+        return None
+
+
+def _fetch_yfinance_fundamentals(symbol: str) -> dict:
+    """Synchronous yfinance fetch (run in async thread)."""
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(f"{symbol}.NS")
+        info = ticker.info or {}
+
+        roe = info.get("returnOnEquity")
+        if roe is not None:
+            roe = _sanitize_float(round(float(roe) * 100, 2))
+
+        # ROCE = EBIT / Capital Employed
+        roce = None
+        try:
+            fin = ticker.financials
+            bs = ticker.balance_sheet
+            cf = ticker.cashflow
+            if fin is not None and bs is not None and not fin.empty and not bs.empty:
+                ebit = None
+                ta = None
+                cl = None
+                for lbl in ["Operating Income", "EBIT", "Ebit"]:
+                    if lbl in fin.index:
+                        ebit = float(fin.loc[lbl].iloc[0])
+                        break
+                for lbl in ["Total Assets"]:
+                    if lbl in bs.index:
+                        ta = float(bs.loc[lbl].iloc[0])
+                        break
+                for lbl in ["Total Current Liabilities", "Current Liabilities"]:
+                    if lbl in bs.index:
+                        cl = float(bs.loc[lbl].iloc[0])
+                        break
+                if ebit is not None and ta is not None and cl is not None:
+                    cap_emp = ta - cl
+                    if cap_emp > 0:
+                        roce = round((ebit / cap_emp) * 100, 2)
+        except Exception:
+            fin, bs, cf = None, None, None
+
+        eps_growth = None
+        try:
+            trailing_eps = info.get("trailingEps")
+            forward_eps = info.get("forwardEps")
+            if trailing_eps and forward_eps and float(trailing_eps) > 0:
+                eps_growth = round(((float(forward_eps) - float(trailing_eps)) / abs(float(trailing_eps))) * 100, 2)
+        except Exception:
+            pass
+
+        piotroski = None
+        beneish = None
+        try:
+            if fin is not None and bs is not None and not fin.empty and not bs.empty:
+                piotroski = _compute_piotroski_score_from_data(info, fin, bs, cf)
+                beneish = _compute_beneish_m_score_from_data(fin, bs)
+        except Exception:
+            pass
+
+        gross_margin = info.get("grossMargins")
+        if gross_margin is not None:
+            gross_margin = _sanitize_float(round(float(gross_margin) * 100, 2))
+
+        return {
+            "roe": _sanitize_float(roe),
+            "roce": _sanitize_float(roce),
+            "piotroski_score": piotroski,
+            "beneish_m_score": _sanitize_float(beneish),
+            "eps_growth_pct": _sanitize_float(eps_growth),
+            "gross_margin": _sanitize_float(gross_margin),
+            "debt_to_equity": _sanitize_float(info.get("debtToEquity")),
+            "current_ratio": _sanitize_float(info.get("currentRatio")),
+        }
+    except Exception as exc:
+        logger.warning("yfinance fetch failed for %s: %s", symbol, exc)
+        return {}
+
+
+async def _get_fundamental_data(symbol: str) -> dict:
+    """Fetch fundamental data via yfinance with MongoDB + in-memory cache (24h TTL)."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    # In-memory cache
+    if symbol in FUNDAMENTAL_CACHE:
+        cached = FUNDAMENTAL_CACHE[symbol]
+        if (now_ts - cached.get("_ts", 0)) < FUNDAMENTAL_CACHE_TTL_SECONDS:
+            return cached
+
+    # MongoDB cache
+    try:
+        cached_doc = await db.fundamental_cache.find_one({"symbol": symbol}, {"_id": 0})
+        if cached_doc:
+            cached_at = cached_doc.get("cached_at_ts", 0)
+            if (now_ts - float(cached_at or 0)) < FUNDAMENTAL_CACHE_TTL_SECONDS:
+                cached_doc["_ts"] = float(cached_at or now_ts)
+                FUNDAMENTAL_CACHE[symbol] = cached_doc
+                return cached_doc
+    except Exception:
+        pass
+
+    # Fetch from yfinance
+    try:
+        data = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_fundamentals, symbol), timeout=15.0)
+    except Exception:
+        data = {}
+
+    result = {
+        "symbol": symbol,
+        "roe": data.get("roe"),
+        "roce": data.get("roce"),
+        "piotroski_score": data.get("piotroski_score"),
+        "beneish_m_score": data.get("beneish_m_score"),
+        "eps_growth_pct": data.get("eps_growth_pct"),
+        "gross_margin": data.get("gross_margin"),
+        "debt_to_equity": data.get("debt_to_equity"),
+        "current_ratio": data.get("current_ratio"),
+        "cached_at_ts": now_ts,
+        "_ts": now_ts,
+    }
+
+    try:
+        store_doc = {k: v for k, v in result.items() if k != "_ts"}
+        await db.fundamental_cache.update_one(
+            {"symbol": symbol},
+            {"$set": store_doc},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+    FUNDAMENTAL_CACHE[symbol] = result
+    return result
+
+
+def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict | None = None) -> dict:
     ltp = stock.ltp
     market_cap = stock.market_cap
     pe = stock.pe_ratio
@@ -2382,17 +2846,106 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         targeted_upside_profit_pct[key] = roi_pct
 
     thesis_parts = []
+
+    # Score summary
     if final_score >= 80:
-        thesis_parts.append("Strong 8-tier score with favorable valuation/technical mix")
+        thesis_parts.append(f"Strong multibagger profile (Score: {final_score}/100, {tier_pass_count}/7 tiers passed)")
     elif final_score >= 70:
-        thesis_parts.append("Balanced quality-growth setup with acceptable risk")
+        thesis_parts.append(f"Balanced quality-growth setup (Score: {final_score}/100, {tier_pass_count}/7 tiers passed)")
     else:
-        thesis_parts.append("Needs further confirmation on quality/valuation factors")
-    if upside_to_52w_high_pct is not None:
+        thesis_parts.append(f"Developing setup needing confirmation (Score: {final_score}/100, {tier_pass_count}/7 tiers passed)")
+
+    # Valuation
+    if pe is not None and ltp is not None:
+        if pe < 15:
+            thesis_parts.append(f"Attractively valued at P/E {round(pe, 1)}x (undervalued territory)")
+        elif pe < 25:
+            thesis_parts.append(f"Fairly valued at P/E {round(pe, 1)}x")
+        else:
+            thesis_parts.append(f"Premium P/E {round(pe, 1)}x — growth premium required")
+
+    if pb_ratio_est is not None:
+        if pb_ratio_est < 2.0:
+            thesis_parts.append(f"Trades at P/B {round(pb_ratio_est, 2)}x — below book, possible margin-of-safety")
+        else:
+            thesis_parts.append(f"P/B {round(pb_ratio_est, 2)}x")
+
+    # Upside
+    if upside_to_52w_high_pct is not None and upside_to_52w_high_pct > 0:
         thesis_parts.append(f"Potential upside to 52W high: {round(upside_to_52w_high_pct, 1)}%")
+
+    # Fundamental overlays
+    if fundamental:
+        roe_val = fundamental.get("roe")
+        roce_val = fundamental.get("roce")
+        piotroski = fundamental.get("piotroski_score")
+        beneish = fundamental.get("beneish_m_score")
+        eps_g = fundamental.get("eps_growth_pct")
+        de = fundamental.get("debt_to_equity")
+
+        if roe_val is not None:
+            if roe_val >= 20:
+                thesis_parts.append(f"High ROE {roe_val}% — efficient capital use")
+            elif roe_val >= 12:
+                thesis_parts.append(f"Adequate ROE {roe_val}%")
+            else:
+                thesis_parts.append(f"Low ROE {roe_val}% — profitability concern")
+
+        if roce_val is not None:
+            if roce_val >= 15:
+                thesis_parts.append(f"Strong ROCE {roce_val}%")
+            else:
+                thesis_parts.append(f"ROCE {roce_val}%")
+
+        if piotroski is not None:
+            if piotroski >= 7:
+                thesis_parts.append(f"Piotroski F-Score {piotroski}/9 — high quality financials")
+            elif piotroski >= 5:
+                thesis_parts.append(f"Piotroski F-Score {piotroski}/9 — decent quality")
+            else:
+                thesis_parts.append(f"Piotroski F-Score {piotroski}/9 — review financials carefully")
+
+        if beneish is not None:
+            if beneish > -2.22:
+                thesis_parts.append(f"Beneish M-Score {beneish} — potential earnings manipulation risk")
+            else:
+                thesis_parts.append(f"Beneish M-Score {beneish} — clean earnings quality")
+
+        if eps_g is not None:
+            thesis_parts.append(f"Expected EPS growth: {eps_g}%")
+
+        if de is not None:
+            if de < 0.5:
+                thesis_parts.append(f"Low leverage (D/E {round(de, 2)}) — strong balance sheet")
+            elif de < 1.5:
+                thesis_parts.append(f"Moderate leverage (D/E {round(de, 2)})")
+            else:
+                thesis_parts.append(f"High leverage (D/E {round(de, 2)}) — watch debt servicing")
+
+    # Tier breakdown
+    passed_tiers = [k for k, threshold in tier_thresholds.items() if tier_scores.get(k, 0) >= threshold]
+    if passed_tiers:
+        tier_labels = {
+            "tier_1": "Valuation", "tier_2": "Profitability", "tier_3": "Growth",
+            "tier_4": "Balance Sheet", "tier_5": "Momentum", "tier_6": "Sector Tailwind", "tier_7": "Technical",
+        }
+        passed_names = [tier_labels.get(t, t) for t in passed_tiers]
+        thesis_parts.append(f"Passing tiers: {', '.join(passed_names)}")
+
     if peg_ratio_est is not None:
         thesis_parts.append(f"PEG proxy: {round(peg_ratio_est, 2)}")
+
     thesis = " | ".join(thesis_parts)
+
+    # Extract fundamental fields for direct model return
+    roe_ret = fundamental.get("roe") if fundamental else None
+    roce_ret = fundamental.get("roce") if fundamental else None
+    piotroski_ret = fundamental.get("piotroski_score") if fundamental else None
+    beneish_ret = fundamental.get("beneish_m_score") if fundamental else None
+    eps_growth_ret = fundamental.get("eps_growth_pct") if fundamental else None
+    de_ret = fundamental.get("debt_to_equity") if fundamental else None
+    cr_ret = fundamental.get("current_ratio") if fundamental else None
+    gm_ret = fundamental.get("gross_margin") if fundamental else None
 
     return {
         "multibagger_score": final_score,
@@ -2406,6 +2959,14 @@ def compute_multibagger_analysis(stock: StockCoreNormalized) -> dict:
         "targeted_upside_price": targeted_upside_price,
         "targeted_upside_profit_pct": targeted_upside_profit_pct,
         "thesis": thesis,
+        "roe": roe_ret,
+        "roce": roce_ret,
+        "piotroski_score": piotroski_ret,
+        "beneish_m_score": beneish_ret,
+        "eps_growth_pct": eps_growth_ret,
+        "debt_to_equity": de_ret,
+        "current_ratio": cr_ret,
+        "gross_margin": gm_ret,
     }
 
 
@@ -2419,20 +2980,21 @@ def _calculate_confluence_score_master_spec(
     entry_discount_pct: float,
     option_day_high: float | None,
     option_day_low: float | None,
+    india_vix: float | None = None,
+    pcr: float | None = None,
+    strategy: str | None = None,
 ) -> tuple[int, str]:
     """
-    Enhanced Master Spec Confluence Scoring with proxies (0-100):
+    Master Spec Confluence Scoring (0-100):
     - TechnicalAlignmentScore (0-30): Bias, direction, R:R, position
     - VolumeScore (0-20): Volume vs average, volume trend
     - BreadthScore (0-10): 52W position, price action
-    - PCRScore (0-10): Entry discount proxy, option positioning
-    - VIXScore (0-10): Intraday volatility, ATR proxy
+    - PCRScore (0-10): Real PCR if available, else entry-discount proxy
+    - VIXScore (0-10): Real India VIX if available, else option volatility proxy
     - GEXScore (0-10): Option price level, liquidity
     - FundamentalQualityScore (0-10): Screener metrics proxy
-    
-    Returns: (confluence_score, conviction_level)
+    - StrategyBonus (0-5): Extra credit for ORB/VWAP alignment
     """
-    
     technical_score = 0
     volume_score = 0
     breadth_score = 0
@@ -2440,17 +3002,19 @@ def _calculate_confluence_score_master_spec(
     vix_score = 5
     gex_score = 5
     fundamental_score = 0
-    
+    strategy_bonus = 0
+
+    # ── Technical Alignment ──────────────────────────────────────────────────
     if abs(bias_score) > 2.0:
         technical_score += 12
     elif abs(bias_score) > 1.0:
         technical_score += 8
     elif abs(bias_score) > 0.3:
         technical_score += 4
-    
+
     if direction != "NEUTRAL":
         technical_score += 10
-    
+
     if risk_reward_target2 >= 2.5:
         technical_score += 8
     elif risk_reward_target2 >= 2.0:
@@ -2459,14 +3023,14 @@ def _calculate_confluence_score_master_spec(
         technical_score += 4
     elif risk_reward_target2 >= 1.2:
         technical_score += 2
-    
+
     technical_score = min(technical_score, 30)
-    
+
+    # ── Volume Score ─────────────────────────────────────────────────────────
     if stock_core.volume is not None and stock_core.volume > 0:
         volume_ratio = 1.0
         if hasattr(stock_core, 'avg_volume') and stock_core.avg_volume and stock_core.avg_volume > 0:
             volume_ratio = stock_core.volume / stock_core.avg_volume
-        
         if volume_ratio >= 3.0:
             volume_score = 20
         elif volume_ratio >= 2.0:
@@ -2483,14 +3047,14 @@ def _calculate_confluence_score_master_spec(
             volume_score = 4
     else:
         volume_score = 10
-    
+
+    # ── Breadth Score (52W position) ─────────────────────────────────────────
     ltp = stock_core.ltp
     year_high = stock_core.year_high
     year_low = stock_core.year_low
-    
+
     if ltp and year_high and year_low and year_high > year_low:
         position = (ltp - year_low) / (year_high - year_low)
-        
         if direction == "BULLISH":
             if position < 0.25:
                 breadth_score = 10
@@ -2510,16 +3074,36 @@ def _calculate_confluence_score_master_spec(
             else:
                 breadth_score = 3
         else:
-            if 0.4 <= position <= 0.6:
-                breadth_score = 6
-            else:
-                breadth_score = 4
+            breadth_score = 6 if 0.4 <= position <= 0.6 else 4
     else:
         breadth_score = 5
-    
-    if option_day_high and option_day_low and option_day_low > 0:
+
+    # ── VIX Score (real India VIX if available) ──────────────────────────────
+    if india_vix is not None:
+        # VIX <12: very low vol → options cheap, good for buying
+        # VIX 12-18: normal
+        # VIX 18-25: elevated volatility → risk exists
+        # VIX >25: extreme fear → contrarian opportunity, but risky
+        if direction == "BULLISH":
+            if 12 <= india_vix <= 18:
+                vix_score = 10  # perfect entry window
+            elif india_vix < 12:
+                vix_score = 7  # low vol, small moves expected
+            elif india_vix <= 22:
+                vix_score = 8  # slight fear, good for cheap options
+            elif india_vix <= 28:
+                vix_score = 5  # elevated risk
+            else:
+                vix_score = 3  # extreme fear — avoid
+        elif direction == "BEARISH":
+            if india_vix >= 20:
+                vix_score = 10  # fear spike, good for PE
+            elif india_vix >= 15:
+                vix_score = 8
+            else:
+                vix_score = 5
+    elif option_day_high and option_day_low and option_day_low > 0:
         volatility_pct = ((option_day_high - option_day_low) / option_day_low) * 100
-        
         if volatility_pct > 25:
             vix_score = 10
         elif volatility_pct > 15:
@@ -2530,18 +3114,43 @@ def _calculate_confluence_score_master_spec(
             vix_score = 4
         else:
             vix_score = 2
-    
-    if entry_discount_pct >= 6.0:
-        pcr_score = 10
-    elif entry_discount_pct >= 4.0:
-        pcr_score = 9
-    elif entry_discount_pct >= 3.0:
-        pcr_score = 7
-    elif entry_discount_pct >= 2.0:
-        pcr_score = 6
-    elif entry_discount_pct >= 1.0:
-        pcr_score = 4
-    
+
+    # ── PCR Score (real PCR if available) ────────────────────────────────────
+    if pcr is not None:
+        # PCR < 0.7: bullish (more calls, low fear)
+        # PCR 0.7-1.0: neutral
+        # PCR 1.0-1.3: slightly bearish
+        # PCR > 1.3: extreme bearish (contrarian buy signal for CE)
+        if direction == "BULLISH":
+            if pcr > 1.3:
+                pcr_score = 10  # extreme bearishness = contrarian CE buy
+            elif pcr > 1.0:
+                pcr_score = 8
+            elif 0.7 <= pcr <= 1.0:
+                pcr_score = 6
+            else:
+                pcr_score = 4  # PCR too low, CEs already expensive
+        elif direction == "BEARISH":
+            if pcr < 0.7:
+                pcr_score = 10  # extreme bullishness = contrarian PE buy
+            elif pcr < 1.0:
+                pcr_score = 8
+            else:
+                pcr_score = 5
+    else:
+        # Fallback: entry discount proxy
+        if entry_discount_pct >= 6.0:
+            pcr_score = 10
+        elif entry_discount_pct >= 4.0:
+            pcr_score = 9
+        elif entry_discount_pct >= 3.0:
+            pcr_score = 7
+        elif entry_discount_pct >= 2.0:
+            pcr_score = 6
+        elif entry_discount_pct >= 1.0:
+            pcr_score = 4
+
+    # ── GEX / Liquidity Score ─────────────────────────────────────────────────
     if option_ltp >= 150:
         gex_score = 10
     elif option_ltp >= 100:
@@ -2554,18 +3163,22 @@ def _calculate_confluence_score_master_spec(
         gex_score = 5
     elif option_ltp < 5:
         gex_score = 2
-    
+
+    # ── Fundamental Proxy ─────────────────────────────────────────────────────
     if ltp and year_high and year_low and year_high > year_low:
-        position = (ltp - year_low) / (year_high - year_low)
-        if 0.3 <= position <= 0.7:
+        position_val = (ltp - year_low) / (year_high - year_low)
+        if 0.3 <= position_val <= 0.7:
             fundamental_score = 8
-        elif position < 0.3 or position > 0.7:
-            fundamental_score = 6
         else:
-            fundamental_score = 5
+            fundamental_score = 6
     else:
         fundamental_score = 5
-    
+
+    # ── Strategy Alignment Bonus ──────────────────────────────────────────────
+    if strategy in ("ORB_BREAKOUT", "VWAP_REVERSION"):
+        strategy_bonus = 5
+
+    # ── Expiry Penalty ────────────────────────────────────────────────────────
     if minutes_to_expiry < 60:
         technical_score = int(technical_score * 0.6)
         volume_score = int(volume_score * 0.6)
@@ -2573,18 +3186,20 @@ def _calculate_confluence_score_master_spec(
     elif minutes_to_expiry < 180:
         technical_score = int(technical_score * 0.8)
         volume_score = int(volume_score * 0.8)
-    
-    total_confluence = technical_score + volume_score + breadth_score + pcr_score + vix_score + gex_score + fundamental_score
-    
+
+    total_confluence = (
+        technical_score + volume_score + breadth_score
+        + pcr_score + vix_score + gex_score + fundamental_score + strategy_bonus
+    )
     confluence_score = int(clamp(total_confluence, 0, 100))
-    
+
     if confluence_score >= 80:
         conviction_level = "HIGH"
     elif confluence_score >= 58:
         conviction_level = "MEDIUM"
     else:
         conviction_level = "LOW"
-    
+
     return confluence_score, conviction_level
 
 
@@ -2604,6 +3219,8 @@ async def build_fno_signal(
     minutes_to_expiry: int,
     option_day_high: float | None = None,
     option_day_low: float | None = None,
+    india_vix: float | None = None,
+    pcr: float | None = None,
 ) -> FNOSignalResponse:
     underlying_ltp = stock_core.ltp
     if underlying_ltp is None:
@@ -2805,13 +3422,26 @@ async def build_fno_signal(
     max_ltp_projection = round(entry_price * max_ltp_multiplier, 2)
     max_ltp_projection = min(max_ltp_projection, target2)
     best_exit_price = max_ltp_projection
-    
+
     underlying_day_change_pct = None
     if stock_core.prev_close and stock_core.prev_close > 0:
         underlying_day_change_pct = round(((stock_core.ltp - stock_core.prev_close) / stock_core.prev_close) * 100, 2)
 
     entry_discount_pct = ((option_ltp - entry_price) / option_ltp) * 100 if option_ltp > entry_price else 0.5
-    
+
+    # ── ORB / VWAP Strategy Classification ───────────────────────────────────
+    strategy: str | None = None
+    if stock_core.open is not None and stock_core.ltp is not None and stock_core.open > 0:
+        pct_from_open = ((stock_core.ltp - stock_core.open) / stock_core.open) * 100
+        vwap_proxy = stock_core.open + (stock_core.ltp - stock_core.open) * 0.5
+
+        if abs(pct_from_open) >= 0.3:
+            strategy = "ORB_BREAKOUT"
+            trigger_factors.append(f"ORB_Breakout={pct_from_open:.2f}%_from_open")
+        elif vwap_proxy and abs(stock_core.ltp - vwap_proxy) / max(vwap_proxy, 1) < 0.003:
+            strategy = "VWAP_REVERSION"
+            trigger_factors.append("VWAP_Reversion")
+
     confluence_score, conviction_level = _calculate_confluence_score_master_spec(
         stock_core=stock_core,
         direction=direction,
@@ -2822,6 +3452,9 @@ async def build_fno_signal(
         entry_discount_pct=entry_discount_pct,
         option_day_high=option_day_high,
         option_day_low=option_day_low,
+        india_vix=india_vix,
+        pcr=pcr,
+        strategy=strategy,
     )
     
     signal_quality = _get_signal_quality(confluence_score)
@@ -2866,7 +3499,7 @@ async def build_fno_signal(
         achievable_profit_pct=achievable_profit_pct,
         direction=direction,
         strategy=(
-            f"{conviction_level} Conviction Trade"
+            f"{strategy or conviction_level+' Conviction'} Trade"
             if is_potential_trade
             else "Directional Projection (Low Confidence)"
         ),
@@ -3143,6 +3776,23 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     rows: list[FNOSignalResponse] = []
     if contracts:
         kite_map = await _fetch_option_snapshots_from_kite(contracts)
+
+        # ── Compute real PCR from option chain OI ────────────────────────────
+        total_ce_oi = 0.0
+        total_pe_oi = 0.0
+        for contract in contracts:
+            snap = kite_map.get(contract.script)
+            if snap and snap.get("oi"):
+                oi_val = float(snap["oi"] or 0)
+                if contract.option_type == "CE":
+                    total_ce_oi += oi_val
+                elif contract.option_type == "PE":
+                    total_pe_oi += oi_val
+        pcr = round(total_pe_oi / total_ce_oi, 3) if total_ce_oi > 0 else None
+
+        # ── Fetch India VIX ──────────────────────────────────────────────────
+        india_vix = await _get_india_vix()
+
         for contract in contracts:
             minutes_to_expiry = get_minutes_to_expiry(contract)
             try:
@@ -3158,6 +3808,8 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                     minutes_to_expiry,
                     option_day_high=_to_float(snapshot.get("day_high")),
                     option_day_low=_to_float(snapshot.get("day_low")),
+                    india_vix=india_vix,
+                    pcr=pcr,
                 )
                 rows.append(signal)
             except HTTPException:
@@ -3358,6 +4010,9 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
     normalized_cores = [StockCoreNormalized(**row) for row in cores]
     semaphore = asyncio.Semaphore(4)
 
+    # Fetch India VIX once for all stock signals
+    india_vix = await _get_india_vix()
+
     async def _build_for_symbol(symbol: str, core: StockCoreNormalized) -> FNOSignalResponse | None:
         if core.ltp is None:
             logger.warning(f"{symbol}: No LTP available")
@@ -3406,6 +4061,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         minutes_to_expiry,
                         option_day_high=_to_float(snapshot.get("day_high")),
                         option_day_low=_to_float(snapshot.get("day_low")),
+                        india_vix=india_vix,
                     )
                     logger.info(f"{symbol} {option_type}: Signal generated - Direction={signal.direction}, Confluence={signal.confluence_score}, Conviction={signal.conviction_level}")
                 except HTTPException as exc:
@@ -3480,6 +4136,7 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
     universe = await _get_multibagger_universe()
 
     semaphore = asyncio.Semaphore(18)
+    fundamental_semaphore = asyncio.Semaphore(5)  # limit concurrent yfinance calls
 
     async def _fetch_one(symbol: str) -> dict | None:
         async with semaphore:
@@ -3491,15 +4148,30 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
             except Exception:
                 return None
 
+    async def _fetch_fundamental_one(symbol: str) -> tuple[str, dict]:
+        async with fundamental_semaphore:
+            try:
+                data = await _get_fundamental_data(symbol)
+                return (symbol, data)
+            except Exception:
+                return (symbol, {})
+
     fetched = await asyncio.gather(*[_fetch_one(symbol) for symbol in universe])
     results = [row for row in fetched if row is not None]
+    valid_symbols = [row["symbol"] for row in results]
+
+    # Fetch fundamentals in parallel (uses cache, so mostly fast after first run)
+    fundamental_results = await asyncio.gather(*[_fetch_fundamental_one(sym) for sym in valid_symbols])
+    fundamental_map = {sym: data for sym, data in fundamental_results}
+
     candidates: list[MultibaggerCandidate] = []
     for row in results:
         stock = StockCoreNormalized(**row)
         if stock.ltp is None:
             continue
 
-        analysis = compute_multibagger_analysis(stock)
+        fundamental = fundamental_map.get(stock.symbol, {})
+        analysis = compute_multibagger_analysis(stock, fundamental=fundamental)
         candidates.append(
             MultibaggerCandidate(
                 symbol=stock.symbol,
@@ -3522,6 +4194,15 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
                 targeted_upside_profit_pct=analysis["targeted_upside_profit_pct"],
                 thesis=analysis["thesis"],
                 analysis_refreshed_at=refreshed_at,
+                # Fundamental fields
+                roe=analysis.get("roe"),
+                roce=analysis.get("roce"),
+                piotroski_score=analysis.get("piotroski_score"),
+                beneish_m_score=analysis.get("beneish_m_score"),
+                eps_growth_pct=analysis.get("eps_growth_pct"),
+                debt_to_equity=analysis.get("debt_to_equity"),
+                current_ratio=analysis.get("current_ratio"),
+                gross_margin=analysis.get("gross_margin"),
             )
         )
 
@@ -3556,7 +4237,7 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
     if realized_pnl is None and sold_price is not None:
         realized_pnl = round((sold_price - buy_price) * units, 2)
 
-    can_sell = position.get("status") == "OPEN" and (target1_achieved or target2_achieved)
+    can_sell = position.get("status") == "OPEN"
 
     return CustomPositionResponse(
         id=position["id"],
@@ -4427,10 +5108,6 @@ async def sell_custom_position(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Open custom position not found")
-
-    response_view = _position_to_response(row)
-    if not (response_view.target1_achieved or response_view.target2_achieved):
-        raise HTTPException(status_code=400, detail="Sell allowed only after T1 or T2 is achieved")
 
     units = max(1, int(row.get("lot_size", 1)) * int(row.get("quantity_lots", 1) or 1))
     realized_pnl = round((float(payload.sold_price) - float(row["buy_price"])) * units, 2)

@@ -53,13 +53,19 @@
 }
 
 .result-hover:hover,
-[data-testid="multibagger-table"] tbody tr:hover,
 [data-testid="admin-users-table"] tbody tr:hover,
-[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover,
-[data-testid="portfolio-page"] tbody tr:hover,
 [data-testid="fno-page"] [data-testid*="top4-trade-"]:hover,
 [data-testid="stock-fno-bottom-panel"] [data-testid*="stock-fno-signal-"]:hover {
     background: rgba(30, 41, 59, 0.92) !important;
+    border-color: #38bdf8 !important;
+    color: #f8fafc !important;
+}
+
+/* White background on hover for Portfolio & Multibagger blocks */
+[data-testid="multibagger-table"] tbody tr:hover,
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover,
+[data-testid="portfolio-page"] tbody tr:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
     border-color: #38bdf8 !important;
     color: #f8fafc !important;
 }

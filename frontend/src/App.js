@@ -1021,7 +1021,7 @@ export default function App() {
                       <TableBody>
                         {filteredMultibaggers.map((row) => (
                           <Fragment key={`fragment-${row.symbol}`}>
-                            <TableRow key={`${row.symbol}-target`} className="result-row" data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
+                            <TableRow key={`${row.symbol}-target`} className="result-row cursor-pointer hover:bg-white/5 transition-colors" data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
                               <TableCell className="font-mono text-cyan-300">{row.company_name}</TableCell>
                               <TableCell>{row.sector}</TableCell>
                               <TableCell className="font-mono">{formatNumber(row.current_rsi_level)}</TableCell>
@@ -1040,7 +1040,7 @@ export default function App() {
                               </TableCell>
                             </TableRow>
 
-                            <TableRow key={`${row.symbol}-roi`} className="result-row" data-testid={`multibagger-roi-row-${row.symbol.toLowerCase()}`}>
+                            <TableRow key={`${row.symbol}-roi`} className="result-row cursor-pointer hover:bg-white/5 transition-colors" data-testid={`multibagger-roi-row-${row.symbol.toLowerCase()}`}>
                               <TableCell className="font-mono text-slate-400">{row.symbol}</TableCell>
                               <TableCell className="text-slate-500">Tier: {row.tier_pass_count}/8</TableCell>
                               <TableCell className="text-slate-500">LTP: ₹{formatNumber(row.ltp)}</TableCell>
@@ -1059,9 +1059,55 @@ export default function App() {
                               </TableCell>
                             </TableRow>
 
-                            <TableRow key={`${row.symbol}-thesis`} className="result-row" data-testid={`multibagger-thesis-row-${row.symbol.toLowerCase()}`}>
-                              <TableCell colSpan={12} className="text-xs text-slate-300">
-                                Thesis: {row.thesis || "No thesis available"}
+                            {/* Fundamentals row */}
+                            {(row.roe != null || row.roce != null || row.piotroski_score != null || row.beneish_m_score != null || row.eps_growth_pct != null) ? (
+                              <TableRow key={`${row.symbol}-fundamentals`} className="result-row hover:bg-white/5 transition-colors bg-slate-900/40" data-testid={`multibagger-fundamentals-row-${row.symbol.toLowerCase()}`}>
+                                <TableCell colSpan={12} className="py-1">
+                                  <div className="flex flex-wrap gap-2 text-xs">
+                                    {row.roe != null && (
+                                      <span className={`rounded px-2 py-0.5 font-semibold ${row.roe >= 20 ? 'bg-emerald-900/50 text-emerald-300' : row.roe >= 12 ? 'bg-yellow-900/50 text-yellow-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                        ROE: {row.roe}%
+                                      </span>
+                                    )}
+                                    {row.roce != null && (
+                                      <span className={`rounded px-2 py-0.5 font-semibold ${row.roce >= 15 ? 'bg-emerald-900/50 text-emerald-300' : 'bg-yellow-900/50 text-yellow-300'}`}>
+                                        ROCE: {row.roce}%
+                                      </span>
+                                    )}
+                                    {row.piotroski_score != null && (
+                                      <span className={`rounded px-2 py-0.5 font-semibold ${row.piotroski_score >= 7 ? 'bg-emerald-900/50 text-emerald-300' : row.piotroski_score >= 5 ? 'bg-yellow-900/50 text-yellow-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                        Piotroski: {row.piotroski_score}/9
+                                      </span>
+                                    )}
+                                    {row.beneish_m_score != null && (
+                                      <span className={`rounded px-2 py-0.5 font-semibold ${row.beneish_m_score <= -2.22 ? 'bg-emerald-900/50 text-emerald-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                        Beneish M: {row.beneish_m_score} {row.beneish_m_score > -2.22 ? '⚠' : '✓'}
+                                      </span>
+                                    )}
+                                    {row.eps_growth_pct != null && (
+                                      <span className={`rounded px-2 py-0.5 font-semibold ${row.eps_growth_pct > 0 ? 'bg-emerald-900/50 text-emerald-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                        EPS Growth: {row.eps_growth_pct > 0 ? '+' : ''}{row.eps_growth_pct}%
+                                      </span>
+                                    )}
+                                    {row.debt_to_equity != null && (
+                                      <span className={`rounded px-2 py-0.5 font-semibold ${row.debt_to_equity < 0.5 ? 'bg-emerald-900/50 text-emerald-300' : row.debt_to_equity < 1.5 ? 'bg-yellow-900/50 text-yellow-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                        D/E: {Number(row.debt_to_equity).toFixed(2)}
+                                      </span>
+                                    )}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ) : null}
+
+                            <TableRow key={`${row.symbol}-thesis`} className="result-row hover:bg-white/5 transition-colors" data-testid={`multibagger-thesis-row-${row.symbol.toLowerCase()}`}>
+                              <TableCell colSpan={12} className="py-2 text-xs text-slate-300 leading-relaxed">
+                                <span className="font-semibold text-cyan-400 mr-2">Thesis:</span>
+                                {(row.thesis || "No thesis available").split(" | ").map((part, i) => (
+                                  <span key={i} className="inline-block mr-3 mb-1">
+                                    {i > 0 && <span className="text-slate-600 mr-3">|</span>}
+                                    {part}
+                                  </span>
+                                ))}
                               </TableCell>
                             </TableRow>
                           </Fragment>
@@ -1232,12 +1278,13 @@ export default function App() {
                               T2 Status: <span className="inline-flex items-center gap-1 font-semibold" data-testid={`custom-position-t2-status-${position.id}`}>{position.target2_achieved ? <><CheckCircle2 size={14} className="text-blue-600" /> Achieved</> : "Pending"}</span>
                             </p>
                             <p className="md:col-span-2">Exit Plan: <span className="font-mono">{position.revised_exit_plan}</span></p>
-                            {position.sold_price !== null && position.sold_price !== undefined ? (
-                              <p className="md:col-span-2" data-testid={`custom-position-realized-pnl-${position.id}`}>
-                                Sold @ <span className="font-mono">₹{formatNumber(position.sold_price)}</span> | Realized P&L: <span className={`font-mono font-bold ${Number(position.realized_pnl || 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatSignedInr(position.realized_pnl)}</span>
-                              </p>
-                            ) : null}
                           </div>
+                          {/* BEST EXIT for custom positions */}
+                          {exitPrice && position.status !== "SOLD" ? (
+                            <p className="mt-2 text-sm font-semibold text-green-400" data-testid={`custom-position-best-exit-${position.id}`}>
+                              ⭐BEST EXIT: T+{position.best_exit_days ?? "?"} @ ₹{formatNumber(exitPrice)}
+                            </p>
+                          ) : null}
                           <div className="mt-3 flex items-center justify-end gap-2">
                             {position.can_sell ? (
                               <Button
@@ -1383,9 +1430,18 @@ export default function App() {
                                       </p>
                                     )}
                                     {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
-                                      <p className="text-xs text-slate-500 mt-1">
-                                        Market: DayChange={signal.underlying_day_change_pct?.toFixed(2)}% | Bias={signal.underlying_bias_score?.toFixed(2)}
-                                      </p>
+                                      <div className="mt-1 flex flex-wrap gap-2">
+                                        {signal.underlying_day_change_pct !== null && (
+                                          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${signal.underlying_day_change_pct >= 0 ? 'bg-emerald-900/50 text-emerald-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                            Day Change: {signal.underlying_day_change_pct?.toFixed(2)}%
+                                          </span>
+                                        )}
+                                        {signal.underlying_bias_score !== null && (
+                                          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${signal.underlying_bias_score >= 0 ? 'bg-blue-900/50 text-blue-300' : 'bg-orange-900/50 text-orange-300'}`}>
+                                            Bias: {signal.underlying_bias_score?.toFixed(2)}
+                                          </span>
+                                        )}
+                                      </div>
                                     )}
                                     {String(signal.strategy || "").toUpperCase().includes("CAUTION") ? (
                                       <p className="font-semibold text-amber-200">⚠ Caution: Probable setup only. Use strict stop-loss and position sizing.</p>
@@ -1488,9 +1544,18 @@ export default function App() {
                               </p>
                             )}
                             {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
-                              <p className="text-xs text-slate-500 mt-1">
-                                Market: DayChange={signal.underlying_day_change_pct?.toFixed(2)}% | Bias={signal.underlying_bias_score?.toFixed(2)}
-                              </p>
+                              <div className="mt-1 flex flex-wrap gap-2">
+                                {signal.underlying_day_change_pct !== null && (
+                                  <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${signal.underlying_day_change_pct >= 0 ? 'bg-emerald-900/50 text-emerald-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                    Day Change: {signal.underlying_day_change_pct?.toFixed(2)}%
+                                  </span>
+                                )}
+                                {signal.underlying_bias_score !== null && (
+                                  <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${signal.underlying_bias_score >= 0 ? 'bg-blue-900/50 text-blue-300' : 'bg-orange-900/50 text-orange-300'}`}>
+                                    Bias: {signal.underlying_bias_score?.toFixed(2)}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         ))
@@ -1526,9 +1591,18 @@ export default function App() {
                                 </p>
                               )}
                               {(trade.underlying_day_change_pct !== null || trade.underlying_bias_score !== null) && (
-                                <p className="text-xs text-slate-500 mt-1">
-                                  Market: DayChange={trade.underlying_day_change_pct?.toFixed(2)}% | Bias={trade.underlying_bias_score?.toFixed(2)}
-                                </p>
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  {trade.underlying_day_change_pct !== null && (
+                                    <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${trade.underlying_day_change_pct >= 0 ? 'bg-emerald-900/50 text-emerald-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                      Day Change: {trade.underlying_day_change_pct?.toFixed(2)}%
+                                    </span>
+                                  )}
+                                  {trade.underlying_bias_score !== null && (
+                                    <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${trade.underlying_bias_score >= 0 ? 'bg-blue-900/50 text-blue-300' : 'bg-orange-900/50 text-orange-300'}`}>
+                                      Bias: {trade.underlying_bias_score?.toFixed(2)}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                               <p className="text-slate-400">{(trade.trigger_factors || []).slice(0, 2).join(" | ")}</p>
                             </div>
@@ -1683,7 +1757,8 @@ export default function App() {
                           <TableHeader>
                             <TableRow>
                               <TableHead>Horizon</TableHead>
-                              <TableHead>Max Expected Price</TableHead>
+                              <TableHead>Max Price (Upside)</TableHead>
+                              <TableHead>Max Low (Downside)</TableHead>
                               <TableHead>Amount (+/-)</TableHead>
                               <TableHead>Percent (+/-)</TableHead>
                               <TableHead>Signal</TableHead>
@@ -1691,9 +1766,12 @@ export default function App() {
                           </TableHeader>
                           <TableBody>
                             {Object.entries(stock.expected_signals || {}).map(([horizon, values]) => (
-                              <TableRow key={`${stock.symbol}-${horizon}`}>
+                              <TableRow key={`${stock.symbol}-${horizon}`} className="hover:bg-white/5">
                                 <TableCell>{horizon}</TableCell>
-                                <TableCell className="font-mono">₹{formatNumber(values.max_expected_price)}</TableCell>
+                                <TableCell className="font-mono text-emerald-300">₹{formatNumber(values.max_expected_price)}</TableCell>
+                                <TableCell className="font-mono text-rose-300">
+                                  {values.min_expected_price != null ? `₹${formatNumber(values.min_expected_price)}` : "—"}
+                                </TableCell>
                                 <TableCell className={`font-mono ${values.direction === "PROFIT" ? "text-emerald-300" : "text-rose-300"}`}>{values.amount_signal}</TableCell>
                                 <TableCell className={`font-mono ${values.direction === "PROFIT" ? "text-emerald-300" : "text-rose-300"}`}>{values.percent_signal}</TableCell>
                                 <TableCell>
