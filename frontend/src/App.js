@@ -1354,6 +1354,16 @@ export default function App() {
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
+                                    {signal.best_exit_price && (
+                                      <p className="text-green-400 font-semibold text-sm">
+                                        ⭐BEST EXIT: T+{signal.best_exit_days} @ ₹{formatNumber(signal.best_exit_price)}
+                                      </p>
+                                    )}
+                                    {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
+                                      <p className="text-xs text-slate-500 mt-1">
+                                        Market: DayChange={signal.underlying_day_change_pct?.toFixed(2)}% | Bias={signal.underlying_bias_score?.toFixed(2)}
+                                      </p>
+                                    )}
                                     {String(signal.strategy || "").toUpperCase().includes("CAUTION") ? (
                                       <p className="font-semibold text-amber-200">⚠ Caution: Probable setup only. Use strict stop-loss and position sizing.</p>
                                     ) : null}
@@ -1449,6 +1459,16 @@ export default function App() {
                             <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
                             <p>T1/T2: ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                             <p>Confidence: {signal.confluence_score}</p>
+                            {signal.best_exit_price && (
+                              <p className="text-green-400 font-semibold text-sm">
+                                ⭐BEST EXIT: T+{signal.best_exit_days} @ ₹{formatNumber(signal.best_exit_price)}
+                              </p>
+                            )}
+                            {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
+                              <p className="text-xs text-slate-500 mt-1">
+                                Market: DayChange={signal.underlying_day_change_pct?.toFixed(2)}% | Bias={signal.underlying_bias_score?.toFixed(2)}
+                              </p>
+                            )}
                           </div>
                         ))
                       ) : (
@@ -1477,6 +1497,16 @@ export default function App() {
                               <p>SL: ₹{formatNumber(trade.stop_loss)}</p>
                               <p>T1/T2: ₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</p>
                               <p>Confidence: {trade.confluence_score} | {trade.direction}</p>
+                              {trade.best_exit_price && (
+                                <p className="text-green-400 font-semibold text-sm">
+                                  ⭐BEST EXIT: T+{trade.best_exit_days} @ ₹{formatNumber(trade.best_exit_price)}
+                                </p>
+                              )}
+                              {(trade.underlying_day_change_pct !== null || trade.underlying_bias_score !== null) && (
+                                <p className="text-xs text-slate-500 mt-1">
+                                  Market: DayChange={trade.underlying_day_change_pct?.toFixed(2)}% | Bias={trade.underlying_bias_score?.toFixed(2)}
+                                </p>
+                              )}
                               <p className="text-slate-400">{(trade.trigger_factors || []).slice(0, 2).join(" | ")}</p>
                             </div>
                           ))
