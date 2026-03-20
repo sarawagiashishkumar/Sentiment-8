@@ -36,7 +36,12 @@ Build a minimalist full-stack stock analysis web app using FastAPI (Python) back
 - Multi-tier entry optimization ("SmartDipEntry") at predicted micro-dip
 - Dynamic targets (T1, T2) and stop-loss based on volatility + time-to-expiry
 - Minimum R:R ratio ≥ 1.2 enforced
-- **⭐BEST EXIT** shown in all F&O result cards (NIFTY, BANKNIFTY, Stocks, Top 4, Custom)
+- **BEST EXIT — Expiry-Aware with Theta Decay (NEW Mar 2026):**
+  - `get_remaining_trading_days()` counts actual NSE trading days (excluding weekends + NSE_HOLIDAYS)
+  - Theta decay: `daily_theta = (entry_price / (remaining_trading_days + 1)) * 0.15`; `best_exit_price = raw_target - (daily_theta × best_exit_days)`
+  - `best_exit_date_str` displays as "DD MMM YYYY" (e.g., "26 Mar 2026")
+  - ⚠ Near Expiry badge appears when `remaining_trading_days <= 2`
+  - Best Exit format: "T+N Trading Days (DD MMM YYYY) @ ₹X"
 - `trigger_factors` list with ORB/VWAP tags and market metadata
 - Expiry risk bucketing (SAFE/CAUTION/DANGER/EXPIRED)
 
@@ -45,8 +50,8 @@ Build a minimalist full-stack stock analysis web app using FastAPI (Python) back
 - Live refresh with LTP, floating P/L, T1/T2 achievement, alert system
 - **Sell any OPEN position** (no T1/T2 requirement)
 - Realized P/L shown when sold (replaces floating P/L — no duplicate)
-- `best_exit_days` computed and stored in DB for "T+N @ ₹X" display
-- BEST EXIT display on each card
+- `best_exit_days` + `best_exit_date_str` + `remaining_trading_days` stored in DB
+- BEST EXIT display with calendar date on each card
 
 ### Portfolio Analysis
 - Manual entry or file upload (.txt/.csv/.xls/.xlsx/.pdf/.jpg)
@@ -64,7 +69,8 @@ Build a minimalist full-stack stock analysis web app using FastAPI (Python) back
   - Debt/Equity, Current Ratio, Gross Margin
 - **Detailed thesis** with score breakdown, tier pass list, per-metric commentary
 - **Fundamentals row** in table showing ROE/ROCE/Piotroski/Beneish color-coded
-- Hover effect on all rows (lighter bg)
+- **Hover effect — entire 4-row block (NEW Mar 2026):** `tbody.multibagger-group` CSS wraps all 4 rows per stock; entire block turns white on hover
+- **Custom Stock Search (NEW Mar 2026):** Search any NSE symbol via `/api/multibagger/custom-search`; results shown in same 4-row block with fundamentals + thesis
 - GTT buy price, upside targets by horizon, PEG proxy
 
 ### UI/UX
@@ -123,13 +129,19 @@ Build a minimalist full-stack stock analysis web app using FastAPI (Python) back
 - [x] India VIX from yfinance
 - [x] ORB/VWAP strategy classification
 - [x] BEST EXIT in all F&O cards + custom cards with best_exit_days
+- [x] **Multibagger Hover Fix:** entire 4-row block highlights via tbody.multibagger-group (Mar 2026)
+- [x] **Custom Stock Search in Multibagger:** POST /api/multibagger/custom-search (Mar 2026)
+- [x] **Expiry-Aware Projections + Theta Decay:** get_remaining_trading_days(), best_exit_date_str, Near Expiry badge (Mar 2026)
 
 ### P1 (Upcoming)
 - [ ] Historical API workaround (use cached 5-min data from Kite quotes)
 - [ ] Better VWAP calculation (accumulate intraday price points in cache)
 - [ ] Kite SSO for portfolio holdings sync
+- [ ] Full "Master Spec" constituent breadth scoring (NIFTY50/BANKNIFTY analysis)
 
 ### P2 (Backlog)
+- [ ] Position Sizing Calculator (capital/risk-based lot recommendation)
+- [ ] Sector Momentum Heatmap
 - [ ] Codebase refactor: split server.py → routes/, models/, services/
 - [ ] Codebase refactor: split App.js → pages/ with lazy loading
 - [ ] Mobile app / PWA
