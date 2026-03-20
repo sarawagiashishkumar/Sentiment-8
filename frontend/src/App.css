@@ -61,8 +61,23 @@
     color: #f8fafc !important;
 }
 
-/* White background on hover for Multibagger blocks (not portfolio-stock, handled separately) */
-[data-testid="multibagger-table"] tbody tr:hover,
+/* White background on hover for Multibagger 4-row groups — targets the entire tbody.multibagger-group */
+tbody.multibagger-group:hover tr,
+tbody.multibagger-group:hover tr td {
+    background: #FFFFFF !important;
+    color: #1A1A1A !important;
+}
+tbody.multibagger-group:hover tr td *,
+tbody.multibagger-group:hover tr span,
+tbody.multibagger-group:hover tr .text-slate-400,
+tbody.multibagger-group:hover tr .text-slate-500,
+tbody.multibagger-group:hover tr .text-slate-300,
+tbody.multibagger-group:hover tr .text-emerald-300,
+tbody.multibagger-group:hover tr .text-cyan-300,
+tbody.multibagger-group:hover tr .text-cyan-400 {
+    color: #1A1A1A !important;
+}
+
 [data-testid="portfolio-page"] tbody tr:hover {
     background: rgba(255, 255, 255, 0.08) !important;
     border-color: #38bdf8 !important;
@@ -83,28 +98,13 @@
     color: #1A1A1A !important;
 }
 
-[data-testid="multibagger-table"] tbody tr.result-row:hover td,
-[data-testid="multibagger-table"] tbody tr.result-row:hover {
-    background: #FFFFFF !important;
-    color: #1A1A1A !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-[data-testid="multibagger-table"] tbody tr.result-row:hover td *,
-[data-testid="multibagger-table"] tbody tr.result-row:hover span,
-[data-testid="multibagger-table"] tbody tr.result-row:hover badge {
-    color: #1A1A1A !important;
-}
-
+/* Multibagger per-row hover handled by tbody.multibagger-group above */
 .result-hover:hover p,
 .result-hover:hover span,
 .result-hover:hover td,
 .result-hover:hover th,
 .result-hover:hover label,
 .result-hover:hover small,
-[data-testid="multibagger-table"] tbody tr:hover p,
-[data-testid="multibagger-table"] tbody tr:hover span,
-[data-testid="multibagger-table"] tbody tr:hover td,
-[data-testid="multibagger-table"] tbody tr:hover th,
 [data-testid="admin-users-table"] tbody tr:hover p,
 [data-testid="admin-users-table"] tbody tr:hover span,
 [data-testid="admin-users-table"] tbody tr:hover td,

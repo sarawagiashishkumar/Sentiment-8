@@ -70,6 +70,21 @@ SCRIPT_PATTERN = re.compile(r"^([A-Z]+)(\d{1,2})([A-Z]{3})(\d+)(CE|PE)$")
 SESSION_STORE: Dict[str, dict] = {}
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# NSE Market Holidays (YYYY-MM-DD). Includes fixed national + major religious holidays.
+NSE_HOLIDAYS: set[str] = {
+    # 2025
+    "2025-01-26", "2025-02-26", "2025-03-14", "2025-04-10",
+    "2025-04-14", "2025-04-18", "2025-05-01", "2025-08-15",
+    "2025-10-02", "2025-10-24", "2025-10-25", "2025-11-05",
+    # 2026
+    "2026-01-26", "2026-02-19", "2026-03-25", "2026-04-06",
+    "2026-04-10", "2026-04-14", "2026-05-01", "2026-08-15",
+    "2026-10-02", "2026-11-04", "2026-11-05", "2026-11-24",
+    # 2027
+    "2027-01-26", "2027-03-16", "2027-04-02", "2027-04-14",
+    "2027-05-01", "2027-08-15", "2027-10-02",
+}
+
 MONTH_MAP = {
     "JAN": 1,
     "FEB": 2,
@@ -556,6 +571,8 @@ class FNOSignalResponse(BaseModel):
     max_ltp_projection: float | None = None
     best_exit_days: int | None = None
     best_exit_price: float | None = None
+    remaining_trading_days: int = 0
+    best_exit_date_str: str | None = None
     trigger_factors: List[str]
     confluence_score: int
     signal_quality: Literal["HIGH", "MEDIUM", "LOW"]
@@ -722,6 +739,8 @@ class CustomPositionResponse(BaseModel):
     projected_exit_price: float | None = None
     best_exit_price: float | None = None
     best_exit_days: int | None = None
+    best_exit_date_str: str | None = None
+    remaining_trading_days: int = 0
     recovery_potential: float | None = None
     minutes_to_expiry: int
     revised_exit_plan: str
@@ -1909,6 +1928,51 @@ def _expiry_risk_bucket(minutes_to_expiry: int) -> Literal["LOW", "MEDIUM", "HIG
     if minutes_to_expiry < 1440:
         return "MEDIUM"
     return "LOW"
+
+
+def get_remaining_trading_days(expiry_date_str: str) -> int:
+    """Count NSE trading days from today (IST) to expiry date (inclusive)."""
+    from datetime import date as _date
+    today = datetime.now(IST).date()
+    try:
+        expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return 0
+
+    if expiry_date < today:
+        return 0
+
+    count = 0
+    # Check if today is still a valid trading session
+    now_ist = datetime.now(IST)
+    market_still_open_today = (now_ist.hour < 15) or (now_ist.hour == 15 and now_ist.minute < 30)
+    d = today
+    if market_still_open_today and d.weekday() < 5 and d.strftime("%Y-%m-%d") not in NSE_HOLIDAYS:
+        if d <= expiry_date:
+            count += 1
+
+    d = today + timedelta(days=1)
+    while d <= expiry_date:
+        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in NSE_HOLIDAYS:
+            count += 1
+        d += timedelta(days=1)
+
+    return count
+
+
+def get_nth_trading_day_from_today(n: int) -> "datetime.date":
+    """Return the calendar date that is exactly N trading days from today (IST)."""
+    from datetime import date as _date
+    if n <= 0:
+        return datetime.now(IST).date()
+    today = datetime.now(IST).date()
+    d = today
+    count = 0
+    while count < n:
+        d += timedelta(days=1)
+        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in NSE_HOLIDAYS:
+            count += 1
+    return d
 
 
 def _validate_expiry_guard(minutes_to_expiry: int) -> None:
@@ -3590,24 +3654,35 @@ async def build_fno_signal(
         target2 = round(max(target2, min_target2_needed), 2)
         risk_reward_target2 = round((target2 - entry_price) / risk, 2)
     
-    days_to_expiry = max(minutes_to_expiry / (60 * 24), 0.1)
-    
-    if days_to_expiry >= 5:
-        best_exit_days = min(int(days_to_expiry * 0.6), 10)
+    remaining_trading_days = get_remaining_trading_days(contract.expiry)
+
+    if remaining_trading_days >= 5:
+        best_exit_days = min(int(remaining_trading_days * 0.6), remaining_trading_days - 1)
         max_ltp_multiplier = 1.4
-    elif days_to_expiry >= 3:
-        best_exit_days = min(int(days_to_expiry * 0.7), 5)
+    elif remaining_trading_days >= 3:
+        best_exit_days = min(int(remaining_trading_days * 0.7), remaining_trading_days - 1)
         max_ltp_multiplier = 1.25
-    elif days_to_expiry >= 1:
+    elif remaining_trading_days >= 2:
         best_exit_days = 1
         max_ltp_multiplier = 1.15
     else:
         best_exit_days = 0
         max_ltp_multiplier = 1.05
-    
+
     max_ltp_projection = round(entry_price * max_ltp_multiplier, 2)
     max_ltp_projection = min(max_ltp_projection, target2)
-    best_exit_price = max_ltp_projection
+
+    # Theta decay: daily theta ≈ (entry premium / (remaining days + 1)) × 0.15
+    if remaining_trading_days > 0 and best_exit_days > 0:
+        daily_theta = (entry_price / (remaining_trading_days + 1)) * 0.15
+        theta_decay = round(daily_theta * best_exit_days, 2)
+        best_exit_price = round(max(max_ltp_projection - theta_decay, entry_price * 1.02), 2)
+    else:
+        best_exit_price = max_ltp_projection
+
+    # Compute actual calendar date for best exit
+    best_exit_date_obj = get_nth_trading_day_from_today(best_exit_days) if best_exit_days and best_exit_days > 0 else None
+    best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y") if best_exit_date_obj else None
 
     underlying_day_change_pct = None
     if stock_core.prev_close and stock_core.prev_close > 0:
@@ -3698,6 +3773,8 @@ async def build_fno_signal(
         max_ltp_projection=max_ltp_projection,
         best_exit_days=best_exit_days,
         best_exit_price=best_exit_price,
+        remaining_trading_days=remaining_trading_days,
+        best_exit_date_str=best_exit_date_str,
         trigger_factors=trigger_factors,
         confluence_score=confluence_score,
         signal_quality=signal_quality,
@@ -4457,6 +4534,8 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
         projected_exit_price=position.get("projected_exit_price"),
         best_exit_price=position.get("best_exit_price"),
         best_exit_days=position.get("best_exit_days"),
+        best_exit_date_str=position.get("best_exit_date_str"),
+        remaining_trading_days=int(position.get("remaining_trading_days") or 0),
         recovery_potential=position.get("recovery_potential"),
         minutes_to_expiry=int(position.get("minutes_to_expiry", 0)),
         revised_exit_plan=position.get("revised_exit_plan", ""),
@@ -4533,17 +4612,22 @@ async def _refresh_open_position(position: dict) -> dict:
     recovery_potential = max(0.0, min(raw_recovery_potential, max_recoverable_pct))
     best_exit_price = None
     best_exit_days: int | None = None
+    best_exit_date_str: str | None = None
 
-    # Compute best_exit_days based on time remaining
-    days_to_expiry = minutes_to_expiry / (60 * 6.25)  # NSE trading day = 6.25 hrs
-    if days_to_expiry > 14:
-        best_exit_days = max(1, int(days_to_expiry * 0.6))
-    elif days_to_expiry > 7:
-        best_exit_days = max(1, int(days_to_expiry * 0.7))
-    elif days_to_expiry > 3:
+    # Compute best_exit_days based on actual remaining trading days
+    remaining_trading_days = get_remaining_trading_days(position["expiry_date"])
+    if remaining_trading_days >= 14:
+        best_exit_days = max(1, min(int(remaining_trading_days * 0.6), remaining_trading_days - 1))
+    elif remaining_trading_days >= 7:
+        best_exit_days = max(1, min(int(remaining_trading_days * 0.7), remaining_trading_days - 1))
+    elif remaining_trading_days >= 3:
         best_exit_days = 2
     else:
-        best_exit_days = 1
+        best_exit_days = min(1, remaining_trading_days) if remaining_trading_days > 0 else 0
+
+    if best_exit_days and best_exit_days > 0:
+        best_exit_date_obj = get_nth_trading_day_from_today(best_exit_days)
+        best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y")
 
     alert = None
     revised_exit_plan = "Hold with trailing stop once target1 hits"
@@ -4577,6 +4661,8 @@ async def _refresh_open_position(position: dict) -> dict:
                 "projected_exit_price": projected_exit_price,
                 "best_exit_price": best_exit_price,
                 "best_exit_days": best_exit_days,
+                "best_exit_date_str": best_exit_date_str,
+                "remaining_trading_days": remaining_trading_days,
                 "recovery_potential": round(recovery_potential, 4),
                 "last_update": _utc_now_iso(),
                 "revised_exit_plan": revised_exit_plan,
@@ -5553,6 +5639,75 @@ async def get_status_checks():
 async def get_multibagger_candidates(refresh_nonce: str | None = Query(default=None)):
     _ = refresh_nonce
     return await _build_multibagger_candidates(_utc_now_iso())
+
+
+class MultibaggerCustomSearchRequest(BaseModel):
+    symbol: str
+
+
+@api_router.post("/multibagger/custom-search", response_model=MultibaggerCandidate)
+async def multibagger_custom_search(
+    payload: MultibaggerCustomSearchRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Analyze any NSE symbol on-demand using the multibagger scoring engine."""
+    symbol = payload.symbol.strip().upper()
+    refreshed_at = _utc_now_iso()
+
+    try:
+        core = await _get_stock_core_cached(symbol)
+        if core.get("ltp") is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No live data for '{symbol}'. Ensure it is a valid NSE symbol (e.g. RELIANCE, INFY).",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Symbol '{symbol}' not found or unavailable: {exc}",
+        ) from exc
+
+    stock = StockCoreNormalized(**core)
+    fundamental: dict = {}
+    try:
+        fundamental = await _get_fundamental_data(symbol)
+    except Exception:
+        pass
+
+    analysis = compute_multibagger_analysis(stock, fundamental=fundamental)
+
+    return MultibaggerCandidate(
+        symbol=stock.symbol,
+        company_name=stock.company_name,
+        sector=stock.sector,
+        ltp=stock.ltp,
+        market_cap_cr=stock.market_cap,
+        pe_ratio=stock.pe_ratio,
+        year_high=stock.year_high,
+        year_low=stock.year_low,
+        upside_to_52w_high_pct=analysis["upside_to_52w_high_pct"],
+        pb_ratio_est=analysis["pb_ratio_est"],
+        peg_ratio_est=analysis["peg_ratio_est"],
+        tier_pass_count=analysis["tier_pass_count"],
+        is_potential_multibagger=analysis["is_potential_multibagger"],
+        multibagger_score=analysis["multibagger_score"],
+        current_rsi_level=analysis["current_rsi_level"],
+        gtt_buy_price=analysis["gtt_buy_price"],
+        targeted_upside_price=analysis["targeted_upside_price"],
+        targeted_upside_profit_pct=analysis["targeted_upside_profit_pct"],
+        thesis=analysis["thesis"],
+        analysis_refreshed_at=refreshed_at,
+        roe=analysis.get("roe"),
+        roce=analysis.get("roce"),
+        piotroski_score=analysis.get("piotroski_score"),
+        beneish_m_score=analysis.get("beneish_m_score"),
+        eps_growth_pct=analysis.get("eps_growth_pct"),
+        debt_to_equity=analysis.get("debt_to_equity"),
+        current_ratio=analysis.get("current_ratio"),
+        gross_margin=analysis.get("gross_margin"),
+    )
 
 
 @api_router.get("/fno/contracts", response_model=List[FNOContract])

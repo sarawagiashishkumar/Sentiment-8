@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
@@ -316,6 +316,10 @@ export default function App() {
   const [multibaggerData, setMultibaggerData] = useState(null);
   const [multibaggerLoading, setMultibaggerLoading] = useState(false);
   const [multibaggerError, setMultibaggerError] = useState("");
+  const [customMbSymbol, setCustomMbSymbol] = useState("");
+  const [customMbResult, setCustomMbResult] = useState(null);
+  const [customMbLoading, setCustomMbLoading] = useState(false);
+  const [customMbError, setCustomMbError] = useState("");
 
   const [fnoData, setFnoData] = useState(null);
   const exportTableRef = useRef(null);
@@ -538,6 +542,26 @@ export default function App() {
       setMultibaggerError(error?.response?.data?.detail || "Unable to generate multibagger list");
     } finally {
       setMultibaggerLoading(false);
+    }
+  };
+
+  const searchCustomMbStock = async (e) => {
+    e.preventDefault();
+    if (!customMbSymbol.trim()) return;
+    setCustomMbError("");
+    setCustomMbResult(null);
+    setCustomMbLoading(true);
+    try {
+      const response = await axios.post(
+        `${API}/multibagger/custom-search`,
+        { symbol: customMbSymbol.trim().toUpperCase() },
+        { headers: authHeaders }
+      );
+      setCustomMbResult(response.data);
+    } catch (error) {
+      setCustomMbError(error?.response?.data?.detail || `No data found for '${customMbSymbol}'. Check the NSE symbol.`);
+    } finally {
+      setCustomMbLoading(false);
     }
   };
 
@@ -1175,6 +1199,26 @@ export default function App() {
                 <p className="text-sm text-slate-300" data-testid="multibagger-score-note">
                   Minimum score: <span className="font-mono text-cyan-300">{minScore}</span>
                 </p>
+                {/* Custom stock search */}
+                <form onSubmit={searchCustomMbStock} className="flex flex-col gap-2 sm:flex-row" data-testid="mb-custom-search-form">
+                  <Input
+                    value={customMbSymbol}
+                    onChange={(e) => setCustomMbSymbol(e.target.value.toUpperCase())}
+                    placeholder="Search any NSE symbol (e.g. RELIANCE, INFY)"
+                    className="font-mono border-slate-700 bg-slate-900 text-slate-100"
+                    data-testid="mb-custom-search-input"
+                  />
+                  <Button
+                    type="submit"
+                    disabled={customMbLoading || !customMbSymbol.trim()}
+                    className="border border-cyan-700 bg-cyan-900/30 text-cyan-300 hover:bg-cyan-800/50"
+                    data-testid="mb-custom-search-btn"
+                  >
+                    <RefreshCw size={14} className={customMbLoading ? "animate-spin mr-1" : "mr-1"} />
+                    {customMbLoading ? "Analyzing..." : "Analyze Stock"}
+                  </Button>
+                </form>
+                {customMbError ? <p className="text-sm text-rose-400" data-testid="mb-custom-search-error">{customMbError}</p> : null}
                 {multibaggerError ? <p className="text-sm text-rose-400" data-testid="multibagger-error">{multibaggerError}</p> : null}
                 {!multibaggerData ? (
                   <p className="text-sm text-slate-400" data-testid="multibagger-empty-note">
@@ -1212,10 +1256,9 @@ export default function App() {
                           <TableHead>Score</TableHead>
                         </TableRow>
                       </TableHeader>
-                      <TableBody>
                         {filteredMultibaggers.map((row) => (
-                          <Fragment key={`fragment-${row.symbol}`}>
-                            <TableRow key={`${row.symbol}-target`} className="result-row cursor-pointer hover:bg-white/5 transition-colors" data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
+                          <TableBody key={`group-${row.symbol}`} className="multibagger-group cursor-pointer">
+                            <TableRow data-testid={`multibagger-target-row-${row.symbol.toLowerCase()}`}>
                               <TableCell className="font-mono text-cyan-300">{row.company_name}</TableCell>
                               <TableCell>{row.sector}</TableCell>
                               <TableCell className="font-mono">{formatNumber(row.current_rsi_level)}</TableCell>
@@ -1233,8 +1276,7 @@ export default function App() {
                                 </Badge>
                               </TableCell>
                             </TableRow>
-
-                            <TableRow key={`${row.symbol}-roi`} className="result-row cursor-pointer hover:bg-white/5 transition-colors" data-testid={`multibagger-roi-row-${row.symbol.toLowerCase()}`}>
+                            <TableRow data-testid={`multibagger-roi-row-${row.symbol.toLowerCase()}`}>
                               <TableCell className="font-mono text-slate-400">{row.symbol}</TableCell>
                               <TableCell className="text-slate-500">Tier: {row.tier_pass_count}/8</TableCell>
                               <TableCell className="text-slate-500">LTP: ₹{formatNumber(row.ltp)}</TableCell>
@@ -1252,11 +1294,9 @@ export default function App() {
                                 </Badge>
                               </TableCell>
                             </TableRow>
-
-                            {/* Fundamentals row */}
                             {(row.roe != null || row.roce != null || row.piotroski_score != null || row.beneish_m_score != null || row.eps_growth_pct != null) ? (
-                              <TableRow key={`${row.symbol}-fundamentals`} className="result-row hover:bg-white/5 transition-colors bg-slate-900/40" data-testid={`multibagger-fundamentals-row-${row.symbol.toLowerCase()}`}>
-                                <TableCell colSpan={12} className="py-1">
+                              <TableRow data-testid={`multibagger-fundamentals-row-${row.symbol.toLowerCase()}`}>
+                                <TableCell colSpan={12} className="py-1 bg-slate-900/40">
                                   <div className="flex flex-wrap gap-2 text-xs">
                                     {row.roe != null && (
                                       <span className={`rounded px-2 py-0.5 font-semibold ${row.roe >= 20 ? 'bg-emerald-900/50 text-emerald-300' : row.roe >= 12 ? 'bg-yellow-900/50 text-yellow-300' : 'bg-rose-900/50 text-rose-300'}`}>
@@ -1292,9 +1332,8 @@ export default function App() {
                                 </TableCell>
                               </TableRow>
                             ) : null}
-
-                            <TableRow key={`${row.symbol}-thesis`} className="result-row hover:bg-white/5 transition-colors" data-testid={`multibagger-thesis-row-${row.symbol.toLowerCase()}`}>
-                              <TableCell colSpan={12} className="py-2 text-xs text-slate-300 leading-relaxed">
+                            <TableRow data-testid={`multibagger-thesis-row-${row.symbol.toLowerCase()}`}>
+                              <TableCell colSpan={12} className="py-2 text-xs text-slate-300 leading-relaxed border-b border-slate-800/60">
                                 <span className="font-semibold text-cyan-400 mr-2">Thesis:</span>
                                 {(row.thesis || "No thesis available").split(" | ").map((part, i) => (
                                   <span key={i} className="inline-block mr-3 mb-1">
@@ -1304,8 +1343,132 @@ export default function App() {
                                 ))}
                               </TableCell>
                             </TableRow>
-                          </Fragment>
+                          </TableBody>
                         ))}
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {/* Custom stock search result */}
+            {customMbResult ? (
+              <Card className="result-card border-cyan-800/50 bg-slate-950/70" data-testid="mb-custom-result-card">
+                <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                  <CardTitle className="text-white text-base">
+                    Custom Analysis: <span className="font-mono text-cyan-300">{customMbResult.symbol}</span>
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Badge className={`border ${scoreBadge(customMbResult.is_potential_multibagger)}`}>
+                      Score: {customMbResult.multibagger_score}
+                    </Badge>
+                    <Badge className={`border ${scoreBadge(customMbResult.is_potential_multibagger)}`}>
+                      {customMbResult.is_potential_multibagger ? "POTENTIAL MULTIBAGGER" : "WATCHLIST"}
+                    </Badge>
+                    <button
+                      onClick={() => setCustomMbResult(null)}
+                      className="text-slate-400 hover:text-white"
+                      data-testid="mb-custom-result-close"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="relative w-full overflow-auto rounded-lg border border-slate-800" data-testid="mb-custom-result-table-wrapper">
+                    <Table>
+                      <TableHeader className="bg-slate-900">
+                        <TableRow>
+                          <TableHead>Stock</TableHead>
+                          <TableHead>Sector</TableHead>
+                          <TableHead>RSI</TableHead>
+                          <TableHead>GTT Buy</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>1W</TableHead>
+                          <TableHead>1M</TableHead>
+                          <TableHead>3M</TableHead>
+                          <TableHead>6M</TableHead>
+                          <TableHead>9M</TableHead>
+                          <TableHead>1Y</TableHead>
+                          <TableHead>Score</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody className="multibagger-group cursor-pointer" data-testid="mb-custom-result-group">
+                        <TableRow>
+                          <TableCell className="font-mono text-cyan-300">{customMbResult.company_name}</TableCell>
+                          <TableCell>{customMbResult.sector}</TableCell>
+                          <TableCell className="font-mono">{formatNumber(customMbResult.current_rsi_level)}</TableCell>
+                          <TableCell className="font-mono">₹{formatNumber(customMbResult.gtt_buy_price)}</TableCell>
+                          <TableCell className="text-slate-400">Targeted Upside Price</TableCell>
+                          <TableCell className="font-mono">₹{formatNumber(customMbResult.targeted_upside_price?.["1W"])}</TableCell>
+                          <TableCell className="font-mono">₹{formatNumber(customMbResult.targeted_upside_price?.["1M"])}</TableCell>
+                          <TableCell className="font-mono">₹{formatNumber(customMbResult.targeted_upside_price?.["3M"])}</TableCell>
+                          <TableCell className="font-mono">₹{formatNumber(customMbResult.targeted_upside_price?.["6M"])}</TableCell>
+                          <TableCell className="font-mono">₹{formatNumber(customMbResult.targeted_upside_price?.["9M"])}</TableCell>
+                          <TableCell className="font-mono">₹{formatNumber(customMbResult.targeted_upside_price?.["1Y"])}</TableCell>
+                          <TableCell>
+                            <Badge className={`border ${scoreBadge(customMbResult.is_potential_multibagger)}`}>
+                              {customMbResult.multibagger_score}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="font-mono text-slate-400">{customMbResult.symbol}</TableCell>
+                          <TableCell className="text-slate-500">Tier: {customMbResult.tier_pass_count}/8</TableCell>
+                          <TableCell className="text-slate-500">LTP: ₹{formatNumber(customMbResult.ltp)}</TableCell>
+                          <TableCell className="text-slate-500">PE: {formatNumber(customMbResult.pe_ratio)}</TableCell>
+                          <TableCell className="text-slate-400">% Profit</TableCell>
+                          <TableCell className="font-mono text-emerald-300">{formatNumber(customMbResult.targeted_upside_profit_pct?.["1W"])}%</TableCell>
+                          <TableCell className="font-mono text-emerald-300">{formatNumber(customMbResult.targeted_upside_profit_pct?.["1M"])}%</TableCell>
+                          <TableCell className="font-mono text-emerald-300">{formatNumber(customMbResult.targeted_upside_profit_pct?.["3M"])}%</TableCell>
+                          <TableCell className="font-mono text-emerald-300">{formatNumber(customMbResult.targeted_upside_profit_pct?.["6M"])}%</TableCell>
+                          <TableCell className="font-mono text-emerald-300">{formatNumber(customMbResult.targeted_upside_profit_pct?.["9M"])}%</TableCell>
+                          <TableCell className="font-mono text-emerald-300">{formatNumber(customMbResult.targeted_upside_profit_pct?.["1Y"])}%</TableCell>
+                          <TableCell>
+                            <Badge className={`border ${scoreBadge(customMbResult.is_potential_multibagger)}`}>
+                              {customMbResult.is_potential_multibagger ? "POTENTIAL" : "WATCH"}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                        {(customMbResult.roe != null || customMbResult.roce != null || customMbResult.piotroski_score != null) ? (
+                          <TableRow>
+                            <TableCell colSpan={12} className="py-1 bg-slate-900/40">
+                              <div className="flex flex-wrap gap-2 text-xs">
+                                {customMbResult.roe != null && (
+                                  <span className={`rounded px-2 py-0.5 font-semibold ${customMbResult.roe >= 20 ? 'bg-emerald-900/50 text-emerald-300' : customMbResult.roe >= 12 ? 'bg-yellow-900/50 text-yellow-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                    ROE: {customMbResult.roe}%
+                                  </span>
+                                )}
+                                {customMbResult.roce != null && (
+                                  <span className={`rounded px-2 py-0.5 font-semibold ${customMbResult.roce >= 15 ? 'bg-emerald-900/50 text-emerald-300' : 'bg-yellow-900/50 text-yellow-300'}`}>
+                                    ROCE: {customMbResult.roce}%
+                                  </span>
+                                )}
+                                {customMbResult.piotroski_score != null && (
+                                  <span className={`rounded px-2 py-0.5 font-semibold ${customMbResult.piotroski_score >= 7 ? 'bg-emerald-900/50 text-emerald-300' : customMbResult.piotroski_score >= 5 ? 'bg-yellow-900/50 text-yellow-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                    Piotroski: {customMbResult.piotroski_score}/9
+                                  </span>
+                                )}
+                                {customMbResult.debt_to_equity != null && (
+                                  <span className={`rounded px-2 py-0.5 font-semibold ${customMbResult.debt_to_equity < 0.5 ? 'bg-emerald-900/50 text-emerald-300' : customMbResult.debt_to_equity < 1.5 ? 'bg-yellow-900/50 text-yellow-300' : 'bg-rose-900/50 text-rose-300'}`}>
+                                    D/E: {Number(customMbResult.debt_to_equity).toFixed(2)}
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                        <TableRow>
+                          <TableCell colSpan={12} className="py-2 text-xs text-slate-300 leading-relaxed">
+                            <span className="font-semibold text-cyan-400 mr-2">Thesis:</span>
+                            {(customMbResult.thesis || "No thesis available").split(" | ").map((part, i) => (
+                              <span key={i} className="inline-block mr-3 mb-1">
+                                {i > 0 && <span className="text-slate-600 mr-3">|</span>}
+                                {part}
+                              </span>
+                            ))}
+                          </TableCell>
+                        </TableRow>
                       </TableBody>
                     </Table>
                   </div>
@@ -1475,9 +1638,16 @@ export default function App() {
                           </div>
                           {/* BEST EXIT for custom positions */}
                           {exitPrice && position.status !== "SOLD" ? (
-                            <p className="mt-2 text-sm font-semibold text-green-400" data-testid={`custom-position-best-exit-${position.id}`}>
-                              ⭐BEST EXIT: T+{position.best_exit_days ?? "?"} @ ₹{formatNumber(exitPrice)}
-                            </p>
+                            <div className="mt-2">
+                              {position.remaining_trading_days <= 2 && position.remaining_trading_days > 0 && (
+                                <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
+                                  ⚠ Near Expiry ({position.remaining_trading_days} trading days left)
+                                </span>
+                              )}
+                              <p className="text-sm font-semibold text-green-400" data-testid={`custom-position-best-exit-${position.id}`}>
+                                ⭐ BEST EXIT: T+{position.best_exit_days ?? "?"} Trading Days{position.best_exit_date_str ? ` (${position.best_exit_date_str})` : ""} @ ₹{formatNumber(exitPrice)}
+                              </p>
+                            </div>
                           ) : null}
                           <div className="mt-3 flex items-center justify-end gap-2">
                             {position.can_sell ? (
@@ -1657,12 +1827,17 @@ export default function App() {
                                       <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                                     </div>
                                     {renderLiveInfoBox(signal, `assured-${pane.index_name.toLowerCase()}-${idx}`)}
-                                    <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
+                                    <p>Expiry: {formatExpiryDate(signal.expiry)}{signal.remaining_trading_days > 0 ? ` · ${signal.remaining_trading_days} trading days left` : ""}</p>
+                                    {signal.remaining_trading_days <= 2 && signal.remaining_trading_days > 0 && (
+                                      <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
+                                        ⚠ Near Expiry
+                                      </span>
+                                    )}
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
                                     {signal.best_exit_price && (
                                       <p className="text-green-400 font-semibold text-sm">
-                                        ⭐BEST EXIT: T+{signal.best_exit_days} @ ₹{formatNumber(signal.best_exit_price)}
+                                        ⭐ BEST EXIT: T+{signal.best_exit_days} Trading Days{signal.best_exit_date_str ? ` (${signal.best_exit_date_str})` : ""} @ ₹{formatNumber(signal.best_exit_price)}
                                       </p>
                                     )}
                                     {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
@@ -1701,7 +1876,12 @@ export default function App() {
                                       <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                                     </div>
                                     {renderLiveInfoBox(signal, `watch-${pane.index_name.toLowerCase()}-${idx}`)}
-                                    <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
+                                    <p>Expiry: {formatExpiryDate(signal.expiry)}{signal.remaining_trading_days > 0 ? ` · ${signal.remaining_trading_days} trading days left` : ""}</p>
+                                    {signal.remaining_trading_days <= 2 && signal.remaining_trading_days > 0 && (
+                                      <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
+                                        ⚠ Near Expiry
+                                      </span>
+                                    )}
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
                                   </div>
@@ -1769,14 +1949,19 @@ export default function App() {
                               <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
                             </div>
                             {renderLiveInfoBox(signal, `stock-${idx}`)}
-                            <p data-testid={`stock-fno-signal-expiry-${signal.script.toLowerCase()}`}>Expiry: {formatExpiryDate(signal.expiry)} (monthly stock contract)</p>
+                            <p data-testid={`stock-fno-signal-expiry-${signal.script.toLowerCase()}`}>Expiry: {formatExpiryDate(signal.expiry)}{signal.remaining_trading_days > 0 ? ` · ${signal.remaining_trading_days} trading days left` : ""} (monthly stock contract)</p>
+                            {signal.remaining_trading_days <= 2 && signal.remaining_trading_days > 0 && (
+                              <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
+                                ⚠ Near Expiry
+                              </span>
+                            )}
                             <p>Entry: ₹{formatNumber(signal.entry_price)}</p>
                             <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
                             <p>T1/T2: ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                             <p>Confidence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score}</p>
                             {signal.best_exit_price && (
                               <p className="text-green-400 font-semibold text-sm">
-                                ⭐BEST EXIT: T+{signal.best_exit_days} @ ₹{formatNumber(signal.best_exit_price)}
+                                ⭐ BEST EXIT: T+{signal.best_exit_days} Trading Days{signal.best_exit_date_str ? ` (${signal.best_exit_date_str})` : ""} @ ₹{formatNumber(signal.best_exit_price)}
                               </p>
                             )}
                             {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
@@ -1821,9 +2006,14 @@ export default function App() {
                               <p>SL: ₹{formatNumber(trade.stop_loss)}</p>
                               <p>T1/T2: ₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</p>
                               <p>Confidence: {trade.confluence_score >= 80 ? "⭐ " : ""}{trade.confluence_score} | {trade.direction}</p>
+                              {trade.remaining_trading_days <= 2 && trade.remaining_trading_days > 0 && (
+                                <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
+                                  ⚠ Near Expiry ({trade.remaining_trading_days} days)
+                                </span>
+                              )}
                               {trade.best_exit_price && (
                                 <p className="text-green-400 font-semibold text-sm">
-                                  ⭐BEST EXIT: T+{trade.best_exit_days} @ ₹{formatNumber(trade.best_exit_price)}
+                                  ⭐ BEST EXIT: T+{trade.best_exit_days} Trading Days{trade.best_exit_date_str ? ` (${trade.best_exit_date_str})` : ""} @ ₹{formatNumber(trade.best_exit_price)}
                                 </p>
                               )}
                               {(trade.underlying_day_change_pct !== null || trade.underlying_bias_score !== null) && (

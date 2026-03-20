@@ -1,0 +1,72 @@
+{
+  "summary": "Iteration 15: Tested 3 new features: (1) Multibagger hover with tbody.multibagger-group CSS approach, (2) Custom stock search in Multibagger section, (3) F&O T1/T2/Best Exit expiry-aware projections with theta decay and date format. Found and fixed a critical backend bug where _position_to_response was missing best_exit_date_str and remaining_trading_days fields from the constructor call.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "bugs_found_and_fixed": [
+    {
+      "file": "/app/backend/server.py",
+      "function": "_position_to_response (line 4506-4540)",
+      "issue": "Missing best_exit_date_str and remaining_trading_days from CustomPositionResponse constructor call. They were defined in the Pydantic model but not passed, causing them to always return defaults (None and 0) regardless of what was stored in MongoDB.",
+      "fix": "Added best_exit_date_str=position.get('best_exit_date_str') and remaining_trading_days=int(position.get('remaining_trading_days') or 0) to the constructor call.",
+      "impact": "Custom position cards were always showing 'T+N Trading Days @ ₹X' WITHOUT the date. After fix: 'T+2 Trading Days (24 Mar 2026) @ ₹7.85' is displayed correctly.",
+      "priority": "HIGH"
+    }
+  ],
+
+  "test_results": {
+    "rishaan_2017_login": "PASS - User created (didn't exist), login via username-only flow works",
+    "mb_custom_search_input_visible": "PASS - data-testid='mb-custom-search-input' with placeholder 'Search any NSE symbol (e.g. RELIANCE, INFY)'",
+    "mb_custom_search_btn_visible": "PASS - data-testid='mb-custom-search-btn' found ('Analyze Stock')",
+    "tbody_multibagger_group_dom": "PASS - 52 stock groups, each with exactly 4 rows in tbody.multibagger-group",
+    "hover_all_4_rows_white": "PASS - All 4 rows in tbody.multibagger-group get rgb(255,255,255) background and rgb(26,26,26) text on hover (CSS and live test verified)",
+    "reliance_custom_search": "PASS - Result card appeared with 4-row block, symbol=RELIANCE, score=78",
+    "invalidxyz123_error": "PASS - Error: 'No live data for INVALIDXYZ123. Ensure it is a valid NSE symbol'",
+    "fno_best_exit_format": "PASS - All signals show 'T+N Trading Days (DD MMM YYYY)' format e.g. 'T+2 Trading Days (24 Mar 2026)'",
+    "remaining_trading_days_in_expiry": "PASS - '3 trading days left', '6 trading days left' shown in expiry lines",
+    "near_expiry_badge": "NOT TESTABLE - No contracts with <=2 trading days currently; code logic verified correct (badge shows when remaining_trading_days <= 2 && > 0)",
+    "custom_position_best_exit_date": "PASS after fix - Now shows 'T+2 Trading Days (24 Mar 2026) @ ₹7.85'"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration15_new_features.py",
+    "/app/test_reports/pytest/iteration15_results.xml"
+  ],
+
+  "action_items": [
+    "Near Expiry badge (remaining_trading_days <= 2) cannot be tested live today (no contracts near expiry). Consider creating a test with mocked expiry data or waiting for a contract to approach expiry.",
+    "rishaan@2017 user was just created with 0 credits. Main agent may want to add credits for the user if it's a real test account."
+  ],
+
+  "critical_code_review_comments": [
+    "BUG FIXED: _position_to_response was missing best_exit_date_str and remaining_trading_days from Pydantic constructor - caused them to always default to None/0 even after DB updates",
+    "The NSE_HOLIDAYS set does not include 2026-03-25 (Holi) but this is already present - trading day count is correct",
+    "get_remaining_trading_days works correctly returning 6 days from today (March 20) to March 30 expiry, excluding March 25 holiday and weekends",
+    "Custom search endpoint correctly handles uppercase/lowercase normalization and returns 404 for invalid symbols"
+  ],
+
+  "updated_files": ["/app/backend/server.py"],
+
+  "success_rate": {
+    "backend": "100% (15/15 passed, 1 skipped)",
+    "frontend": "100% (all critical flows verified)"
+  },
+
+  "seed_data_creation": "Created user rishaan@2017 via admin API (POST /api/admin/users)",
+
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+
+  "context_for_next_testing_agent": "All 3 new features tested and working. Bug found and fixed in _position_to_response (missing best_exit_date_str and remaining_trading_days). The multibagger table uses 52 tbody.multibagger-group elements each with 4 rows. Hover works correctly (all 4 rows turn white). Custom search works for valid (RELIANCE, INFY) and invalid (INVALIDXYZ123) symbols. F&O T+N Trading Days (DD MMM YYYY) format works for both generated signals and custom position cards. Near Expiry badge (remaining_trading_days <= 2) code is present but could not be tested live. rishaan@2017 user exists with 0 credits. @shish123 is the owner/admin with EXEMPT credits.",
+
+  "rca_of_issue": "Bug: _position_to_response at line 4506 creates CustomPositionResponse with explicit field assignments. The fields best_exit_date_str and remaining_trading_days were added to the CustomPositionResponse Pydantic model but were NOT added to the constructor call. Since Pydantic uses defaults (None and 0) for missing optional fields, the API always returned these as None/0 regardless of what was computed and stored in MongoDB. Fix: Add the two missing field assignments to the _position_to_response constructor call."
+}
