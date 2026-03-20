@@ -136,3 +136,36 @@ Build a minimalist full-stack stock analysis web app using FastAPI (Python) back
 - [ ] Real-time WebSocket for live P/L updates
 - [ ] Backtesting module for signals
 - [ ] Email/SMS alerts for target hits
+
+---
+
+## CHANGELOG (Mar 20, 2026 - Session 2)
+
+### Feature: F&O Export
+- Export Results button (CSV/XLS/JPG) added to F&O page
+- Columns: Script | Bias | Lot | Entry ₹ | Investment | SL | T1 | T1% | T1 Profit | T2 | T2% | T2 Profit | Conf
+- JPG heading: white text on #1E3A5F dark background (html2canvas safe)
+- LOT_SIZE_MAP expanded with 100+ NSE F&O stocks for correct Lot in all exports
+
+### Fix: F&O HIGH Confidence Golden Star
+- ⭐ appears next to Confidence score in all result cards when score ≥ 80
+- Applied to: renderLiveInfoBox, stock signals, Top 4 trades, custom signal, JPG export
+
+### Feature: Domain Mapping — Complete
+- ADD: POST /api/admin/domain-mappings (saves to MongoDB, returns DNS instructions)
+- VIEW: Listed in admin config with status badges (ACTIVE/PENDING/NGINX_CONFIG_GENERATED/FAILED)
+- DELETE: DELETE /api/admin/domain-mappings/{domain} with confirm dialog in UI
+- MAP: POST /api/admin/domain-mappings/{domain}/map — writes nginx reverse-proxy config, attempts reload, returns result in UI
+- DNS Instructions toggle per domain in admin panel
+
+### Fix: Portfolio & Multibagger Hover
+- Portfolio card hover: background #FFFFFF, border-radius 8px, box-shadow, all text #1A1A1A
+- Multibagger row hover: background #FFFFFF, all text #1A1A1A
+- CSS specificity fixed to override conflicting generic rules
+
+### Fix: Portfolio "No Live Data" Error
+- _analyze_portfolio_positions now tries symbol variants (-EQ removal, uppercase trim) before failing
+- Failed symbols collected in failed_symbols[] list — never block whole analysis
+- PortfolioAnalyzeResponse includes failed_symbols field
+- Frontend shows yellow warning badge per failed symbol (non-blocking)
+- Server-side logging for all failed symbols
