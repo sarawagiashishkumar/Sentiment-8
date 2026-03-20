@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 14 testing of 4 fix batches: F&O golden star, JPG heading colors, Domain Mapping CRUD+UI, Portfolio failed_symbols banner, Portfolio/Multibagger hover CSS. All 13 backend tests PASS. All frontend acceptance criteria PASS. One CSS specificity bug found and fixed in App.css (portfolio hover was overridden by a more-specific conflicting rule).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14_fixes.py",
+    "/app/test_reports/pytest/iteration14_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FIXED: App.css had CSS specificity conflict - '[data-testid=\"portfolio-page\"] [data-testid*=\"portfolio-stock-\"]:hover' (specificity 0,3,0) was overriding the Fix 3 rule '[data-testid*=\"portfolio-stock-\"]:hover' (specificity 0,2,0), causing background to be rgba(255,255,255,0.08) instead of solid #FFFFFF. Fixed by: (1) removing portfolio-stock-hover from the generic group rule, (2) adding the portfolio-page prefix to Fix 3 rule so both rules are equally specific but Fix 3 (being later in file) wins. Also removed conflicting child element color rules at old lines 112-115.",
+    "MINOR: The F&O export hidden table check for '#1E3A5F' detects as 'False' via JavaScript string search because the browser normalizes hex to rgb(). Actual color is correct: rgb(30,58,95) = #1E3A5F white text on dark background - confirmed correct.",
+    "NOTE: MultiBagger hover CSS uses 'tr.result-row' class to increase specificity over generic 'tr:hover' - CSS specificity is correct and correctly overrides conflicting rules."
+  ],
+  "updated_files": ["/app/frontend/src/App.css"],
+  "success_rate": {
+    "backend": "100% (13/13 tests pass)",
+    "frontend": "100% - all 14 acceptance criteria verified"
+  },
+  "seed_data_creation": "Created and deleted test domain 'ui-test-14.example.com' and 'test-iteration14.example.com' via API/UI for testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 14 fixes all verified. Auth: POST /api/auth/access with {username: '@shish123'}. F&O mock needs full FNOGenerateResponse structure with index_name in nifty_projection/banknifty_projection and proper FNOSignalResponse fields. Portfolio mock: POST /api/portfolio/analyze returns failed_symbols list. Domain mapping UI: admin domain cards have MAP/DNS Instructions/Delete buttons. CSS fix applied in App.css for portfolio hover white background.",
+  "test_details": {
+    "T1_golden_star": "PASS - Confluence score >= 80 shows '⭐ ' prefix in Confidence line in top4-trade cards and assured/watchlist signal cards",
+    "T2_jpg_heading": "PASS - Hidden export table h2 has color:rgb(255,255,255) (white) on background:rgb(30,58,95) (#1E3A5F dark) - verified via computed styles",
+    "T3_jpg_heading_th": "PASS - Table header th elements have explicit color:#FFFFFF in inline style",
+    "T4_domain_create": "PASS - POST /api/admin/domain-mappings creates domain with status=PENDING",
+    "T5_domain_view": "PASS - GET /api/admin/config returns domain_mappings array including new domain",
+    "T6_domain_map": "PASS - POST /api/admin/domain-mappings/{domain}/map returns {mapped:true, nginx_status:'NGINX_CONFIG_GENERATED'} in K8s env",
+    "T7_domain_delete": "PASS - DELETE /api/admin/domain-mappings/{domain} removes domain and returns {deleted:true}",
+    "T8_delete_404": "PASS - DELETE on non-existent domain returns 404",
+    "T9_ui_delete_confirm": "PASS - Delete button shows confirm dialog with Yes/No; Cancel dismisses without deleting",
+    "T10_ui_delete_confirm_yes": "PASS - Yes button in confirm dialog calls DELETE endpoint and removes domain from list",
+    "T11_ui_map_button": "PASS - MAP button shows 'Mapped (NGINX_CONFIG_GENERATED) — DNS must point to server IP' result",
+    "T12_ui_dns_toggle": "PASS - DNS Instructions toggle shows/hides per-domain setup instructions panel",
+    "T13_ui_status_badges": "PASS - PENDING (yellow), FAILED (red), NGINX_CONFIG_GENERATED (yellow) badges showing correctly",
+    "T14_portfolio_failed_symbols_backend": "PASS - RELIANCE returns in stocks[], WEBELSOLAR in failed_symbols[] (or live data available for WEBELSOLAR)",
+    "T15_portfolio_failed_banner": "PASS - Banner '[data-testid=portfolio-failed-symbols-banner]' visible with yellow WEBELSOLAR badge",
+    "T16_portfolio_hover_bg": "PASS (FIXED) - Portfolio card background on hover is rgb(255,255,255) solid white (fixed CSS specificity bug)",
+    "T17_portfolio_hover_text": "PASS (FIXED) - Portfolio card text color on hover is rgb(26,26,26) (#1A1A1A dark)",
+    "T18_multibagger_hover_css": "PASS - CSS rules for multibagger tr.result-row:hover correctly set background:#FFFFFF and color:#1A1A1A with higher specificity than conflicting generic rule",
+    "T19_lot_size_map": "PASS - LOT_SIZE_MAP in server.py confirmed: HDFCBANK=550, ICICIBANK=700, INFY=300, BAJFINANCE=250, WEBELSOLAR=625"
+  }
+}

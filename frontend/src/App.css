@@ -61,13 +61,38 @@
     color: #f8fafc !important;
 }
 
-/* White background on hover for Portfolio & Multibagger blocks */
+/* White background on hover for Multibagger blocks (not portfolio-stock, handled separately) */
 [data-testid="multibagger-table"] tbody tr:hover,
-[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover,
 [data-testid="portfolio-page"] tbody tr:hover {
     background: rgba(255, 255, 255, 0.08) !important;
     border-color: #38bdf8 !important;
     color: #f8fafc !important;
+}
+
+/* Fix 3: Portfolio & Multibagger — white card on hover */
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover,
+[data-testid*="portfolio-stock-"]:hover {
+    background: #FFFFFF !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+    padding: 10px !important;
+    color: #1A1A1A !important;
+}
+[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover *,
+[data-testid*="portfolio-stock-"]:hover * {
+    color: #1A1A1A !important;
+}
+
+[data-testid="multibagger-table"] tbody tr.result-row:hover td,
+[data-testid="multibagger-table"] tbody tr.result-row:hover {
+    background: #FFFFFF !important;
+    color: #1A1A1A !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+[data-testid="multibagger-table"] tbody tr.result-row:hover td *,
+[data-testid="multibagger-table"] tbody tr.result-row:hover span,
+[data-testid="multibagger-table"] tbody tr.result-row:hover badge {
+    color: #1A1A1A !important;
 }
 
 .result-hover:hover p,
@@ -84,10 +109,6 @@
 [data-testid="admin-users-table"] tbody tr:hover span,
 [data-testid="admin-users-table"] tbody tr:hover td,
 [data-testid="admin-users-table"] tbody tr:hover th,
-[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover p,
-[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover span,
-[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover td,
-[data-testid="portfolio-page"] [data-testid*="portfolio-stock-"]:hover th,
 [data-testid="portfolio-page"] tbody tr:hover p,
 [data-testid="portfolio-page"] tbody tr:hover span,
 [data-testid="portfolio-page"] tbody tr:hover td,

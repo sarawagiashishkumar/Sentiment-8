@@ -117,10 +117,10 @@ const buildExportRow = (signal) => {
     "Investment (₹)": investment,
     SL: sl,
     T1: t1,
-    "T1%": `${t1Pct.toFixed(2)}%`,
+    "T1%": t1Pct,
     "T1 Profit ₹": t1Profit,
     T2: t2,
-    "T2%": `${t2Pct.toFixed(2)}%`,
+    "T2%": t2Pct,
     "T2 Profit ₹": t2Profit,
     Conf: conf,
   };
@@ -368,6 +368,9 @@ export default function App() {
     strict_live_only: true,
   });
   const [domainForm, setDomainForm] = useState({ domain: "", target_record: "" });
+  const [domainDeleteConfirm, setDomainDeleteConfirm] = useState(null); // domain string to confirm
+  const [domainMapStatus, setDomainMapStatus] = useState({}); // { domain: {loading, result} }
+  const [expandedDnsInstructions, setExpandedDnsInstructions] = useState({}); // { domain: bool }
   const [kiteStatus, setKiteStatus] = useState(null);
   const [createForm, setCreateForm] = useState({
     username: "",
@@ -905,6 +908,27 @@ export default function App() {
       await loadAdminConfig();
     } catch (error) {
       setAdminError(error?.response?.data?.detail || "Unable to update domain status");
+    }
+  };
+
+  const deleteDomainMapping = async (domain) => {
+    try {
+      await axios.delete(`${API}/admin/domain-mappings/${encodeURIComponent(domain)}`, { headers: authHeaders });
+      setDomainDeleteConfirm(null);
+      await loadAdminConfig();
+    } catch (error) {
+      setAdminError(error?.response?.data?.detail || "Unable to delete domain mapping");
+    }
+  };
+
+  const mapDomain = async (domain) => {
+    setDomainMapStatus((prev) => ({ ...prev, [domain]: { loading: true, result: null } }));
+    try {
+      const resp = await axios.post(`${API}/admin/domain-mappings/${encodeURIComponent(domain)}/map`, {}, { headers: authHeaders });
+      setDomainMapStatus((prev) => ({ ...prev, [domain]: { loading: false, result: resp.data } }));
+      await loadAdminConfig();
+    } catch (error) {
+      setDomainMapStatus((prev) => ({ ...prev, [domain]: { loading: false, result: { error: error?.response?.data?.detail || "Map failed" } } }));
     }
   };
 
@@ -1635,7 +1659,7 @@ export default function App() {
                                     {renderLiveInfoBox(signal, `assured-${pane.index_name.toLowerCase()}-${idx}`)}
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
-                                    <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
+                                    <p>Confluence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
                                     {signal.best_exit_price && (
                                       <p className="text-green-400 font-semibold text-sm">
                                         ⭐BEST EXIT: T+{signal.best_exit_days} @ ₹{formatNumber(signal.best_exit_price)}
@@ -1679,7 +1703,7 @@ export default function App() {
                                     {renderLiveInfoBox(signal, `watch-${pane.index_name.toLowerCase()}-${idx}`)}
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}</p>
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
-                                    <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
+                                    <p>Confluence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
                                   </div>
                                 ))}
                               </div>
@@ -1749,7 +1773,7 @@ export default function App() {
                             <p>Entry: ₹{formatNumber(signal.entry_price)}</p>
                             <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
                             <p>T1/T2: ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
-                            <p>Confidence: {signal.confluence_score}</p>
+                            <p>Confidence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score}</p>
                             {signal.best_exit_price && (
                               <p className="text-green-400 font-semibold text-sm">
                                 ⭐BEST EXIT: T+{signal.best_exit_days} @ ₹{formatNumber(signal.best_exit_price)}
@@ -1796,7 +1820,7 @@ export default function App() {
                               <p>Entry: ₹{formatNumber(trade.entry_price)}</p>
                               <p>SL: ₹{formatNumber(trade.stop_loss)}</p>
                               <p>T1/T2: ₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</p>
-                              <p>Confidence: {trade.confluence_score} | {trade.direction}</p>
+                              <p>Confidence: {trade.confluence_score >= 80 ? "⭐ " : ""}{trade.confluence_score} | {trade.direction}</p>
                               {trade.best_exit_price && (
                                 <p className="text-green-400 font-semibold text-sm">
                                   ⭐BEST EXIT: T+{trade.best_exit_days} @ ₹{formatNumber(trade.best_exit_price)}
@@ -1835,7 +1859,7 @@ export default function App() {
                           {renderLiveInfoBox(fnoData.custom_signal, "custom-script-result")}
                           <p>Direction: {fnoData.custom_signal.direction}</p>
                           <p>Entry/SL/T1/T2: ₹{formatNumber(fnoData.custom_signal.entry_price)} / ₹{formatNumber(fnoData.custom_signal.stop_loss)} / ₹{formatNumber(fnoData.custom_signal.target1)} / ₹{formatNumber(fnoData.custom_signal.target2)}</p>
-                          <p>Confluence: {fnoData.custom_signal.confluence_score}</p>
+                          <p>Confluence: {fnoData.custom_signal.confluence_score >= 80 ? "⭐ " : ""}{fnoData.custom_signal.confluence_score}</p>
                         </CardContent>
                       </Card>
                     ) : null}
@@ -1860,14 +1884,14 @@ export default function App() {
                   color: "#1a1a1a",
                 }}
               >
-                <h2 style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px" }}>
+                <h2 style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#FFFFFF", background: "#1E3A5F", padding: "8px 12px", borderRadius: "4px" }}>
                   Stock Options — Correct Lot Sizes के साथ
                 </h2>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", color: "#1A1A1A" }}>
                   <thead>
-                    <tr style={{ background: "#f3f4f6" }}>
+                    <tr style={{ background: "#1E3A5F" }}>
                       {["Script", "Bias", "Lot", "Entry ₹", "Investment (₹)", "SL", "T1", "T1%", "T1 Profit ₹", "T2", "T2%", "T2 Profit ₹", "Conf"].map((h) => (
-                        <th key={h} style={{ border: "1px solid #d1d5db", padding: "6px 8px", textAlign: "center", fontWeight: "600", fontSize: "12px" }}>{h}</th>
+                        <th key={h} style={{ border: "1px solid #d1d5db", padding: "6px 8px", textAlign: "center", fontWeight: "600", fontSize: "12px", color: "#FFFFFF" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -1875,20 +1899,22 @@ export default function App() {
                     {collectAllFnoSignals(fnoData).map((sig, i) => {
                       const row = buildExportRow(sig);
                       return (
-                        <tr key={sig.script} style={{ background: i % 2 === 0 ? "#ffffff" : "#f9fafb" }}>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", fontWeight: "500" }}>{row["Script"]}</td>
+                        <tr key={sig.script} style={{ background: i % 2 === 0 ? "#ffffff" : "#f0f4f8", color: "#1A1A1A" }}>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", fontWeight: "500", color: "#1A1A1A" }}>{row["Script"]}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", color: row["Bias"] === "BULLISH" ? "#059669" : "#dc2626", fontWeight: "600" }}>{row["Bias"]}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>{row["Lot"]}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>₹{row["Entry ₹"]}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>₹{Number(row["Investment (₹)"]).toLocaleString("en-IN")}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["Lot"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>₹{row["Entry ₹"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>₹{Number(row["Investment (₹)"]).toLocaleString("en-IN")}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#dc2626" }}>{row["SL"]}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>{row["T1"]}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{row["T1%"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["T1"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{Number(row["T1%"]).toFixed(2)}%</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T1 Profit ₹"]).toLocaleString("en-IN")}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right" }}>{row["T2"]}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{row["T2%"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["T2"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{Number(row["T2%"]).toFixed(2)}%</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T2 Profit ₹"]).toLocaleString("en-IN")}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", fontWeight: "600" }}>{row["Conf"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", fontWeight: "600", color: row["Conf"] >= 80 ? "#D97706" : "#1A1A1A" }}>
+                            {row["Conf"] >= 80 ? "⭐ " : ""}{row["Conf"]}
+                          </td>
                         </tr>
                       );
                     })}
@@ -2002,6 +2028,19 @@ export default function App() {
                 Charged: {portfolioData.cost_charged} | Credits Remaining: {portfolioData.credits_remaining}
               </p>
             ) : null}
+
+            {/* Failed symbols warning — non-blocking */}
+            {portfolioData?.failed_symbols?.length > 0 && (
+              <div className="flex flex-wrap gap-2 rounded-md border border-yellow-800 bg-yellow-900/20 p-3" data-testid="portfolio-failed-symbols-banner">
+                <span className="text-xs font-semibold text-yellow-400">Live data temporarily unavailable:</span>
+                {portfolioData.failed_symbols.map((sym) => (
+                  <span key={sym} className="rounded-full bg-yellow-900/50 px-2 py-0.5 text-xs font-mono text-yellow-300 border border-yellow-700" data-testid={`portfolio-failed-badge-${sym.toLowerCase()}`}>
+                    {sym}
+                  </span>
+                ))}
+                <span className="text-xs text-yellow-500">(remaining symbols analysed normally)</span>
+              </div>
+            )}
 
             {portfolioData?.stocks?.length ? (
               <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="portfolio-results-card">
@@ -2354,36 +2393,98 @@ export default function App() {
                     </ul>
                   ) : null}
 
-                  <div className="space-y-2" data-testid="admin-domain-list">
-                    {(adminConfig?.domain_mappings || []).map((row) => (
-                      <div key={row.domain} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-900/60 p-2">
-                        <div className="text-xs text-slate-200">
-                          <p><span className="text-slate-400">Domain:</span> {row.domain}</p>
-                          <p><span className="text-slate-400">Root:</span> {row.root_domain || "-"} | <span className="text-slate-400">Host:</span> {row.host_label || "@"}</p>
-                          <p><span className="text-slate-400">Record:</span> {row.record_type || "A"} → {row.resolved_target_ip || row.target_record}</p>
-                          <p><span className="text-slate-400">Target:</span> {row.target_record}</p>
-                          <p><span className="text-slate-400">Status:</span> {row.status}</p>
+                  <div className="space-y-3" data-testid="admin-domain-list">
+                    {(adminConfig?.domain_mappings || []).length === 0 && (
+                      <p className="text-xs text-slate-500">No domain mappings yet. Add one above.</p>
+                    )}
+                    {(adminConfig?.domain_mappings || []).map((row) => {
+                      const mapInfo = domainMapStatus[row.domain];
+                      const statusColor = row.status === "ACTIVE" ? "bg-emerald-600"
+                        : row.status === "PENDING_DNS" || row.status === "NGINX_CONFIG_GENERATED" ? "bg-yellow-600"
+                        : row.status === "FAILED" ? "bg-rose-600"
+                        : "bg-slate-600";
+                      return (
+                        <div key={row.domain} className="rounded-lg border border-slate-700 bg-slate-900/80 p-3 space-y-2" data-testid={`admin-domain-card-${row.domain}`}>
+                          {/* Header row */}
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="space-y-0.5 text-xs">
+                              <p className="font-mono font-semibold text-cyan-300">{row.domain}</p>
+                              <p className="text-slate-400">A Record: {row.resolved_target_ip || row.target_record || "—"}</p>
+                            </div>
+                            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold text-white ${statusColor}`}>
+                              {row.status}
+                            </span>
+                          </div>
+                          {/* Action buttons */}
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => mapDomain(row.domain)}
+                              disabled={mapInfo?.loading}
+                              className="h-7 bg-cyan-700 px-3 text-xs text-white hover:bg-cyan-600"
+                              data-testid={`admin-domain-map-${row.domain}`}
+                            >
+                              {mapInfo?.loading ? "Mapping…" : "MAP"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => updateDomainStatus(row.domain, "ACTIVE")}
+                              className="h-7 bg-emerald-700 px-3 text-xs text-white hover:bg-emerald-600"
+                              data-testid={`admin-domain-active-${row.domain}`}
+                            >
+                              Mark Active
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => setExpandedDnsInstructions((prev) => ({ ...prev, [row.domain]: !prev[row.domain] }))}
+                              className="h-7 bg-slate-700 px-3 text-xs text-white hover:bg-slate-600"
+                              data-testid={`admin-domain-dns-toggle-${row.domain}`}
+                            >
+                              {expandedDnsInstructions[row.domain] ? "Hide DNS" : "DNS Instructions"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => setDomainDeleteConfirm(row.domain)}
+                              className="h-7 bg-rose-700 px-3 text-xs text-white hover:bg-rose-600"
+                              data-testid={`admin-domain-delete-${row.domain}`}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                          {/* DNS Instructions (expandable) */}
+                          {expandedDnsInstructions[row.domain] && (
+                            <div className="rounded-md border border-slate-700 bg-slate-950 p-3 text-xs text-slate-300 space-y-1" data-testid={`admin-domain-dns-${row.domain}`}>
+                              <p className="font-semibold text-cyan-300 mb-1">DNS Setup Instructions</p>
+                              <p>1. Open your domain registrar / DNS provider</p>
+                              <p>2. Add an <strong>A Record</strong>: Host = <code className="text-yellow-300">{row.host_label || "@"}</code>, Value = <code className="text-yellow-300">{row.resolved_target_ip || row.target_record || "[server IP]"}</code>, TTL = 300</p>
+                              <p>3. Delete any conflicting A record for the same host label</p>
+                              <p>4. Wait 5–30 minutes for propagation</p>
+                              <p>5. After DNS resolves, click <strong>MAP</strong> above to configure the server proxy</p>
+                            </div>
+                          )}
+                          {/* Map result */}
+                          {mapInfo?.result && (
+                            <div className={`rounded-md p-2 text-xs ${mapInfo.result.error ? "bg-rose-900/40 text-rose-300" : "bg-emerald-900/40 text-emerald-300"}`} data-testid={`admin-domain-map-result-${row.domain}`}>
+                              {mapInfo.result.error ? `Map error: ${mapInfo.result.error}` : `Mapped (${mapInfo.result.nginx_status}) — DNS must point to server IP`}
+                            </div>
+                          )}
+                          {/* Delete confirm dialog */}
+                          {domainDeleteConfirm === row.domain && (
+                            <div className="rounded-md border border-rose-700 bg-rose-950/60 p-3 text-xs space-y-2" data-testid={`admin-domain-delete-confirm-${row.domain}`}>
+                              <p className="text-rose-300 font-semibold">Confirm delete domain mapping: <span className="font-mono">{row.domain}</span>?</p>
+                              <div className="flex gap-2">
+                                <Button size="sm" onClick={() => deleteDomainMapping(row.domain)} className="h-7 bg-rose-600 px-3 text-xs text-white hover:bg-rose-500" data-testid="admin-domain-delete-confirm-yes">Yes, Delete</Button>
+                                <Button size="sm" onClick={() => setDomainDeleteConfirm(null)} className="h-7 bg-slate-700 px-3 text-xs text-white hover:bg-slate-600" data-testid="admin-domain-delete-confirm-no">Cancel</Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            onClick={() => updateDomainStatus(row.domain, "ACTIVE")}
-                            className="h-8 bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-500"
-                            data-testid={`admin-domain-active-${row.domain}`}
-                          >
-                            Mark Active
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() => updateDomainStatus(row.domain, "FAILED")}
-                            className="h-8 bg-rose-600 px-3 text-xs text-white hover:bg-rose-500"
-                            data-testid={`admin-domain-failed-${row.domain}`}
-                          >
-                            Mark Failed
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>

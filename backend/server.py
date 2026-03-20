@@ -86,12 +86,162 @@ MONTH_MAP = {
 }
 
 LOT_SIZE_MAP = {
-    "NIFTY": 65,
+    # Index
+    "NIFTY": 75,
     "BANKNIFTY": 30,
+    "FINNIFTY": 65,
+    "MIDCPNIFTY": 120,
+    "SENSEX": 20,
+    # Large Cap / Blue Chip
     "RELIANCE": 250,
-    "BDL": 1350,
-    "SBIN": 750,
     "TCS": 175,
+    "SBIN": 750,
+    "BDL": 1350,
+    "HDFCBANK": 550,
+    "ICICIBANK": 700,
+    "INFY": 300,
+    "LT": 50,
+    "ITC": 2400,
+    "AXISBANK": 1200,
+    "KOTAKBANK": 800,
+    "HDFCLIFE": 1000,
+    "SBILIFE": 750,
+    "ULTRACEMCO": 100,
+    "BAJFINANCE": 250,
+    "WIPRO": 1500,
+    "HINDUNILVR": 300,
+    "BHARTIARTL": 950,
+    "ADANIPORTS": 1250,
+    "TATAMOTORS": 1425,
+    "ONGC": 3850,
+    "COALINDIA": 4200,
+    "NTPC": 6000,
+    "POWERGRID": 4600,
+    "TATASTEEL": 5500,
+    "JSWSTEEL": 2500,
+    "HINDALCO": 2150,
+    "VEDL": 3250,
+    "GRASIM": 375,
+    "ASIANPAINT": 300,
+    "BAJAJFINSV": 125,
+    "SUNPHARMA": 350,
+    "CIPLA": 650,
+    "DRREDDY": 125,
+    "DIVISLAB": 200,
+    "HCLTECH": 350,
+    "TECHM": 600,
+    "NESTLEIND": 40,
+    "TITAN": 375,
+    "MARUTI": 50,
+    "M&M": 700,
+    "TATACONSUM": 1375,
+    "APOLLOHOSP": 125,
+    "HEROMOTOCO": 300,
+    "EICHERMOT": 175,
+    "BPCL": 4375,
+    "IOCL": 5750,
+    "HPCL": 5400,
+    "INDUSINDBK": 500,
+    "SHRIRAMFIN": 200,
+    "DMART": 75,
+    "PIDILITIND": 250,
+    "SIEMENS": 175,
+    "HAVELLS": 500,
+    "ABB": 125,
+    "BERGEPAINT": 1100,
+    "TRENT": 350,
+    "NAUKRI": 75,
+    "PAGEIND": 15,
+    "MPHASIS": 175,
+    "PERSISTENT": 125,
+    "COFORGE": 75,
+    "LTIM": 75,
+    "OFSS": 50,
+    "BAJAJ-AUTO": 250,
+    "SYNGENE": 650,
+    "CHOLAFIN": 500,
+    "MUTHOOTFIN": 375,
+    "PFC": 5000,
+    "RECLTD": 4000,
+    "IRFC": 6000,
+    "HAL": 150,
+    "BEL": 5000,
+    "BHEL": 7000,
+    "SAIL": 10000,
+    "NMDC": 7500,
+    "GAIL": 6250,
+    "IOC": 5750,
+    "OIL": 2300,
+    "MOTHERSON": 3500,
+    "BOSCHLTD": 25,
+    "MRF": 10,
+    "BALKRISIND": 250,
+    "OBEROIRLTY": 500,
+    "DLF": 1650,
+    "GODREJPROP": 400,
+    "PRESTIGE": 1000,
+    "SOBHA": 500,
+    "BANDHANBNK": 2500,
+    "FEDERALBNK": 5000,
+    "IDFCFIRSTB": 5000,
+    "RBLBANK": 5000,
+    "YESBANK": 40000,
+    "AUBANK": 500,
+    "SBICARD": 800,
+    "MANAPPURAM": 3000,
+    "CANBK": 2700,
+    "UCOBANK": 10000,
+    "PNB": 10000,
+    "BANKBARODA": 4350,
+    "IDBI": 5500,
+    "ZOMATO": 4500,
+    "PAYTM": 2000,
+    "POLICYBZR": 700,
+    "NYKAA": 2000,
+    "IRCTC": 875,
+    "LUXIND": 150,
+    "ABFRL": 2000,
+    "ADITIMKT": 200,
+    "JUBLFOOD": 500,
+    "DEVYANI": 4000,
+    "DEVIT": 800,
+    "WEBELSOLAR": 625,
+    "ADANIENT": 400,
+    "ADANIPOWER": 2000,
+    "ADANIGREEN": 500,
+    "ADANITRANS": 300,
+    "ADANIWILMAR": 2000,
+    "AMBUJACEM": 2000,
+    "ACCIND": 300,
+    "SHREECEM": 25,
+    "RAMCOCEM": 600,
+    "TORNTPOWER": 500,
+    "TATAPOWER": 3375,
+    "CESC": 1300,
+    "GIPCL": 2500,
+    "TORNTPHARM": 500,
+    "AUROPHARMA": 1000,
+    "LUPIN": 700,
+    "BIOCON": 2200,
+    "GLENMARK": 1200,
+    "IPCALAB": 500,
+    "ALEMBICPHARMA": 600,
+    "ATUL": 100,
+    "PIIND": 200,
+    "UPL": 1300,
+    "DEEPAKNTR": 300,
+    "CHLAA": 600,
+    "CUMMINSIND": 300,
+    "THERMAX": 250,
+    "VOLTAS": 500,
+    "BLUESTARCO": 300,
+    "WHIRLPOOL": 225,
+    "CROMPTON": 2000,
+    "POLYCAB": 200,
+    "KEI": 300,
+    "DIXON": 75,
+    "AAPLLTD": 500,
+    "AMBER": 200,
 }
 
 STOCK_FNO_UNIVERSE = [
@@ -527,6 +677,7 @@ class PortfolioAnalyzeResponse(BaseModel):
     credits_remaining: float
     parsed_positions_count: int
     stocks: List[PortfolioStockAnalysis]
+    failed_symbols: List[str] = []
 
 
 class CustomPositionCreateRequest(BaseModel):
@@ -1565,14 +1716,44 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
     if not normalized_positions:
         raise HTTPException(status_code=400, detail="No valid portfolio positions found")
 
-    cores = await asyncio.gather(*[get_stock_core(item["symbol"]) for item in normalized_positions])
+    cores = await asyncio.gather(*[get_stock_core(item["symbol"]) for item in normalized_positions], return_exceptions=True)
     stock_rows: list[dict] = []
+    failed_symbols: list[str] = []
     total_current_value = 0.0
     for idx, core in enumerate(cores):
+        pos = normalized_positions[idx]
+        sym = pos["symbol"]
+
+        # Handle exceptions or None LTP — try symbol variations before giving up
+        if isinstance(core, Exception) or (isinstance(core, dict) and StockCoreNormalized(**core).ltp is None):
+            # Try EQ variant, uppercase trim
+            variants = [
+                sym.upper().strip(),
+                sym.upper().replace("-EQ", "").replace(".NS", "").strip(),
+                f"{sym.upper().strip()}-EQ",
+            ]
+            resolved_core = None
+            for variant in variants:
+                if variant == sym:
+                    continue
+                try:
+                    candidate = await get_stock_core(variant)
+                    if candidate and StockCoreNormalized(**candidate).ltp is not None:
+                        resolved_core = candidate
+                        break
+                except Exception:
+                    continue
+            if resolved_core is None:
+                logger.warning("Portfolio: No live data for symbol %s — skipping", sym)
+                failed_symbols.append(sym)
+                continue
+            core = resolved_core
+
         stock = StockCoreNormalized(**core)
         if stock.ltp is None:
+            logger.warning("Portfolio: LTP still None for symbol %s after fallback — skipping", sym)
+            failed_symbols.append(sym)
             continue
-        pos = normalized_positions[idx]
         cost = pos["avg_price"] * pos["quantity"]
         current_value = stock.ltp * pos["quantity"]
         pnl_pct = ((stock.ltp - pos["avg_price"]) / pos["avg_price"]) * 100 if pos["avg_price"] > 0 else 0.0
@@ -1590,7 +1771,10 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         )
 
     if not stock_rows:
-        raise HTTPException(status_code=400, detail="No live data available for provided symbols")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No live data available for provided symbols. Failed: {', '.join(failed_symbols) or 'all'}"
+        )
 
     analyses: list[PortfolioStockAnalysis] = []
     for row in stock_rows:
@@ -1695,6 +1879,7 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         credits_remaining=0.0,
         parsed_positions_count=len(analyses),
         stocks=analyses,
+        failed_symbols=failed_symbols,
     )
 
 
@@ -4027,6 +4212,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
             expiry = await _get_nearest_expiry(symbol, prefer_monthly=True)
             symbol_rows: list[FNOSignalResponse] = []
             for option_type in ["CE", "PE"]:
+                lot_size_val = await _resolve_verified_lot_size(symbol, None)
                 contract = FNOContract(
                     script=_format_script(symbol, expiry, strike, option_type),
                     underlying=symbol,
@@ -4035,7 +4221,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                     strike=float(strike),
                     option_type=option_type,
                     exchange="NFO",
-                    lot_size=LOT_SIZE_MAP.get(symbol, 1),
+                    lot_size=lot_size_val,
                 )
                 minutes_to_expiry = get_minutes_to_expiry(contract)
                 if minutes_to_expiry <= 15:
@@ -4882,6 +5068,102 @@ async def admin_dns_instructions(
     }
 
 
+@api_router.delete("/admin/domain-mappings/{domain}")
+async def admin_delete_domain_mapping(
+    domain: str,
+    owner_user: dict = Depends(get_owner_user),
+):
+    """Delete a domain mapping from DB and attempt nginx config cleanup."""
+    key = _validate_domain(domain)
+    result = await db.domain_mappings.delete_one({"domain": key})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Domain mapping not found")
+
+    # Attempt nginx config removal
+    try:
+        import os
+        import subprocess
+        nginx_conf = f"/etc/nginx/sites-available/{key}"
+        nginx_link = f"/etc/nginx/sites-enabled/{key}"
+        for path in (nginx_conf, nginx_link):
+            if os.path.exists(path):
+                os.remove(path)
+        subprocess.run(["nginx", "-s", "reload"], capture_output=True, timeout=5)
+    except Exception as exc:
+        logger.debug("Nginx config cleanup skipped: %s", exc)
+
+    return {"deleted": True, "domain": key}
+
+
+@api_router.post("/admin/domain-mappings/{domain}/map")
+async def admin_map_domain(
+    domain: str,
+    owner_user: dict = Depends(get_owner_user),
+):
+    """Write Nginx reverse-proxy config for the domain and attempt reload."""
+    import os
+    import subprocess
+    key = _validate_domain(domain)
+    row = await db.domain_mappings.find_one({"domain": key}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Domain mapping not found — add it first")
+
+    nginx_config = f"""server {{
+    listen 80;
+    server_name {key};
+
+    location / {{
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }}
+
+    location /api/ {{
+        proxy_pass http://localhost:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }}
+}}
+"""
+    nginx_status = "NGINX_CONFIG_GENERATED"
+    nginx_error = None
+    conf_path = f"/etc/nginx/sites-available/{key}"
+    link_path = f"/etc/nginx/sites-enabled/{key}"
+    try:
+        with open(conf_path, "w") as fh:
+            fh.write(nginx_config)
+        if not os.path.exists(link_path):
+            os.symlink(conf_path, link_path)
+        result = subprocess.run(["nginx", "-t"], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            subprocess.run(["nginx", "-s", "reload"], capture_output=True, timeout=5)
+            nginx_status = "ACTIVE"
+        else:
+            nginx_error = result.stderr.decode()[:300]
+    except Exception as exc:
+        nginx_error = str(exc)[:200]
+        logger.info("Nginx map attempted for %s: %s", key, nginx_error)
+
+    await db.domain_mappings.update_one(
+        {"domain": key},
+        {"$set": {"status": nginx_status, "nginx_config": nginx_config, "updated_at": _utc_now_iso()}},
+    )
+
+    return {
+        "mapped": True,
+        "domain": key,
+        "nginx_status": nginx_status,
+        "nginx_error": nginx_error,
+        "nginx_config_snippet": nginx_config,
+        "note": "DNS must still point to this server's IP for traffic to reach this app.",
+    }
+
+
 @api_router.post("/multibagger/generate", response_model=MultibaggerGenerateResponse)
 async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
     updated_user, charged = await _consume_credits(current_user, 2.0)
@@ -5198,6 +5480,7 @@ async def analyze_portfolio_manual(
         credits_remaining=round(float(updated_user.get("credits", 0)), 2),
         parsed_positions_count=analysis.parsed_positions_count,
         stocks=analysis.stocks,
+        failed_symbols=analysis.failed_symbols,
     )
 
 
@@ -5230,6 +5513,7 @@ async def analyze_portfolio_upload(
         credits_remaining=round(float(updated_user.get("credits", 0)), 2),
         parsed_positions_count=analysis.parsed_positions_count,
         stocks=analysis.stocks,
+        failed_symbols=analysis.failed_symbols,
     )
 
 
