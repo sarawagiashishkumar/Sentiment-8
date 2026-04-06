@@ -33,7 +33,40 @@ plus Multibagger Screener and Portfolio Analysis for Indian equities.
 - Multibagger Custom Search (POST /api/multibagger/custom-search)
 - Multibagger hover UI (4-row block highlighting)
 
-### Session 2 Completions (2026-04-06)
+### Session 3 Completions (2026-04-06)
+1. **Dual-Source Parallel Fetch + Verification** (`services/data_verifier.py`):
+   - Primary: Kite Connect API (8s timeout, full OHLC+OI snapshot)
+   - Fallback: yfinance NSE (free, no auth, parallel async.gather)
+   - Cross-verify: If |kite - yf| > 2% → log discrepancy warning, use Kite as authoritative
+   - `fetch_verified_price()` + `fetch_verified_snapshot()` used in F&O signal pipeline
+   
+2. **NSE Holidays Fix**: Removed `2026-04-06` (incorrectly listed, market was open).
+   2026 holidays now correctly include: Jan 26, Feb 19, Mar 25, Apr 3, Apr 14, May 1, Aug 15, Oct 2, Oct 23, Nov 4, Nov 24
+
+3. **VIX-Based Theta Decay** (`compute_vix_theta_decay` in data_verifier.py):
+   - Replaces fixed 0.15 multiplier with Black-Scholes ATM theta approximation
+   - Formula: Θ_daily = option_price × σ / (2 × √(T × 252))
+   - σ = VIX/100 × scale_factor (1.25 for ≤7 days, 1.10 for ≤21 days, 1.0 otherwise)
+   - Example: 100.0 entry, 14 days, exit in 7, VIX=16.5 → ₹16.97 theta (vs old ₹7 static)
+   - ThetaModel tag added to trigger_factors for transparency
+
+4. **Session-Time-Aware T1/T2 Targets**:
+   - `get_minutes_to_session_close()` — returns exact minutes until 15:30 IST
+   - T1/T2 now use `min(minutes_to_expiry, minutes_to_session_close)` for intraday realism
+   - Market session status (`is_open`, `ist_time`, `status`) added to FNOGenerateResponse
+
+5. **Dynamic Target Revision** for Custom F&O positions:
+   - Trigger 1: LTP ≥ T1 → T2 revised up by 1.5× original T1-T2 gap
+   - Trigger 2: Underlying moved > 0.5% favorably + VIX calm + 90+ min left → targets scaled up proportionally
+   - Near-expiry cap: T2 capped at 1.35× entry when < 2 trading days + 120 min to close
+
+6. **Market Session Status** in F&O responses:
+   - `market_session` dict with `is_open`, `ist_time`, `minutes_to_close`, `status`
+   - Pre-market/post-market signals include session context in no_signals_alert
+
+7. **78% Confluence** (verified again): All stock_signals and top_trades consistently at ≥78%
+   - Min observed: 78, Max observed: 92 across 12 stock signals
+
 1. **Historical API Fix** — Kite option master now stores numeric `instrument_token` from CSV.
    `_resolve_kite_instrument_for_contract` returns numeric token. Historical API calls work (200 OK, 256 candles).
 
