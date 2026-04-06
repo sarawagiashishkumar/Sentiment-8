@@ -411,6 +411,10 @@ class ScriptSearchResult(BaseModel):
     suggestions: List[str]
 
 
+class MacroEventsUpdateRequest(BaseModel):
+    events: List[str]
+
+
 __all__ = [
     "StatusCheck", "StatusCheckCreate",
     "AccessRequest", "AccessResponse", "MeResponse",
@@ -426,4 +430,5 @@ __all__ = [
     "PortfolioAnalyzeResponse", "CustomPositionCreateRequest",
     "CustomPositionSellRequest", "CustomPositionResponse",
     "CustomPositionCreateResponse", "ScriptSearchResult",
+    "MacroEventsUpdateRequest",
 ]

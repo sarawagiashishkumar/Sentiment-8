@@ -67,6 +67,7 @@ from services.research_engine import (
     classify_market_regime_enhanced,
     compute_macro_context,
     get_sector_macro_beneficiaries,
+    get_all_macro_events,
     SECTOR_MACRO_IMPACT_MAP,
     compute_portfolio_correlation_matrix,
     compute_portfolio_stress_tests,
@@ -434,6 +435,7 @@ from models import (
     PortfolioAnalyzeResponse, CustomPositionCreateRequest,
     CustomPositionSellRequest, CustomPositionResponse,
     CustomPositionCreateResponse, ScriptSearchResult,
+    MacroEventsUpdateRequest,
 )
 
 def clamp(value: float, lower: float, upper: float) -> float:
@@ -2419,6 +2421,55 @@ async def _get_india_vix() -> float | None:
     return vix
 
 
+# ── Batch A: Active Macro Events helper ──────────────────────────────────────
+
+async def _get_active_macro_events() -> list[str]:
+    """
+    Read the currently active macro events from MongoDB (macro_config collection).
+    Returns a list of event keys from SECTOR_MACRO_IMPACT_MAP.
+    Admin can update via POST /admin/macro-events/update.
+    """
+    try:
+        rec = await db["macro_config"].find_one({"config_id": "active_events"}, {"_id": 0})
+        if rec and isinstance(rec.get("events"), list):
+            # Filter to only valid known event keys
+            valid = set(get_all_macro_events())
+            return [e for e in rec["events"] if e in valid]
+    except Exception as exc:
+        logger.warning("Failed to read active macro events from DB: %s", exc)
+    return []
+
+
+# ── Batch C: Strategy Stats helper for threshold enforcement ─────────────────
+
+async def _get_strategy_stats_for_selection() -> dict[str, dict]:
+    """
+    Load aggregated strategy backtest stats from MongoDB.
+    Used by select_strategy_for_signal to enforce ≥75% win rate / ≥0.40R expectancy.
+    Returns dict keyed by strategy_id.
+    """
+    try:
+        cursor = db["strategy_stats"].find({}, {"_id": 0})
+        records = await cursor.to_list(200)
+        stats_map: dict[str, dict] = {}
+        for rec in records:
+            sid = rec.get("strategy_id")
+            if not sid:
+                continue
+            total = rec.get("total_trades", 0)
+            wins = rec.get("wins", 0)
+            total_r = rec.get("total_r_multiple", 0.0)
+            stats_map[sid] = {
+                "win_rate": wins / total if total > 0 else 0.0,
+                "expectancy": total_r / total if total > 0 else 0.0,
+                "disabled": rec.get("disabled", False),
+            }
+        return stats_map
+    except Exception as exc:
+        logger.warning("Failed to load strategy stats for selection: %s", exc)
+        return {}
+
+
 # ─── yfinance Fundamental Data ────────────────────────────────────────────────
 
 def _compute_piotroski_score_from_data(info: dict, fin: object, bs: object, cf: object) -> int:
@@ -3083,7 +3134,11 @@ async def _get_hist_ohlcv(symbol: str, period: str = "1y"):
     return df
 
 
-def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict | None = None) -> dict:
+def compute_multibagger_analysis(
+    stock: StockCoreNormalized,
+    fundamental: dict | None = None,
+    active_macro_events: list[str] | None = None,
+) -> dict:
     ltp = stock.ltp
     market_cap = stock.market_cap
     pe = stock.pe_ratio
@@ -3414,7 +3469,7 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
         try:
             _mb_sector = fundamental.get("sector") if fundamental else None
             _mb_macro = compute_macro_context(
-                active_events=[],
+                active_events=active_macro_events or [],
                 vix=None,   # VIX not available in sync context; regime will use UNKNOWN
                 sector=_mb_sector,
             )
@@ -3511,6 +3566,12 @@ def _calculate_confluence_score_master_spec(
     adx: float | None = None,
     bb_pct_b: float | None = None,
     stoch_k: float | None = None,
+    # ── Batch B: Forensic quality inputs ────────────────────────────────
+    piotroski_score: int | None = None,
+    beneish_m_score: float | None = None,
+    altman_z_zone: str | None = None,
+    # ── Batch 1 extras (from tech_snapshot) ─────────────────────────────
+    tech_snapshot: dict | None = None,
 ) -> tuple[int, str]:
     """
     Master Spec Confluence Scoring (0-100):
@@ -3692,21 +3753,52 @@ def _calculate_confluence_score_master_spec(
     elif option_ltp < 5:
         gex_score = 2
 
-    # ── Fundamental Proxy ─────────────────────────────────────────────────────
-    if ltp and year_high and year_low and year_high > year_low:
-        position_val = (ltp - year_low) / (year_high - year_low)
-        if 0.3 <= position_val <= 0.7:
-            fundamental_score = 8
+    # ── Fundamental Quality Score (Batch B: Forensic-based) ──────────────────
+    # Use real Piotroski, Beneish, Altman data when available.
+    # Falls back to 52W position proxy when no forensic data is present.
+    if piotroski_score is not None:
+        # Piotroski F-Score (0-9): 7-9 = strong, 5-6 = decent, 0-4 = poor
+        if piotroski_score >= 7:
+            fundamental_score = 10
+        elif piotroski_score >= 5:
+            fundamental_score = 7
+        elif piotroski_score >= 3:
+            fundamental_score = 4
         else:
-            fundamental_score = 6
+            fundamental_score = 2
+        # Beneish M-Score: > -2.22 signals potential earnings manipulation
+        if beneish_m_score is not None and beneish_m_score > -2.22:
+            fundamental_score = max(0, fundamental_score - 3)
+        # Altman Z-Zone: DISTRESS = high bankruptcy risk, SAFE = financially sound
+        if altman_z_zone == "DISTRESS":
+            fundamental_score = max(0, fundamental_score - 4)
+        elif altman_z_zone == "SAFE":
+            fundamental_score = min(10, fundamental_score + 2)
     else:
-        fundamental_score = 5
+        # No forensic data — use 52W position as proxy
+        ltp = stock_core.ltp
+        year_high = stock_core.year_high
+        year_low = stock_core.year_low
+        if ltp and year_high and year_low and year_high > year_low:
+            position_val = (ltp - year_low) / (year_high - year_low)
+            fundamental_score = 8 if 0.3 <= position_val <= 0.7 else 6
+        else:
+            fundamental_score = 5
 
     # ── Strategy Alignment Bonus ──────────────────────────────────────────────
     if strategy in ("ORB_BREAKOUT", "VWAP_REVERSION"):
         strategy_bonus = 5
 
     # ── Technical Analysis Bonus (RSI, MACD, Trend, OBV, ADX, BB, Stoch + Batch 1) ─
+    _ts = tech_snapshot or {}
+    _cci_val = (_ts.get("cci") or {}).get("cci")
+    _vpt_val = (_ts.get("vpt") or {}).get("trend")
+    _ad_val = (_ts.get("ad_line") or {}).get("trend")
+    _ichimoku_val = _ts.get("ichimoku") or {}
+    _rsi_div_val = _ts.get("rsi_divergence") or {}
+    _candle_val = _ts.get("candlestick_patterns") or {}
+    _mf_val = _ts.get("multiframe_trend") or {}
+    _chart_val = _ts.get("chart_patterns") or {}
     tech_bonus, tech_tags = compute_technical_confluence_bonus(
         direction=direction,
         rsi=rsi,
@@ -3718,20 +3810,20 @@ def _calculate_confluence_score_master_spec(
         bb_pct_b=bb_pct_b,
         stoch_k=stoch_k,
         # Batch 1 additions
-        williams_r=ts.get("williams_r"),
-        cci=_cci,
-        vpt_trend=_vpt,
-        ad_trend=_ad,
-        ichimoku_price_vs_cloud=_ichimoku.get("price_vs_cloud"),
-        ichimoku_tk_cross=_ichimoku.get("tenkan_kijun_cross"),
-        ichimoku_bullish=_ichimoku.get("bullish_signal"),
-        ichimoku_bearish=_ichimoku.get("bearish_signal"),
-        rsi_divergence=_rsi_div.get("divergence"),
-        rsi_div_type=_rsi_div.get("type"),
-        candle_bias=_candle.get("bias"),
-        mf_alignment=_mf.get("alignment"),
-        has_bull_chart_pattern=_chart.get("has_bullish_pattern", False),
-        has_bear_chart_pattern=_chart.get("has_bearish_pattern", False),
+        williams_r=_ts.get("williams_r"),
+        cci=_cci_val,
+        vpt_trend=_vpt_val,
+        ad_trend=_ad_val,
+        ichimoku_price_vs_cloud=_ichimoku_val.get("price_vs_cloud"),
+        ichimoku_tk_cross=_ichimoku_val.get("tenkan_kijun_cross"),
+        ichimoku_bullish=_ichimoku_val.get("bullish_signal"),
+        ichimoku_bearish=_ichimoku_val.get("bearish_signal"),
+        rsi_divergence=_rsi_div_val.get("divergence"),
+        rsi_div_type=_rsi_div_val.get("type"),
+        candle_bias=_candle_val.get("bias"),
+        mf_alignment=_mf_val.get("alignment"),
+        has_bull_chart_pattern=_chart_val.get("has_bullish_pattern", False),
+        has_bear_chart_pattern=_chart_val.get("has_bearish_pattern", False),
     )
 
     # ── Expiry Penalty ────────────────────────────────────────────────────────
@@ -3780,6 +3872,8 @@ async def build_fno_signal(
     pcr: float | None = None,
     # ── New: pre-computed technical snapshot from research engine ──────────
     tech_snapshot: dict | None = None,
+    # ── Batch A: fundamental data for macro context & forensic confluence ──
+    fundamental: dict | None = None,
 ) -> FNOSignalResponse:
     underlying_ltp = stock_core.ltp
     if underlying_ltp is None:
@@ -3919,7 +4013,8 @@ async def build_fno_signal(
     _vpt = (ts.get("vpt") or {}).get("trend")
     _ad = (ts.get("ad_line") or {}).get("trend")
 
-    # ── Batch 5: Strategy Library Selection ────────────────────────────────
+
+    # ── Batch 5: Strategy Library Selection (Batch C: with threshold enforcement) ─
     _vix_curr = india_vix
     _adx_curr = tech_adx
     _rsi_curr = tech_rsi
@@ -3927,12 +4022,15 @@ async def build_fno_signal(
         vix=_vix_curr, adx=_adx_curr, rsi=_rsi_curr
     )
     _regime = _regime_obj.get("regime", "NORMAL_VOL_TREND")
+    # Load strategy stats from DB to enforce ≥75% win rate / ≥0.40R expectancy
+    _strategy_stats_data = await _get_strategy_stats_for_selection()
     _selected_strategy = select_strategy_for_signal(
         regime=_regime,
         direction=direction,
         adx=_adx_curr,
         vix=_vix_curr,
         instrument=contract.underlying,
+        strategy_stats=_strategy_stats_data if _strategy_stats_data else None,
     )
     _strategy_name = _selected_strategy.get("name", "Standard") if _selected_strategy else "Standard"
     _strategy_id = _selected_strategy.get("id", "S3_SUPERTREND") if _selected_strategy else "S3_SUPERTREND"
@@ -3944,8 +4042,9 @@ async def build_fno_signal(
     _sector_str = fundamental.get("sector") if fundamental else None
     _macro_ctx: dict = {}
     try:
+        _active_events = await _get_active_macro_events()
         _macro_ctx = compute_macro_context(
-            active_events=[],  # can be extended to pull from a global event config
+            active_events=_active_events,
             vix=_vix_curr,
             adx=_adx_curr,
             rsi=_rsi_curr,
@@ -3956,6 +4055,8 @@ async def build_fno_signal(
             trigger_factors.append(f"MacroHeadwind:{_sector_str}")
         elif macro_bias == "TAILWIND" and direction == "BULLISH":
             trigger_factors.append(f"MacroTailwind:{_sector_str}")
+        elif macro_bias == "TAILWIND" and direction == "BEARISH":
+            trigger_factors.append(f"MacroTailwind_vs_Bearish:{_sector_str}")
     except Exception:
         pass
 
@@ -4118,6 +4219,12 @@ async def build_fno_signal(
         adx=tech_adx,
         bb_pct_b=tech_bb.get("pct_b"),
         stoch_k=(tech_stoch.get("%K")),
+        # Batch B: forensic scores for real fundamental_score calculation
+        piotroski_score=fundamental.get("piotroski_score") if fundamental else None,
+        beneish_m_score=fundamental.get("beneish_m_score") if fundamental else None,
+        altman_z_zone=fundamental.get("altman_z_zone") if fundamental else None,
+        # Batch 1 extras via tech_snapshot
+        tech_snapshot=ts,
     )
     
     # Add technical tags to trigger_factors
@@ -4316,6 +4423,11 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
     stock_data = StockCoreNormalized(**(await _get_stock_core_cached(contract.underlying)))
     snapshot = await _fetch_live_option_snapshot(contract)
     option_ltp = float(snapshot.get("ltp"))
+    # Fetch fundamental data for forensic scoring + macro sector context
+    try:
+        _fund_data = await _get_fundamental_data(contract.underlying)
+    except Exception:
+        _fund_data = {}
     return await build_fno_signal(
         contract,
         stock_data,
@@ -4324,6 +4436,7 @@ async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -
         minutes_to_expiry,
         option_day_high=_to_float(snapshot.get("day_high")),
         option_day_low=_to_float(snapshot.get("day_low")),
+        fundamental=_fund_data,
     )
 
 
@@ -4547,6 +4660,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                     india_vix=india_vix,
                     pcr=pcr,
                     tech_snapshot=index_tech_snap,
+                    fundamental={},  # Index has no individual fundamental data
                 )
                 rows.append(signal)
             except HTTPException:
@@ -4821,6 +4935,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         option_day_low=_to_float(snapshot.get("day_low")),
                         india_vix=india_vix,
                         tech_snapshot=tech_snap,
+                        fundamental=fundamental,  # Pass fetched fundamental for forensic scoring
                     )
                     logger.info(f"{symbol} {option_type}: Signal generated - Direction={signal.direction}, Confluence={signal.confluence_score}, Conviction={signal.conviction_level}")
                 except HTTPException as exc:
@@ -4940,6 +5055,9 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
     hist_vol_results = await asyncio.gather(*[_fetch_hist_one(sym) for sym in valid_symbols])
     hist_vol_map = {sym: vol for sym, vol in hist_vol_results}
 
+    # Fetch active macro events once for all stocks (Batch A)
+    _active_macro_evts = await _get_active_macro_events()
+
     candidates: list[MultibaggerCandidate] = []
     for row in results:
         stock = StockCoreNormalized(**row)
@@ -4959,7 +5077,7 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
         if hist_vol is not None:
             fundamental = {**fundamental, "hist_vol": hist_vol}
 
-        analysis = compute_multibagger_analysis(stock, fundamental=fundamental)
+        analysis = compute_multibagger_analysis(stock, fundamental=fundamental, active_macro_events=_active_macro_evts)
 
         # Lower eligibility score if filters failed (don't fully exclude, just down-rank)
         if not eligibility["eligible"]:
@@ -5715,6 +5833,66 @@ async def admin_refresh_nse_holidays(
         "message": f"Holidays for {year} {'updated from external source' if success else 'could not be fetched; defaults remain'}.",
     }
 
+
+# ── Admin: Active Macro Events Management (Batch A) ──────────────────────────
+
+@api_router.get("/admin/macro-events")
+async def admin_get_macro_events(owner_user: dict = Depends(get_owner_user)):
+    """
+    Return currently active macro events and the full list of available events.
+    Active events influence sector macro bias in F&O signals and Multibagger analysis.
+    """
+    _ = owner_user
+    active = await _get_active_macro_events()
+    all_events = get_all_macro_events()
+    # Return enriched info: event key + description
+    enriched = []
+    for key in all_events:
+        data = SECTOR_MACRO_IMPACT_MAP.get(key, {})
+        enriched.append({
+            "key": key,
+            "description": data.get("impact_description", ""),
+            "intensity": data.get("intensity", "MEDIUM"),
+            "beneficiaries": data.get("beneficiaries", []),
+            "losers": data.get("losers", []),
+            "active": key in active,
+        })
+    return {
+        "active_events": active,
+        "total_active": len(active),
+        "all_events": enriched,
+    }
+
+
+@api_router.post("/admin/macro-events/update")
+async def admin_update_macro_events(
+    body: MacroEventsUpdateRequest,
+    owner_user: dict = Depends(get_owner_user),
+):
+    """
+    Update the list of currently active macro events.
+    Only valid SECTOR_MACRO_IMPACT_MAP keys are accepted.
+    These events will immediately affect all F&O signal generation and Multibagger analysis.
+    """
+    _ = owner_user
+    valid_keys = set(get_all_macro_events())
+    invalid = [e for e in body.events if e not in valid_keys]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid event keys: {invalid}. Valid keys: {sorted(valid_keys)}",
+        )
+    await db["macro_config"].update_one(
+        {"config_id": "active_events"},
+        {"$set": {"config_id": "active_events", "events": body.events, "updated_at": _utc_now_iso()}},
+        upsert=True,
+    )
+    return {
+        "success": True,
+        "active_events": body.events,
+        "total_active": len(body.events),
+        "message": f"Active macro events updated. {len(body.events)} events now active.",
+    }
 
 
 # ── Strategy Backtest Persistence (Batch 5) ───────────────────────────────────
@@ -6501,7 +6679,11 @@ async def multibagger_custom_search(
     except Exception:
         pass
 
-    analysis = compute_multibagger_analysis(stock, fundamental=fundamental)
+    analysis = compute_multibagger_analysis(
+        stock,
+        fundamental=fundamental,
+        active_macro_events=await _get_active_macro_events(),
+    )
 
     return MultibaggerCandidate(
         symbol=stock.symbol,
