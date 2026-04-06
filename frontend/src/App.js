@@ -101,6 +101,8 @@ export default function App() {
   const [sellConfirmChecked, setSellConfirmChecked] = useState(false);
   const [sellLoading, setSellLoading] = useState(false);
   const urgentBuzzedRef = useRef(new Set());
+  const targetBuzzedRef = useRef(new Set());
+  const warningBuzzedRef = useRef(new Set());
   const audioContextRef = useRef(null);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
   const [showSoundPrompt, setShowSoundPrompt] = useState(false);
@@ -187,41 +189,92 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // ── Rich alert sound engine ──────────────────────────────────────────────
+  const playAlertSound = (type = "urgent") => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+        audioContextRef.current = new AudioCtx();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+
+      const scheduleBeep = (freq, startAt, duration, gainPeak = 0.55, waveType = "square") => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = waveType;
+        osc.frequency.setValueAtTime(freq, startAt);
+        gain.gain.setValueAtTime(0.0001, startAt);
+        gain.gain.exponentialRampToValueAtTime(gainPeak, startAt + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startAt);
+        osc.stop(startAt + duration + 0.01);
+      };
+
+      const now = ctx.currentTime;
+
+      if (type === "urgent") {
+        // 3 rapid high-pitch aggressive bursts — demands immediate attention
+        scheduleBeep(1100, now,        0.28, 0.65, "square");
+        scheduleBeep(900,  now + 0.32, 0.28, 0.65, "square");
+        scheduleBeep(1100, now + 0.64, 0.36, 0.70, "square");
+      } else if (type === "target") {
+        // 3 ascending celebratory tones — T1 / T2 hit
+        scheduleBeep(660,  now,        0.30, 0.55, "sine");
+        scheduleBeep(880,  now + 0.35, 0.30, 0.55, "sine");
+        scheduleBeep(1100, now + 0.70, 0.50, 0.60, "sine");
+      } else if (type === "warning") {
+        // 2 moderate pulses — general alert / warning
+        scheduleBeep(820, now,        0.35, 0.50, "triangle");
+        scheduleBeep(820, now + 0.45, 0.35, 0.50, "triangle");
+      }
+    } catch {
+      // ignore autoplay restrictions
+    }
+  };
+
+  // ── Comprehensive alert monitor — all signal types ───────────────────────
   useEffect(() => {
     if (!Array.isArray(customPositions) || customPositions.length === 0) return;
     if (typeof window === "undefined" || document.hidden) return;
     if (!alertSoundEnabled) return;
 
-    const urgentAlerts = new Set(["EXIT_URGENT_TIME", "EXIT_URGENT_LOSS", "RISKY_PREMIUM", "EXIT_NOW_HIGH_LOSS", "EXIT_URGENT_NO_RECOVERY"]);
-    const freshUrgent = customPositions.filter((position) => urgentAlerts.has(position.alert) && !urgentBuzzedRef.current.has(position.id));
-    if (!freshUrgent.length) return;
+    const urgentAlertSet = new Set(["EXIT_URGENT_TIME", "EXIT_URGENT_LOSS", "RISKY_PREMIUM", "EXIT_NOW_HIGH_LOSS", "EXIT_URGENT_NO_RECOVERY"]);
+    const warningAlertSet = new Set(["EXIT_PREMIUM_DECAY", "APPROACHING_SL", "LOSS_WARNING"]);
+    const targetStateSet = new Set(["WATCHING_T1", "WATCHING_T2", "CLOSED_WIN"]);
 
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioCtx();
-      }
-      const ctx = audioContextRef.current;
-      if (ctx.state === "suspended") {
-        ctx.resume();
-      }
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "square";
-      oscillator.frequency.setValueAtTime(980, ctx.currentTime);
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.5);
-    } catch {
-      // ignore autoplay/audio restrictions
+    // Urgent exit alerts
+    const freshUrgent = customPositions.filter(
+      (p) => urgentAlertSet.has(p.alert) && !urgentBuzzedRef.current.has(p.id)
+    );
+    if (freshUrgent.length > 0) {
+      playAlertSound("urgent");
+      freshUrgent.forEach((p) => urgentBuzzedRef.current.add(p.id));
     }
 
-    freshUrgent.forEach((position) => urgentBuzzedRef.current.add(position.id));
+    // T1 / T2 target achievement
+    const freshTargets = customPositions.filter(
+      (p) => targetStateSet.has(p.signal_state) && !targetBuzzedRef.current.has(`${p.id}_${p.signal_state}`)
+    );
+    if (freshTargets.length > 0) {
+      playAlertSound("target");
+      freshTargets.forEach((p) => targetBuzzedRef.current.add(`${p.id}_${p.signal_state}`));
+    }
+
+    // Warning / general alerts
+    const freshWarnings = customPositions.filter(
+      (p) => warningAlertSet.has(p.alert) && !warningBuzzedRef.current.has(p.id)
+    );
+    if (freshWarnings.length > 0 && freshUrgent.length === 0) {
+      // Don't play warning if urgent already played this cycle
+      playAlertSound("warning");
+      freshWarnings.forEach((p) => warningBuzzedRef.current.add(p.id));
+    }
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customPositions, alertSoundEnabled]);
 
   useEffect(() => {
@@ -431,7 +484,7 @@ export default function App() {
         setCustomPositionError("Audio alert is not supported in this browser.");
         return;
       }
-      if (!audioContextRef.current) {
+      if (!audioContextRef.current || audioContextRef.current.state === "closed") {
         audioContextRef.current = new AudioCtx();
       }
       const ctx = audioContextRef.current;
@@ -439,21 +492,12 @@ export default function App() {
         await ctx.resume();
       }
 
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "square";
-      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.1, ctx.currentTime + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.3);
-
       setAlertSoundEnabled(true);
       setShowSoundPrompt(false);
       setCustomPositionError("");
+
+      // Play confirmation test tone (ascending 2-tone chime)
+      setTimeout(() => playAlertSound("target"), 50);
     } catch {
       setCustomPositionError("Unable to enable buzzer. Please check browser audio settings.");
     }
@@ -1596,13 +1640,13 @@ export default function App() {
                     {alertSoundEnabled ? "Buzzer Enabled" : "Enable Alert Buzzer"}
                   </Button>
                   <span>
-                    System can buzz alert during unfortunate trades / urgent exit conditions.
+                    Alerts on: Urgent exits, T1/T2 target hits, and warnings — loud multi-tone sound.
                   </span>
                 </div>
                 {showSoundPrompt ? (
                   <div className="rounded-md border border-cyan-500/40 bg-cyan-500/10 p-3 text-xs text-cyan-100" data-testid="sound-permission-note">
                     <p className="mb-2 font-semibold">Enable alert sound before custom projection?</p>
-                    <p className="mb-2">For urgent trade reversals and high-loss exit alerts, buzzer sound will be triggered.</p>
+                    <p className="mb-2">Loud multi-tone alerts for: T1/T2 target hits, urgent exit conditions, SL warnings, and high-loss signals.</p>
                     <div className="flex items-center gap-2">
                       <Button
                         type="button"

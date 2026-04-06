@@ -1595,7 +1595,10 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         allocation_pct = (row["current_value"] / total_current_value) * 100 if total_current_value > 0 else 0.0
 
         # ── Fetch fundamental cache for richer verdict ────────────────────
-        _fund = await _get_fundamental_cached(stock.symbol)
+        try:
+            _fund = await _get_fundamental_data(stock.symbol)
+        except Exception:
+            _fund = {}
         _piotroski = _fund.get("piotroski_score") if _fund else None
         _beneish = _fund.get("beneish_m_score") if _fund else None
         _hist_vol_val = None
@@ -6339,6 +6342,8 @@ async def analyze_portfolio_manual(
         parsed_positions_count=analysis.parsed_positions_count,
         stocks=analysis.stocks,
         failed_symbols=analysis.failed_symbols,
+        portfolio_risk_metrics=analysis.portfolio_risk_metrics,
+        enhanced_analytics=analysis.enhanced_analytics,
     )
 
 
@@ -6372,6 +6377,8 @@ async def analyze_portfolio_upload(
         parsed_positions_count=analysis.parsed_positions_count,
         stocks=analysis.stocks,
         failed_symbols=analysis.failed_symbols,
+        portfolio_risk_metrics=analysis.portfolio_risk_metrics,
+        enhanced_analytics=analysis.enhanced_analytics,
     )
 
 

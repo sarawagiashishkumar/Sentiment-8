@@ -1,0 +1,87 @@
+{
+  "summary": "Iteration 23: Portfolio Analyze bug fix verified + Alert Sound upgrade confirmed. All 16 backend tests pass. Full frontend integration tested. One additional bug found and fixed: portfolio_risk_metrics was computed but not passed through in the API endpoint response builder (both manual and upload endpoints).",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestPortfolioAnalyzeDmart::test_dmart_returns_200": "PASS",
+    "TestPortfolioAnalyzeDmart::test_dmart_has_stocks_array": "PASS",
+    "TestPortfolioAnalyzeDmart::test_dmart_stock_has_recommendation": "PASS",
+    "TestPortfolioAnalyzeDmart::test_dmart_has_parsed_positions_count": "PASS",
+    "TestPortfolioAnalyzeKaynes::test_kaynes_returns_200": "PASS",
+    "TestPortfolioAnalyzeKaynes::test_kaynes_has_stocks_array": "PASS",
+    "TestPortfolioAnalyzeKaynes::test_kaynes_stock_recommendation_field": "PASS",
+    "TestPortfolioRiskMetrics::test_portfolio_risk_metrics_key_in_response": "PASS",
+    "TestPortfolioRiskMetrics::test_portfolio_risk_metrics_populated_for_infy": "PASS (after fix)",
+    "TestPortfolioMultipleStocks::test_infy_hdfcbank_returns_200": "PASS",
+    "TestPortfolioMultipleStocks::test_infy_hdfcbank_stocks_count": "PASS",
+    "TestPortfolioMultipleStocks::test_portfolio_analyze_requires_auth": "PASS",
+    "TestSectorMomentumRegression::test_sector_momentum_returns_200": "PASS",
+    "TestSectorMomentumRegression::test_sector_momentum_has_15_sectors": "PASS",
+    "TestMultibaggerVolBandsRegression::test_infy_custom_search_200": "PASS",
+    "TestMultibaggerVolBandsRegression::test_infy_vol_bands_6_horizons": "PASS"
+  },
+
+  "key_findings": {
+    "portfolio_analyze_bug_fix": "_get_fundamental_cached renamed to _get_fundamental_data is confirmed working. DMART and KAYNES now return HTTP 200 with stocks array and recommendation field.",
+    "portfolio_risk_metrics_bug_fixed": "Both analyze_portfolio_manual and analyze_portfolio_upload endpoints were creating PortfolioAnalyzeResponse without passing portfolio_risk_metrics=analysis.portfolio_risk_metrics and enhanced_analytics=analysis.enhanced_analytics. Fixed in /app/backend/server.py lines ~6339-6345 and ~6374-6382.",
+    "alert_sound_upgrade": "playAlertSound now supports 3 types: urgent (3 rapid 1100/900/1100 Hz square bursts), target (3 ascending 660/880/1100 Hz sine tones), warning (2 moderate 820 Hz triangle pulses). Alert monitor covers urgentAlertSet, targetStateSet, and warningAlertSet.",
+    "fno_alert_description": "Alert buzzer description reads: 'Alerts on: Urgent exits, T1/T2 target hits, and warnings — loud multi-tone sound.' Confirmed T1/T2 targets are explicitly mentioned.",
+    "buzzer_toggle": "Enable Alert Buzzer button (data-testid=enable-alert-buzzer-button) toggles to 'Buzzer Enabled' on click.",
+    "dmart_result_screenshot": "DMART portfolio shows WAIT & WATCH recommendation, LTP ₹4,551.30, all 6 horizons PROFIT, comments include Beneish M-Score analysis.",
+    "sector_momentum_regression": "GET /api/sector-momentum still returns 15 sectors — regression check passed.",
+    "vol_bands_regression": "INFY custom-search still returns vol_bands with all 6 keys (1W,1M,3M,6M,9M,1Y) — regression check passed."
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration23_portfolio_analyze_and_alerts.py",
+    "/app/test_reports/pytest/iteration23_results.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "BUG FIXED: Both /api/portfolio/analyze and /api/portfolio/analyze-upload endpoints were not passing portfolio_risk_metrics and enhanced_analytics from the internal analysis object to the final API response. Fixed by adding portfolio_risk_metrics=analysis.portfolio_risk_metrics and enhanced_analytics=analysis.enhanced_analytics in both response constructors.",
+    "NOTE: KAYNES symbol was found by yfinance (returned stocks array, not in failed_symbols). Both DMART and KAYNES work correctly after _get_fundamental_cached → _get_fundamental_data rename fix.",
+    "NOTE: server.py is 6721 lines — still very large, recommend splitting into routers per domain."
+  ],
+
+  "updated_files": [
+    "/app/backend/server.py (lines ~6339-6345 and ~6374-6382: added portfolio_risk_metrics and enhanced_analytics passthrough in both portfolio analyze endpoints)",
+    "/app/backend/tests/test_iteration23_portfolio_analyze_and_alerts.py (new test file, 16 tests)"
+  ],
+
+  "success_rate": {"backend": "100% (16/16 tests passing)", "frontend": "100% (all UI checks passing)"},
+
+  "test_credentials": "@shish123 / 1234 (no PIN step — username only login)",
+
+  "seed_data_creation": "None",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 23: Both bugs fixed. (1) Portfolio analyze: _get_fundamental_cached renamed to _get_fundamental_data — DMART/KAYNES/INFY/HDFCBANK all return 200. (2) portfolio_risk_metrics bug: T1 testing agent fixed both analyze_portfolio_manual and analyze_portfolio_upload to pass portfolio_risk_metrics+enhanced_analytics from analysis object to API response. (3) Alert sound: 3-type system (urgent=3 rapid square bursts, target=3 ascending sine tones, warning=2 triangle pulses) covering all alert types. (4) Regression: 15 sectors, INFY vol_bands 6 horizons — all passing. Previous test file: /app/backend/tests/test_iteration22_sector_momentum_vol_bands.py (36 tests, all passing).",
+
+  "rca_of_the_issues": {
+    "portfolio_analyze_failing": {
+      "root_cause": "_get_fundamental_cached function was called in _analyze_portfolio_positions but the function was renamed to _get_fundamental_data, causing NameError → 500 → 'Unable to analyze portfolio.' error.",
+      "fix": "E1 already fixed: renamed to _get_fundamental_data (verified at line 2921 of server.py)",
+      "status": "FIXED by E1 in this iteration"
+    },
+    "portfolio_risk_metrics_null": {
+      "root_cause": "analyze_portfolio_manual (line 6339) and analyze_portfolio_upload (line 6374) built PortfolioAnalyzeResponse from analysis object but omitted portfolio_risk_metrics and enhanced_analytics fields, so they defaulted to None in the API response.",
+      "fix": "T1 testing agent added portfolio_risk_metrics=analysis.portfolio_risk_metrics and enhanced_analytics=analysis.enhanced_analytics to both response constructors.",
+      "status": "FIXED by T1 testing agent"
+    }
+  }
+}
