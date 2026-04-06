@@ -3239,12 +3239,16 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
     # Compute volatility-based realistic price bands with quality-adjusted drift
     _mb_piotroski = fundamental.get("piotroski_score") if fundamental else None
     _mb_beneish = fundamental.get("beneish_m_score") if fundamental else None
+    _mb_rsi = fundamental.get("rsi") if fundamental else None
+    _mb_trend = fundamental.get("trend_alignment") if fundamental else None
     vol_bands = compute_realistic_price_bands(
         ltp=float(ltp),
         hist_vol=hist_vol,
         sector=getattr(stock, "sector", "Unknown") if hasattr(stock, "sector") else "Unknown",
         pe_ratio=pe,
         piotroski_score=_mb_piotroski,
+        rsi=_mb_rsi,
+        trend_alignment=_mb_trend,
         beneish_m_score=_mb_beneish,
     ) if ltp is not None else {}
 
@@ -6481,6 +6485,19 @@ async def multibagger_custom_search(
     fundamental: dict = {}
     try:
         fundamental = await _get_fundamental_data(symbol)
+    except Exception:
+        pass
+
+    # Fetch hist OHLCV to inject actual hist_vol and RSI/trend into analysis
+    try:
+        _cs_hist_df = await _get_hist_ohlcv(symbol, period="1y")
+        if _cs_hist_df is not None and len(_cs_hist_df) >= 20:
+            _cs_ts = compute_full_technical_snapshot(symbol, _cs_hist_df, ltp=stock.ltp)
+            _cs_hist_vol = _cs_ts.get("hist_vol")
+            _cs_rsi = _cs_ts.get("rsi")
+            _cs_trend = _cs_ts.get("trend_alignment")
+            if _cs_hist_vol is not None:
+                fundamental = {**fundamental, "hist_vol": _cs_hist_vol, "rsi": _cs_rsi, "trend_alignment": _cs_trend}
     except Exception:
         pass
 

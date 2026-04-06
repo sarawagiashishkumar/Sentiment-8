@@ -103,7 +103,14 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - **App.js utilities** → extracted to `src/utils/formatters.js`, `src/utils/exportUtils.js`, `src/components/shared/LiveInfoBox.jsx` (250 lines saved)
 - All tests pass: 40/40 regression tests (Iteration 21)
 
-### 2026 Apr — Bug Fixes & Sound Upgrade (Iteration 23)
+### 2026 Apr — Price Band & F&O Math Overhaul (Iteration 24)
+- **Portfolio price bands**: Fixed broken update path — `expected_ranges` was always using static fallback due to wrong dict keys (`band.get("high")` → non-existent). Restructured `_analyze_portfolio_positions` to fetch hist_vol + Piotroski + RSI + trend FIRST, then compute `_portfolio_horizon_ranges()` in a single correct call.
+- **Quality-adjusted drift**: `compute_realistic_price_bands()` now computes drift per-stock based on Piotroski F-Score (+3%/-4%), RSI (overbought/oversold ±2.5%), trend alignment (±2.5-4%), and Beneish M-Score (-5% penalty). Was fixed 7% for all stocks.
+- **Multibagger custom-search**: Now fetches 1Y hist OHLCV to inject actual `hist_vol`, `rsi`, and `trend_alignment` into vol_bands (RELIANCE: 20.3% actual vol, 11% drift — was 30% fallback, 7% fixed).
+- **F&O T1/T2 formula**: Fixed fundamental math error — was computing `ATR% × entry_price × delta` (wrong scale). Now correctly computes `ATR_points × delta → absolute option gain`. NIFTY ATM: T1=+61% / T2=+122% (was stuck at +4%/+10% floor). Removed hard % caps (1.15x, 1.65x).
+- **F&O Best Exit**: Replaced fixed multipliers (1.4x/1.25x/1.15x) with `ATR × sqrt(days) × 2σ × delta` — dynamic projection per expiry and moneyness.
+- **Portfolio risk hist_vol**: Was hardcoded 0.30 for all holdings. Now uses actual per-stock computed hist_vol.
+- All 36 backend tests pass (Iteration 24).
 - **Portfolio Analysis Fix**: Fixed `NameError: _get_fundamental_cached` → corrected to `_get_fundamental_data` in `_analyze_portfolio_positions`. Manual portfolio entry (DMART, KAYNES, etc.) now returns HTTP 200 with full analysis.
 - **Custom F&O Alert Sound Upgrade**: Replaced single 0.5s beep with a rich 3-tier multi-tone engine: urgent exits → 3 rapid high-pitch square bursts; T1/T2 target hits → 3 ascending sine tones; warnings → 2 moderate triangle pulses. Now tracks ALL alert types (urgent, T1/T2 signal_state transitions, warnings) via separate refs.
 - All 16 backend tests pass (Iteration 23).
