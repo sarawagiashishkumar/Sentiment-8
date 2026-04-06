@@ -223,6 +223,7 @@ def compute_realistic_price_bands(
     rsi: float | None = None,
     trend_alignment: str | None = None,
     beneish_m_score: float | None = None,
+    india_vix: float | None = None,
 ) -> dict[str, dict[str, float]]:
     """
     Compute realistic price bands using historical volatility + quality-adjusted drift.
@@ -248,6 +249,14 @@ def compute_realistic_price_bands(
         hist_vol = base_vol
 
     hist_vol = max(0.10, min(hist_vol, 0.80))
+
+    # VIX scaling (India VIX-based): widen bands when market fear is elevated
+    # VIX is expressed as %, e.g. VIX=20 means 20%/year implied vol
+    # When VIX > 20 (elevated), use whichever is higher: hist_vol or 80% of VIX-implied vol
+    if india_vix is not None and india_vix > 15:
+        vix_annualized = india_vix / 100.0
+        hist_vol = max(hist_vol, vix_annualized * 0.80)  # VIX over-estimates realized, use 80%
+        hist_vol = min(hist_vol, 0.80)                   # Hard cap
 
     # ── Quality-adjusted annual drift ────────────────────────────────────────
     # Base: 7% equity market premium (India NIFTY long-run)

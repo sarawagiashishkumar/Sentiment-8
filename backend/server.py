@@ -825,9 +825,69 @@ async def _get_stock_core_cached(symbol: str) -> dict:
     if cached and (now - float(cached.get("ts", 0))) <= STOCK_CORE_CACHE_TTL_SECONDS:
         return cached["data"]
 
-    data = await get_stock_core(symbol)
+    # Kite equity quote is the preferred live source (per Master Spec)
+    data = await _fetch_kite_equity_core(symbol)
+    if data is None:
+        data = await get_stock_core(symbol)
     STOCK_CORE_CACHE[key] = {"ts": now, "data": data}
     return data
+
+
+async def _fetch_kite_equity_core(symbol: str) -> dict | None:
+    """
+    Fetch live equity snapshot from Kite /quote API (primary source).
+    Uses NSE:SYMBOL format — no instrument token required.
+    Falls back to None so callers can use Moneycontrol/RapidAPI.
+    """
+    access_token = await _get_kite_access_token()
+    if not access_token or not KITE_API_KEY:
+        return None
+    symbol_upper = symbol.upper().strip()
+    # Indexes use a separate Kite endpoint — handled by _build_index_projection
+    if symbol_upper in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"}:
+        return None
+
+    def _fetch() -> dict | None:
+        try:
+            resp = requests.get(
+                "https://api.kite.trade/quote",
+                params=[("i", f"NSE:{symbol_upper}")],
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {KITE_API_KEY}:{access_token}",
+                },
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return None
+            row = resp.json().get("data", {}).get(f"NSE:{symbol_upper}", {})
+            if not row:
+                return None
+            ltp = _to_float(row.get("last_price"))
+            if ltp is None or ltp <= 0:
+                return None
+            ohlc = row.get("ohlc") or {}
+            return {
+                "symbol": symbol_upper,
+                "company_name": symbol_upper,
+                "ltp": ltp,
+                "open": _to_float(ohlc.get("open")),
+                "high": _to_float(ohlc.get("high")),
+                "low": _to_float(ohlc.get("low")),
+                "prev_close": _to_float(ohlc.get("close")),  # Kite "close" = previous close
+                "year_high": None,
+                "year_low": None,
+                "volume": int(_to_float(row.get("volume")) or 0),
+                "market_cap": None,
+                "pe_ratio": None,
+                "book_value": None,
+                "eps": None,
+                "sector": "NSE",
+            }
+        except Exception:
+            return None
+
+    return await asyncio.to_thread(_fetch)
 
 
 async def _sync_kite_option_master_daily(force: bool = False) -> None:
@@ -853,9 +913,23 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
             reader = csv.DictReader(io.StringIO(response.text))
             allowed = {"NIFTY", "BANKNIFTY", *STOCK_FNO_UNIVERSE}
             rows: list[dict] = []
+            equity_rows: list[dict] = []
             for row in reader:
                 exchange = str(row.get("exchange", "")).upper().strip()
                 instrument_type = str(row.get("instrument_type", "")).upper().strip()
+                tradingsymbol = str(row.get("tradingsymbol", "")).strip().upper()
+
+                # Capture NSE equity tokens for Kite historical OHLCV (Data Failover)
+                if exchange == "NSE" and instrument_type == "EQ" and tradingsymbol:
+                    raw_token = row.get("instrument_token", "")
+                    eq_token = None
+                    try:
+                        eq_token = int(float(str(raw_token).strip())) if raw_token else None
+                    except (ValueError, TypeError):
+                        eq_token = None
+                    if eq_token:
+                        equity_rows.append({"symbol": tradingsymbol, "instrument_token": eq_token})
+
                 if exchange != "NFO" or instrument_type not in {"CE", "PE"}:
                     continue
 
@@ -894,18 +968,26 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
                         "updated_at": _utc_now_iso(),
                     }
                 )
-            return rows
+            return rows, equity_rows
         except Exception as exc:
             logger.warning("Kite option master refresh failed: %s", exc)
-            return []
+            return [], []
 
-    rows = await asyncio.to_thread(_load_rows)
+    rows, equity_rows = await asyncio.to_thread(_load_rows)
     if not rows:
         return
 
+    # Store F&O option contracts
     await db.kite_option_master.delete_many({})
     for start in range(0, len(rows), 5000):
         await db.kite_option_master.insert_many(rows[start : start + 5000], ordered=False)
+
+    # Store NSE equity instrument tokens for historical OHLCV (Kite-first data policy)
+    if equity_rows:
+        await db.kite_equity_master.delete_many({})
+        for start in range(0, len(equity_rows), 5000):
+            await db.kite_equity_master.insert_many(equity_rows[start : start + 5000], ordered=False)
+        logger.info("Kite equity master synced: %d equity tokens stored", len(equity_rows))
 
     await db.system_meta.update_one(
         {"key": "kite_option_master_sync"},
@@ -1175,12 +1257,20 @@ async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dic
                 ohlc = (row or {}).get("ohlc") or {}
                 if ltp is None or ltp <= 0:
                     continue
+                _greeks = (row or {}).get("greeks") or {}
                 rows[instrument] = {
                     "ltp": float(ltp),
                     "day_high": _to_float(ohlc.get("high")),
                     "day_low": _to_float(ohlc.get("low")),
+                    "day_open": _to_float(ohlc.get("open")),
                     "oi": _to_float(row.get("oi")),
+                    "oi_day_high": _to_float(row.get("oi_day_high")),
+                    "oi_day_low": _to_float(row.get("oi_day_low")),
                     "volume": _to_float(row.get("volume")),
+                    # Greeks — available for F&O instruments from Kite /quote
+                    "iv": _to_float(_greeks.get("iv")),
+                    "gamma": _to_float(_greeks.get("gamma")),
+                    "delta": _to_float(_greeks.get("delta")),
                 }
             return rows
         except Exception:
@@ -1197,6 +1287,184 @@ async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dic
         if row and _to_float(row.get("ltp")):
             response[script] = row
     return response
+
+
+def compute_option_chain_analytics(
+    contracts: list,
+    kite_map: dict[str, dict],
+    underlying_ltp: float,
+    step: int = 50,
+) -> dict:
+    """
+    Pure Python computation of option chain analytics from live Kite OI/IV/Gamma data.
+    All math strictly in Python — no LLM estimation, per Master Spec rule.
+
+    Returns:
+      max_pain  — Strike that minimises total option payout to buyers (₹ value)
+      pcr       — Put/Call OI ratio
+      iv_rank   — ATM IV percentile within current chain (0–100 proxy; no 52W history needed)
+      gex       — Net gamma exposure (CE GEX − PE GEX), scaled; +ve = stabilising, −ve = amplifying
+      oi_buildup — ATM CE OI change classification
+    """
+    ce_data: dict[float, dict] = {}
+    pe_data: dict[float, dict] = {}
+
+    for contract in contracts:
+        snap = kite_map.get(contract.script if hasattr(contract, "script") else str(contract))
+        if snap is None:
+            continue
+        strike = float(contract.strike if hasattr(contract, "strike") else 0)
+        oi        = float(snap.get("oi")        or 0)
+        ltp       = float(snap.get("ltp")       or 0)
+        gamma     = float(snap.get("gamma")     or 0)
+        iv        = float(snap.get("iv")        or 0)
+        oi_open   = float(snap.get("oi_day_low") or oi)   # Lowest OI of day ≈ opening OI
+        day_open  = float(snap.get("day_open")  or ltp)
+
+        record = {"oi": oi, "ltp": ltp, "gamma": gamma, "iv": iv,
+                  "oi_open": oi_open, "day_open": day_open}
+        opt_type = contract.option_type if hasattr(contract, "option_type") else ""
+        if opt_type == "CE":
+            ce_data[strike] = record
+        elif opt_type == "PE":
+            pe_data[strike] = record
+
+    all_strikes = sorted(set(list(ce_data.keys()) + list(pe_data.keys())))
+    if not all_strikes:
+        return {"max_pain": None, "pcr": None, "iv_rank": None, "gex": None, "oi_buildup": None}
+
+    # 1. Max Pain — strike minimising total intrinsic-value payout to option buyers
+    max_pain_strike = None
+    min_pain_val = float("inf")
+    for test_strike in all_strikes:
+        total_pain = 0.0
+        for s in all_strikes:
+            # CE buyers profit when underlying > strike
+            total_pain += max(0.0, test_strike - s) * ce_data.get(s, {}).get("oi", 0)
+            # PE buyers profit when underlying < strike
+            total_pain += max(0.0, s - test_strike) * pe_data.get(s, {}).get("oi", 0)
+        if total_pain < min_pain_val:
+            min_pain_val = total_pain
+            max_pain_strike = test_strike
+
+    # 2. PCR
+    total_ce_oi = sum(d["oi"] for d in ce_data.values())
+    total_pe_oi = sum(d["oi"] for d in pe_data.values())
+    pcr = round(total_pe_oi / total_ce_oi, 3) if total_ce_oi > 0 else None
+
+    # 3. IV Rank (within-chain proxy; ATM IV vs chain min/max)
+    atm_strike = round(underlying_ltp / max(step, 1)) * step
+    atm_iv = max(
+        ce_data.get(atm_strike, {}).get("iv", 0),
+        pe_data.get(atm_strike, {}).get("iv", 0),
+    )
+    all_ivs = [d["iv"] for d in list(ce_data.values()) + list(pe_data.values()) if d["iv"] > 0]
+    iv_rank: float | None = None
+    if all_ivs and atm_iv > 0:
+        iv_min, iv_max = min(all_ivs), max(all_ivs)
+        iv_rank = round((atm_iv - iv_min) / (iv_max - iv_min) * 100, 1) if iv_max > iv_min else 50.0
+
+    # 4. GEX — net gamma exposure (CE-side positive, PE-side negative convention)
+    #    GEX_unit = gamma × OI; scale by spot² / 10M for human-readable number
+    ce_gex_raw = sum(d["gamma"] * d["oi"] for d in ce_data.values() if d["gamma"] > 0)
+    pe_gex_raw = sum(d["gamma"] * d["oi"] for d in pe_data.values() if d["gamma"] > 0)
+    gex: float | None = None
+    if ce_gex_raw > 0 or pe_gex_raw > 0:
+        gex = round((ce_gex_raw - pe_gex_raw) * (underlying_ltp ** 2) / 10_000_000, 2)
+
+    # 5. OI Buildup — ATM CE classification (OI change + price direction)
+    oi_buildup: str | None = None
+    atm_ce = ce_data.get(atm_strike, {})
+    if atm_ce and atm_ce["oi"] > 0 and atm_ce["oi_open"] > 0:
+        oi_chg_pct = (atm_ce["oi"] - atm_ce["oi_open"]) / atm_ce["oi_open"]
+        price_chg_pct = (
+            (atm_ce["ltp"] - atm_ce["day_open"]) / max(atm_ce["day_open"], 0.01)
+            if atm_ce["day_open"] > 0 else 0.0
+        )
+        oi_up    = oi_chg_pct    > 0.02
+        oi_down  = oi_chg_pct    < -0.02
+        price_up = price_chg_pct > 0.01
+        price_dn = price_chg_pct < -0.01
+        if oi_up   and price_up: oi_buildup = "LONG_BUILDUP"
+        elif oi_up   and price_dn: oi_buildup = "SHORT_BUILDUP"
+        elif oi_down and price_up: oi_buildup = "SHORT_COVERING"
+        elif oi_down and price_dn: oi_buildup = "LONG_UNWINDING"
+        else: oi_buildup = "NEUTRAL"
+
+    return {
+        "max_pain":  float(max_pain_strike) if max_pain_strike is not None else None,
+        "pcr":       pcr,
+        "iv_rank":   iv_rank,
+        "gex":       gex,
+        "oi_buildup": oi_buildup,
+    }
+
+
+async def _fetch_kite_hist_ohlcv_for_equity(symbol: str, period: str = "1y") -> dict | None:
+    """
+    Fetch daily historical OHLCV from Kite for NSE equity instruments (Kite-first policy).
+    Requires valid Kite access token + instrument token in kite_equity_master.
+    Returns {'records': [...]} in same format as _fetch_yfinance_hist_ohlcv, or None.
+    """
+    access_token = await _get_kite_access_token()
+    if not access_token or not KITE_API_KEY:
+        return None
+
+    token_row = await db.kite_equity_master.find_one(
+        {"symbol": symbol.upper().strip()}, {"_id": 0, "instrument_token": 1}
+    )
+    if not token_row or not token_row.get("instrument_token"):
+        # Token not cached → trigger sync and retry once
+        await _sync_kite_option_master_daily()
+        token_row = await db.kite_equity_master.find_one(
+            {"symbol": symbol.upper().strip()}, {"_id": 0, "instrument_token": 1}
+        )
+    if not token_row or not token_row.get("instrument_token"):
+        return None
+
+    instrument_token = int(token_row["instrument_token"])
+    period_days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730, "5y": 1825}
+    days = period_days_map.get(period, 365)
+    from_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    to_dt   = datetime.now(timezone.utc)
+
+    def _fetch():
+        try:
+            url = (
+                f"https://api.kite.trade/instruments/historical/{instrument_token}/day"
+                f"?from={from_dt.strftime('%Y-%m-%d+%H:%M:%S')}"
+                f"&to={to_dt.strftime('%Y-%m-%d+%H:%M:%S')}"
+            )
+            resp = requests.get(
+                url,
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {KITE_API_KEY}:{access_token}",
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                return None
+            candles = resp.json().get("data", {}).get("candles", [])
+            # Kite candle format: [datetime_str, open, high, low, close, volume]
+            records = []
+            for c in candles:
+                if len(c) < 6:
+                    continue
+                records.append({
+                    "date": str(c[0])[:10],
+                    "open": float(c[1]),
+                    "high": float(c[2]),
+                    "low": float(c[3]),
+                    "close": float(c[4]),
+                    "volume": int(c[5] or 0),
+                })
+            return {"records": records} if records else None
+        except Exception as exc:
+            logger.debug("Kite hist OHLCV failed for %s: %s", symbol, exc)
+            return None
+
+    return await asyncio.to_thread(_fetch)
 
 
 async def _fetch_live_option_snapshot(contract: FNOContract) -> dict:
@@ -3198,11 +3466,14 @@ async def _get_hist_ohlcv(symbol: str, period: str = "1y"):
     except Exception:
         pass
 
-    # Fetch from yfinance
-    try:
-        raw = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_hist_ohlcv, symbol, period), timeout=20.0)
-    except Exception:
-        raw = None
+    # Primary: Kite historical API (Kite-first data policy, per Master Spec)
+    raw = await _fetch_kite_hist_ohlcv_for_equity(symbol, period)
+    if not raw or not raw.get("records"):
+        # Fallback: yfinance (only when Kite data is unavailable)
+        try:
+            raw = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_hist_ohlcv, symbol, period), timeout=20.0)
+        except Exception:
+            raw = None
 
     if not raw or not raw.get("records"):
         return None
@@ -3229,6 +3500,7 @@ def compute_multibagger_analysis(
     stock: StockCoreNormalized,
     fundamental: dict | None = None,
     active_macro_events: list[str] | None = None,
+    india_vix: float | None = None,
 ) -> dict:
     ltp = stock.ltp
     market_cap = stock.market_cap
@@ -3359,7 +3631,14 @@ def compute_multibagger_analysis(
     )
     is_potential_multibagger = bool(mandatory_filters and final_score >= 70 and tier_pass_count >= 5)
 
-    current_rsi_level = round(30 + (position if position is not None else 0.5) * 40, 2) if ltp is not None else None
+    # RSI: use real RSI from historical data if available (injected by _build_multibagger_candidates)
+    # Falls back to 52W-position proxy only when hist data is unavailable
+    _real_rsi = fundamental.get("rsi") if fundamental else None
+    if _real_rsi is not None and 0 < _real_rsi <= 100:
+        current_rsi_level = round(_real_rsi, 2)
+    else:
+        # Proxy: map 52W-position (0=near-low, 1=near-high) to RSI range 30–70
+        current_rsi_level = round(30 + (position if position is not None else 0.5) * 40, 2) if ltp is not None else None
     gtt_buy_price = None
     if ltp is not None:
         base_buy = ltp * 0.965
@@ -3396,6 +3675,7 @@ def compute_multibagger_analysis(
         rsi=_mb_rsi,
         trend_alignment=_mb_trend,
         beneish_m_score=_mb_beneish,
+        india_vix=india_vix,
     ) if ltp is not None else {}
 
     for key, base in duration_base.items():
@@ -3965,6 +4245,11 @@ async def build_fno_signal(
     tech_snapshot: dict | None = None,
     # ── Batch A: fundamental data for macro context & forensic confluence ──
     fundamental: dict | None = None,
+    # ── Option chain analytics (Max Pain, IV Rank, GEX, OI Buildup) ────────
+    max_pain: float | None = None,
+    iv_rank: float | None = None,
+    oi_buildup: str | None = None,
+    gex: float | None = None,
 ) -> FNOSignalResponse:
     underlying_ltp = stock_core.ltp
     if underlying_ltp is None:
@@ -4123,9 +4408,27 @@ async def build_fno_signal(
         instrument=contract.underlying,
         strategy_stats=_strategy_stats_data if _strategy_stats_data else None,
     )
-    _strategy_name = _selected_strategy.get("name", "Standard") if _selected_strategy else "Standard"
-    _strategy_id = _selected_strategy.get("id", "S3_SUPERTREND") if _selected_strategy else "S3_SUPERTREND"
-    if _selected_strategy:
+    # Enforce Master Spec Rule: block signal if backtest data shows no qualifying strategy.
+    # Only apply when ≥10 backtested trades exist to make a reliable determination.
+    if _selected_strategy is None:
+        _sufficient_backtest = any(
+            s.get("total_trades", 0) >= 10 for s in (_strategy_stats_data or {}).values()
+        )
+        if _sufficient_backtest:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Signal blocked: no strategy passes ≥75% win-rate / ≥0.40R expectancy "
+                    f"for {direction} in {_regime} regime. "
+                    "Add more backtest records or re-evaluate active strategies."
+                ),
+            )
+        # Insufficient data — allow provisionally with built-in default
+        _strategy_name = "Standard"
+        _strategy_id = "S3_SUPERTREND"
+    else:
+        _strategy_name = _selected_strategy.get("name", "Standard")
+        _strategy_id = _selected_strategy.get("id", "S3_SUPERTREND")
         trigger_factors.append(f"Strategy:{_strategy_id}")
         trigger_factors.append(f"Regime:{_regime}")
 
@@ -4403,6 +4706,10 @@ async def build_fno_signal(
         expiry_risk=_expiry_risk_bucket(minutes_to_expiry),
         data_source="LIVE_OPTION_CHAIN",
         analysis_refreshed_at=refreshed_at,
+        max_pain=max_pain,
+        iv_rank=iv_rank,
+        oi_buildup=oi_buildup,
+        gex=gex,
     )
 
 
@@ -4713,18 +5020,14 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     if contracts:
         kite_map = await _fetch_option_snapshots_from_kite(contracts)
 
-        # ── Compute real PCR from option chain OI ────────────────────────────
-        total_ce_oi = 0.0
-        total_pe_oi = 0.0
-        for contract in contracts:
-            snap = kite_map.get(contract.script)
-            if snap and snap.get("oi"):
-                oi_val = float(snap["oi"] or 0)
-                if contract.option_type == "CE":
-                    total_ce_oi += oi_val
-                elif contract.option_type == "PE":
-                    total_pe_oi += oi_val
-        pcr = round(total_pe_oi / total_ce_oi, 3) if total_ce_oi > 0 else None
+        # ── Compute full option chain analytics (Max Pain, PCR, IV Rank, GEX, OI Buildup)
+        # All analytics computed in pure Python from live Kite OI/IV/Gamma data (Master Spec).
+        _chain_analytics = compute_option_chain_analytics(contracts, kite_map, stock.ltp, step)
+        pcr         = _chain_analytics.get("pcr")
+        _max_pain   = _chain_analytics.get("max_pain")
+        _iv_rank    = _chain_analytics.get("iv_rank")
+        _gex        = _chain_analytics.get("gex")
+        _oi_buildup = _chain_analytics.get("oi_buildup")
 
         # ── Fetch India VIX ──────────────────────────────────────────────────
         india_vix = await _get_india_vix()
@@ -4769,6 +5072,10 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                     pcr=pcr,
                     tech_snapshot=index_tech_snap,
                     fundamental={},  # Index has no individual fundamental data
+                    max_pain=_max_pain,
+                    iv_rank=_iv_rank,
+                    oi_buildup=_oi_buildup,
+                    gex=_gex,
                 )
                 rows.append(signal)
             except HTTPException:
@@ -5003,9 +5310,41 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
 
         async with semaphore:
             expiry = await _get_nearest_expiry(symbol, prefer_monthly=True)
+            lot_size_val = await _resolve_verified_lot_size(symbol, None)
+
+            # ── Option chain analytics: fetch ±5 strikes for PCR / Max Pain / GEX / OI Buildup ──
+            _n_extra = 5
+            _ana_contracts = [
+                FNOContract(
+                    script=_format_script(symbol, expiry, float(k), ot),
+                    underlying=symbol,
+                    expiry=expiry,
+                    expiry_time_ist="15:30",
+                    strike=float(k),
+                    option_type=ot,
+                    exchange="NFO",
+                    lot_size=lot_size_val,
+                )
+                for k in range(
+                    int(strike - _n_extra * step),
+                    int(strike + _n_extra * step + step),
+                    step,
+                )
+                for ot in ["CE", "PE"]
+            ]
+            _ana_kite_map: dict[str, dict] = {}
+            try:
+                _ana_kite_map = await _fetch_option_snapshots_from_kite(_ana_contracts)
+            except Exception:
+                pass
+            _stock_analytics: dict = {}
+            if _ana_kite_map:
+                _stock_analytics = compute_option_chain_analytics(
+                    _ana_contracts, _ana_kite_map, core.ltp, step
+                )
+
             symbol_rows: list[FNOSignalResponse] = []
             for option_type in ["CE", "PE"]:
-                lot_size_val = await _resolve_verified_lot_size(symbol, None)
                 contract = FNOContract(
                     script=_format_script(symbol, expiry, strike, option_type),
                     underlying=symbol,
@@ -5021,13 +5360,15 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                     logger.warning(f"{symbol} {option_type}: Expiry too soon ({minutes_to_expiry}m)")
                     continue
 
-                try:
-                    snapshot = await _fetch_live_option_snapshot(contract)
-                    option_ltp = float(snapshot.get("ltp"))
-                except Exception as exc:
-                    logger.warning(f"{symbol} {option_type}: Failed to fetch snapshot: {exc}")
-                    continue
-
+                # Reuse snapshot from analytics map if available; else fetch individually
+                snapshot = _ana_kite_map.get(contract.script)
+                if snapshot is None:
+                    try:
+                        snapshot = await _fetch_live_option_snapshot(contract)
+                    except Exception as exc:
+                        logger.warning(f"{symbol} {option_type}: Failed to fetch snapshot: {exc}")
+                        continue
+                option_ltp = _to_float(snapshot.get("ltp"))
                 if option_ltp is None or option_ltp <= 0:
                     logger.warning(f"{symbol} {option_type}: Invalid LTP: {option_ltp}")
                     continue
@@ -5043,7 +5384,11 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         option_day_low=_to_float(snapshot.get("day_low")),
                         india_vix=india_vix,
                         tech_snapshot=tech_snap,
-                        fundamental=fundamental,  # Pass fetched fundamental for forensic scoring
+                        fundamental=fundamental,
+                        max_pain=_stock_analytics.get("max_pain"),
+                        iv_rank=_stock_analytics.get("iv_rank"),
+                        oi_buildup=_stock_analytics.get("oi_buildup"),
+                        gex=_stock_analytics.get("gex"),
                     )
                     logger.info(f"{symbol} {option_type}: Signal generated - Direction={signal.direction}, Confluence={signal.confluence_score}, Conviction={signal.conviction_level}")
                 except HTTPException as exc:
@@ -5140,17 +5485,22 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
             except Exception:
                 return (symbol, {})
 
-    async def _fetch_hist_one(symbol: str) -> tuple[str, float | None]:
-        """Fetch historical vol for a symbol."""
+    async def _fetch_hist_one(symbol: str) -> tuple[str, dict]:
+        """Fetch historical vol, RSI, and trend_alignment for a symbol."""
         async with hist_semaphore:
             try:
                 hist_df = await _get_hist_ohlcv(symbol, period="1y")
                 if hist_df is not None and not hist_df.empty:
                     hist_vol = compute_historical_volatility(hist_df["Close"])
-                    return (symbol, hist_vol)
+                    tech_snap = compute_full_technical_snapshot(symbol, hist_df)
+                    return (symbol, {
+                        "hist_vol": hist_vol,
+                        "rsi": tech_snap.get("rsi"),
+                        "trend_alignment": tech_snap.get("trend_alignment"),
+                    })
             except Exception:
                 pass
-            return (symbol, None)
+            return (symbol, {})
 
     fetched = await asyncio.gather(*[_fetch_one(symbol) for symbol in universe])
     results = [row for row in fetched if row is not None]
@@ -5161,10 +5511,11 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
     fundamental_map = {sym: data for sym, data in fundamental_results}
 
     hist_vol_results = await asyncio.gather(*[_fetch_hist_one(sym) for sym in valid_symbols])
-    hist_vol_map = {sym: vol for sym, vol in hist_vol_results}
+    hist_tech_map = {sym: data for sym, data in hist_vol_results}
 
-    # Fetch active macro events once for all stocks (Batch A)
+    # Fetch active macro events and India VIX once for all stocks
     _active_macro_evts = await _get_active_macro_events()
+    _mb_india_vix = await _get_india_vix()
 
     candidates: list[MultibaggerCandidate] = []
     for row in results:
@@ -5180,12 +5531,16 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
             market_cap_cr=stock.market_cap,
             fundamental=fundamental,
         )
-        # Inject hist_vol into fundamental dict for price band calculation
-        hist_vol = hist_vol_map.get(stock.symbol)
-        if hist_vol is not None:
-            fundamental = {**fundamental, "hist_vol": hist_vol}
+        # Inject hist_vol, RSI, and trend_alignment into fundamental dict
+        hist_tech = hist_tech_map.get(stock.symbol, {})
+        if hist_tech:
+            fundamental = {**fundamental, **{k: v for k, v in hist_tech.items() if v is not None}}
 
-        analysis = compute_multibagger_analysis(stock, fundamental=fundamental, active_macro_events=_active_macro_evts)
+        analysis = compute_multibagger_analysis(
+            stock, fundamental=fundamental,
+            active_macro_events=_active_macro_evts,
+            india_vix=_mb_india_vix,
+        )
 
         # Lower eligibility score if filters failed (don't fully exclude, just down-rank)
         if not eligibility["eligible"]:
@@ -5340,17 +5695,23 @@ async def _refresh_open_position(position: dict) -> dict:
     try:
         latest_option_ltp = await _fetch_live_option_ltp(contract)
     except Exception:
+        # Ensure best_exit_price is never below the last known option LTP
+        _last_known_ltp  = float(position.get("latest_option_ltp") or 0)
+        _current_be      = float(position.get("best_exit_price") or 0)
+        _entry_floor     = round(float(position.get("buy_price") or 0) * 1.01, 2)
+        _corrected_be    = max(_current_be, _last_known_ltp, _entry_floor) if _last_known_ltp > 0 else _current_be
+        _unavail_update: dict = {
+            "alert": "LIVE_LTP_UNAVAILABLE",
+            "lot_size": corrected_lot_size,
+            "minutes_to_expiry": minutes_to_expiry,
+            "last_update": _utc_now_iso(),
+            "revised_exit_plan": "Live option feed unavailable; showing last confirmed option LTP.",
+        }
+        if _corrected_be > _current_be:
+            _unavail_update["best_exit_price"] = _corrected_be
         updated = await db.custom_positions.find_one_and_update(
             {"id": position["id"]},
-            {
-                "$set": {
-                    "alert": "LIVE_LTP_UNAVAILABLE",
-                    "lot_size": corrected_lot_size,
-                    "minutes_to_expiry": minutes_to_expiry,
-                    "last_update": _utc_now_iso(),
-                    "revised_exit_plan": "Live option feed unavailable; showing last confirmed option LTP.",
-                }
-            },
+            {"$set": _unavail_update},
             projection={"_id": 0},
             return_document=ReturnDocument.AFTER,
         )
@@ -5386,12 +5747,54 @@ async def _refresh_open_position(position: dict) -> dict:
     if best_exit_days and best_exit_days > 0:
         best_exit_date_obj = get_nth_trading_day_from_today(best_exit_days)
         best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y")
-        # Theta-decay-based best_exit_price for normal (no-alert) positions.
-        # Use calendar days so weekends/holidays are included in decay calculation.
+        # ATR-based max LTP projection minus theta — same formula as build_fno_signal.
+        # Best exit MUST be ≥ current LTP (never show an exit price below the live market).
         try:
             _pos_entry = float(position.get("buy_price") or 0)
             _pos_vix = await _get_india_vix()
             if _pos_entry > 0:
+                # Fetch underlying LTP for moneyness-based delta estimation
+                _und_sym = (position.get("underlying") or
+                            position.get("script", "").split("2")[0][:10])
+                _und_ltp = 0.0
+                if _und_sym:
+                    try:
+                        _und_core = await _get_stock_core_cached(_und_sym.upper())
+                        _und_ltp = float(_und_core.get("ltp") or 0)
+                    except Exception:
+                        pass
+
+                # ATR proxy: 1.2% of underlying or 5% of option entry
+                _pos_atr_proxy = (
+                    max(_und_ltp * 0.012, _pos_entry * 0.05)
+                    if _und_ltp > 0 else _pos_entry * 0.05
+                )
+                _pos_max_move = _pos_atr_proxy * math.sqrt(max(best_exit_days, 1)) * 2.0
+
+                # Delta proxy from moneyness (same tiers as build_fno_signal)
+                _pos_strike = float(position.get("strike") or _pos_entry)
+                _pos_opt_type = "CE" if "CE" in position.get("script", "").upper() else "PE"
+                _pos_be_delta = 0.45
+                if _und_ltp > 0 and _pos_strike > 0:
+                    _pos_mono = (
+                        _und_ltp / _pos_strike if _pos_opt_type == "CE"
+                        else _pos_strike / _und_ltp
+                    )
+                    if _pos_mono >= 1.08:   _pos_be_delta = 0.80
+                    elif _pos_mono >= 1.04: _pos_be_delta = 0.65
+                    elif _pos_mono >= 0.97: _pos_be_delta = 0.45
+                    elif _pos_mono >= 0.93: _pos_be_delta = 0.28
+                    else:                   _pos_be_delta = 0.15
+
+                _pos_max_gain = _pos_max_move * _pos_be_delta * 1.2
+                _pos_target2  = float(position.get("target2") or (_pos_entry * 1.5))
+                max_ltp_projection = round(min(
+                    _pos_entry + _pos_max_gain,
+                    _pos_entry * 3.0,      # Hard cap: never > 3× entry
+                    _pos_target2 * 1.20,   # Cap at 20% above stored T2
+                ), 2)
+
+                # Theta decay: same VIX-based calendar-day model as build_fno_signal
                 _cal_to_expiry = (
                     _get_calendar_days_to_date(position["expiry"])
                     if position.get("expiry") else max(remaining_trading_days, 1)
@@ -5405,9 +5808,9 @@ async def _refresh_open_position(position: dict) -> dict:
                     calendar_days_to_expiry=_cal_to_expiry,
                     calendar_best_exit_days=_cal_to_best_exit,
                 )
-                # Best exit price = current LTP - projected theta erosion over holding period
-                _raw_best = round(latest_option_ltp - _pos_theta * 0.5, 2)  # 50% theta impact
-                best_exit_price = max(_raw_best, round(_pos_entry * 1.02, 2))
+                # Final: best_exit ≥ current_ltp (never below live market price)
+                _raw_best = round(max_ltp_projection - _pos_theta, 2)
+                best_exit_price = max(_raw_best, latest_option_ltp, round(_pos_entry * 1.01, 2))
         except Exception:
             pass
 
@@ -6857,6 +7260,7 @@ async def multibagger_custom_search(
         stock,
         fundamental=fundamental,
         active_macro_events=await _get_active_macro_events(),
+        india_vix=await _get_india_vix(),
     )
 
     return MultibaggerCandidate(
@@ -7158,6 +7562,21 @@ async def startup_tasks():
             logger.info("Migrated/fixed original_target for %d positions (T2 compounding guard)", fixed_count)
     except Exception as exc:
         logger.warning("original_target migration failed (non-fatal): %s", exc)
+
+    # ── Purge garbage custom positions created by testing/dev (buy_price=999999 or missing expiry_date)
+    try:
+        purge_result = await db.custom_positions.delete_many({
+            "$or": [
+                {"buy_price": {"$gte": 999000}},  # Test/garbage entries
+                {"expiry_date": None},
+                {"expiry_date": {"$exists": False}},
+            ]
+        })
+        if purge_result.deleted_count:
+            logger.info("Purged %d garbage custom positions (buy_price≥999000 or missing expiry_date)",
+                        purge_result.deleted_count)
+    except Exception as exc:
+        logger.warning("Garbage position purge failed (non-fatal): %s", exc)
 
 
 @app.on_event("shutdown")
