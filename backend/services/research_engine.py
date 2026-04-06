@@ -3646,7 +3646,7 @@ def compute_index_constituent_bias(
 
     norm_bull = bull_weight / total_weight * 100
     norm_bear = bear_weight / total_weight * 100
-    breadth_score = round(norm_bull - norm_bear + 50)  # 50 = neutral
+    breadth_score = max(0, min(100, round(norm_bull - norm_bear + 50)))  # clamped [0,100]
 
     if norm_bull > norm_bear + 10:
         weighted_bias = "BULLISH"
