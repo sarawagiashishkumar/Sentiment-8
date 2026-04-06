@@ -605,6 +605,8 @@ class FNOSignalResponse(BaseModel):
     strategy_library_id: str | None = None      # Batch 5: e.g. "S1_ORB"
     strategy_library_name: str | None = None    # Batch 5: e.g. "Opening Range Breakout"
     market_regime: str | None = None            # Batch 5: e.g. "LOW_VOL_TREND_BULL"
+    macro_context: dict | None = None           # Batch 4: regime + sector bias + event impacts
+    index_breadth: dict | None = None           # Batch 5: constituent-weighted breadth for NIFTY/BANKNIFTY
     entry_price: float
     stop_loss: float
     target1: float
@@ -733,6 +735,12 @@ class PortfolioStockAnalysis(BaseModel):
     expected_signals: dict[str, PortfolioExpectedSignal]
     recommendation: str
     comments: str
+    # Batch 4: Enhanced fields
+    master_snapshot: dict | None = None          # 52W/3M/1M levels, ATH%, index memberships
+    altman_z_zone: str | None = None             # SAFE / GREY / DISTRESS
+    roic_wacc_spread: float | None = None        # ROIC - WACC %
+    piotroski_score: int | None = None
+    beneish_m_score: float | None = None
 
 
 class PortfolioAnalyzeResponse(BaseModel):
@@ -1814,6 +1822,9 @@ def _portfolio_horizon_ranges(
 
 
 async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyzeResponse:
+    # ── Batch 4: Merge duplicate holdings first ───────────────────────────
+    positions = merge_duplicate_holdings(positions)
+
     normalized_positions = []
     for row in positions:
         raw_symbol = str(row.get("symbol", "")).strip()
@@ -1960,17 +1971,68 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
 
         # ── Use research engine verdict ──────────────────────────────────
         allocation_pct = (row["current_value"] / total_current_value) * 100 if total_current_value > 0 else 0.0
+
+        # ── Fetch fundamental cache for richer verdict ────────────────────
+        _fund = await _get_fundamental_cached(stock.symbol)
+        _piotroski = _fund.get("piotroski_score") if _fund else None
+        _beneish = _fund.get("beneish_m_score") if _fund else None
+        _hist_vol_val = None
+        _rsi_val = None
+        _trend_val = None
+        _master_snap: dict | None = None
+
+        # ── Fetch hist OHLCV for tech snapshot + master snapshot ──────────
+        try:
+            _hist_df = await _get_hist_ohlcv(stock.symbol, period="1y")
+            if _hist_df is not None and len(_hist_df) >= 20:
+                _ts = compute_full_technical_snapshot(stock.symbol, _hist_df, ltp=stock.ltp)
+                _hist_vol_val = _ts.get("hist_vol")
+                _rsi_val = _ts.get("rsi")
+                _trend_val = _ts.get("trend_alignment")
+                # Master stock snapshot
+                _master_snap = compute_master_stock_snapshot(
+                    symbol=stock.symbol,
+                    ltp=stock.ltp,
+                    hist=_hist_df,
+                    sector=stock.sector,
+                    market_cap=stock.market_cap,
+                    index_memberships=[],  # enriched if available
+                )
+                # Use volatility-based price bands if hist available
+                _hv_bands = compute_realistic_price_bands(
+                    ltp=stock.ltp, hist_vol=_hist_vol_val
+                )
+                if _hv_bands:
+                    for hor, band in _hv_bands.items():
+                        if hor in expected_signals:
+                            expected_signals[hor] = PortfolioExpectedSignal(
+                                max_expected_price=band.get("high", expected_signals[hor].max_expected_price),
+                                min_expected_price=band.get("low", expected_signals[hor].min_expected_price),
+                                amount_signal=expected_signals[hor].amount_signal,
+                                percent_signal=expected_signals[hor].percent_signal,
+                                direction=expected_signals[hor].direction,
+                            )
+        except Exception:
+            pass
+
         recommendation, comments = compute_portfolio_verdict(
             pnl_pct=row["pnl_pct"],
             price_zone=price_zone,
             value_flag=value_flag,
-            rsi=None,           # Will be enhanced in future with live technical data
-            trend_alignment=None,
-            piotroski=None,
-            beneish=None,
-            hist_vol=None,
+            rsi=_rsi_val,
+            trend_alignment=_trend_val,
+            piotroski=_piotroski,
+            beneish=_beneish,
+            hist_vol=_hist_vol_val,
             allocation_pct=allocation_pct,
         )
+
+        _altman = _fund.get("altman_z_zone") if _fund else None
+        _roic_spread = _fund.get("roic_wacc_spread") if _fund else None
+        if _altman == "DISTRESS" and "Exit or avoid" not in " ".join(comments):
+            comments.append(f"Altman Z-Score in DISTRESS zone — review solvency risk")
+        if _roic_spread is not None and _roic_spread < -3:
+            comments.append(f"ROIC < WACC by {abs(_roic_spread):.1f}% — value destructive")
 
         analyses.append(
             PortfolioStockAnalysis(
@@ -1995,6 +2057,11 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
                 expected_signals=expected_signals,
                 recommendation=recommendation,
                 comments=comments,
+                master_snapshot=_master_snap,
+                altman_z_zone=_altman,
+                roic_wacc_spread=_roic_spread,
+                piotroski_score=_piotroski,
+                beneish_m_score=_beneish,
             )
         )
 
@@ -3705,6 +3772,23 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
         if ebitda_trend == "DETERIORATING":
             thesis_parts.append("EBITDA margin deteriorating — margin compression risk")
 
+        # ── Batch 4: Macro Context for Multibagger ────────────────────────
+        try:
+            _mb_sector = fundamental.get("sector") if fundamental else None
+            _mb_macro = compute_macro_context(
+                active_events=[],
+                vix=None,   # VIX not available in sync context; regime will use UNKNOWN
+                sector=_mb_sector,
+            )
+            _mb_bias = _mb_macro.get("macro_bias", "NEUTRAL")
+            if _mb_bias == "TAILWIND":
+                thesis_parts.append(f"Sector '{_mb_sector}' has macro tailwind — favorable environment")
+            elif _mb_bias == "HEADWIND":
+                thesis_parts.append(f"Sector '{_mb_sector}' facing macro headwind — risk factor")
+        except Exception:
+            _mb_macro = {}
+            _mb_bias = "NEUTRAL"
+
     # Tier breakdown
     passed_tiers = [k for k, threshold in tier_thresholds.items() if tier_scores.get(k, 0) >= threshold]
     if passed_tiers:
@@ -4217,6 +4301,41 @@ async def build_fno_signal(
     if _selected_strategy:
         trigger_factors.append(f"Strategy:{_strategy_id}")
         trigger_factors.append(f"Regime:{_regime}")
+
+    # ── Batch 4: Macro Context ────────────────────────────────────────────
+    _sector_str = fundamental.get("sector") if fundamental else None
+    _macro_ctx: dict = {}
+    try:
+        _macro_ctx = compute_macro_context(
+            active_events=[],  # can be extended to pull from a global event config
+            vix=_vix_curr,
+            adx=_adx_curr,
+            rsi=_rsi_curr,
+            sector=_sector_str,
+        )
+        macro_bias = _macro_ctx.get("macro_bias", "NEUTRAL")
+        if macro_bias == "HEADWIND" and direction == "BULLISH":
+            trigger_factors.append(f"MacroHeadwind:{_sector_str}")
+        elif macro_bias == "TAILWIND" and direction == "BULLISH":
+            trigger_factors.append(f"MacroTailwind:{_sector_str}")
+    except Exception:
+        pass
+
+    # ── Batch 5: Constituent-weighted NIFTY/BANKNIFTY breadth (Action 5) ──
+    _index_breadth: dict = {}
+    if contract.underlying in ("NIFTY", "BANKNIFTY"):
+        try:
+            _index_breadth = await _compute_enhanced_index_breadth(
+                index_name=contract.underlying, top_n=12
+            )
+            _ib_bias = _index_breadth.get("weighted_bias", "NEUTRAL")
+            _ib_score = _index_breadth.get("breadth_score", 50)
+            if _ib_score >= 60 and direction == "BULLISH":
+                trigger_factors.append(f"IndexBreadth:{_ib_score}%Bullish")
+            elif _ib_score <= 40 and direction == "BEARISH":
+                trigger_factors.append(f"IndexBreadth:{100-_ib_score}%Bearish")
+        except Exception:
+            pass
     
     # ── ATR-based targets (data-driven, not fixed %) ──────────────────────
     # Use min(minutes_to_expiry, minutes_to_session_close) for intraday realism
@@ -4389,6 +4508,8 @@ async def build_fno_signal(
         strategy_library_id=_strategy_id,
         strategy_library_name=_strategy_name,
         market_regime=_regime,
+        macro_context=_macro_ctx if _macro_ctx else None,
+        index_breadth=_index_breadth if _index_breadth.get("available") else None,
         entry_price=entry_price,
         stop_loss=stop_loss,
         target1=target1,
@@ -4612,6 +4733,54 @@ def _compute_report_from_rows(
             f"{index_name} {mode_text} analysis: breadth {breadth_score} and momentum {momentum_score} suggests {bias.lower()} bias."
         ),
     )
+
+
+
+async def _compute_enhanced_index_breadth(
+    index_name: str,
+    top_n: int = 12,
+) -> dict:
+    """
+    Compute constituent-weighted index bias using tech snapshots for top N stocks.
+    Uses NIFTY50_WEIGHTS / BANKNIFTY_WEIGHTS from research_engine.
+    Returns compute_index_constituent_bias() result.
+    """
+    weights = NIFTY50_WEIGHTS if index_name == "NIFTY" else BANKNIFTY_WEIGHTS
+    # Pick top N by weight
+    top_symbols = sorted(weights.items(), key=lambda x: -x[1])[:top_n]
+
+    constituent_signals: list[dict] = []
+
+    async def _get_constituent_signal(sym: str, w: float) -> dict | None:
+        try:
+            hist = await _get_hist_ohlcv(sym, period="3mo")
+            if hist is None or len(hist) < 20:
+                return None
+            ts = compute_full_technical_snapshot(sym, hist)
+            return {
+                "symbol": sym,
+                "tech_bias": ts.get("technical_bias", "NEUTRAL"),
+                "direction": ts.get("technical_bias", "NEUTRAL"),
+                "conviction": min(
+                    1.0,
+                    abs(ts.get("bullish_signal_count", 0) - ts.get("bearish_signal_count", 0)) / 10
+                ),
+                "weight_override": w,
+            }
+        except Exception:
+            return None
+
+    results = await asyncio.gather(*[_get_constituent_signal(sym, w) for sym, w in top_symbols])
+    constituent_signals = [r for r in results if r is not None]
+
+    if not constituent_signals:
+        return {"available": False, "weighted_bias": "NEUTRAL", "breadth_score": 50}
+
+    bias_result = compute_index_constituent_bias(constituent_signals, index_name)
+    bias_result["constituent_count_fetched"] = len(constituent_signals)
+    bias_result["available"] = True
+    return bias_result
+
 
 
 async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], refreshed_at: str) -> IndexProjectionPane:
@@ -5412,14 +5581,44 @@ async def _refresh_open_position(position: dict) -> dict:
             if urgent_info.get("best_price_hint"):
                 best_exit_price = urgent_info["best_price_hint"]
 
+    # ── Batch 5: Signal Lifecycle State Machine ───────────────────────────
+    current_signal_state = position.get("signal_state", "ACTIVE")
+    _stop_loss_price = float(position.get("stop_loss") or (buy_price * 0.88))
+    option_type_sm = "CE" if "CE" in position.get("script", "").upper() else "PE"
+    direction_sm = "BULLISH" if option_type_sm == "CE" else "BEARISH"
+    sm_result = transition_signal_state(
+        current_state=current_signal_state,
+        ltp=latest_option_ltp,
+        entry_price=buy_price,
+        sl_price=_stop_loss_price,
+        t1_price=revised_target1,
+        t2_price=revised_target2,
+        direction=direction_sm,
+        minutes_to_expiry=minutes_to_expiry,
+    )
+    new_signal_state = sm_result["new_state"]
+    if sm_result.get("urgent_exit") and alert is None:
+        alert = "URGENT_EXIT_SM"
+        revised_exit_plan = sm_result.get("reason", revised_exit_plan)
+    # Override terminal states to update position status
+    if new_signal_state in ("EXPIRED", "CLOSED_LOSS", "CLOSED_WIN", "CANCELLED") and position.get("status") == "OPEN":
+        # Only mark as closed if state machine says terminal — set alert but keep status OPEN for user to confirm sell
+        if new_signal_state == "EXPIRED" and alert is None:
+            alert = "EXPIRED"
+    if new_signal_state in ("WATCHING_SL", "CLOSED_LOSS") and alert is None:
+        alert = "SL_WATCH"
+
     updated = await db.custom_positions.find_one_and_update(
         {"id": position["id"]},
         {
             "$set": {
                 "latest_option_ltp": round(float(latest_option_ltp), 2),
-                    "lot_size": corrected_lot_size,
+                "lot_size": corrected_lot_size,
                 "target1": revised_target1,
                 "target2": revised_target2,
+                "stop_loss": _stop_loss_price,
+                "signal_state": new_signal_state,
+                "signal_state_reason": sm_result.get("reason"),
                 "minutes_to_expiry": minutes_to_expiry,
                 "alert": alert,
                 "projected_exit_price": projected_exit_price,
@@ -5859,6 +6058,109 @@ async def admin_refresh_nse_holidays(
 
 
 
+# ── Strategy Backtest Persistence (Batch 5) ───────────────────────────────────
+
+@api_router.get("/admin/strategy-stats")
+async def get_strategy_stats(
+    strategy_id: str | None = Query(default=None),
+    admin_user: dict = Depends(get_admin_user),
+):
+    """Return aggregated backtest stats per strategy_id."""
+    query: dict = {}
+    if strategy_id:
+        query["strategy_id"] = strategy_id
+    records = await db.strategy_backtest.find(query, {"_id": 0}).to_list(length=500)
+
+    agg: dict[str, dict] = {}
+    for r in records:
+        sid = r.get("strategy_id", "UNKNOWN")
+        if sid not in agg:
+            agg[sid] = {"strategy_id": sid, "total_trades": 0, "wins": 0,
+                        "total_r_multiple": 0.0}
+        agg[sid]["total_trades"] += 1
+        if r.get("win"):
+            agg[sid]["wins"] += 1
+        agg[sid]["total_r_multiple"] = round(
+            agg[sid]["total_r_multiple"] + (r.get("r_multiple") or 0), 3
+        )
+
+    summary = []
+    for sid, stats in agg.items():
+        t = stats["total_trades"]
+        stats["win_rate"] = round(stats["wins"] / t, 3) if t > 0 else None
+        stats["expectancy"] = round(stats["total_r_multiple"] / t, 3) if t > 0 else None
+        eligible, reason = check_strategy_eligible(stats, min_trades=10)
+        stats["eligible"] = eligible
+        stats["auto_disabled"] = not eligible
+        stats["eligibility_reason"] = reason
+        # Enrich with strategy definition
+        strat_def = STRATEGY_LIBRARY.get(sid, {})
+        stats["strategy_name"] = strat_def.get("name", sid)
+        stats["strategy_type"] = strat_def.get("type", "UNKNOWN")
+        summary.append(stats)
+
+    summary.sort(key=lambda x: x.get("total_trades", 0), reverse=True)
+    return {"strategy_stats": summary, "total_records": len(records)}
+
+
+@api_router.post("/admin/strategy-stats/record")
+async def record_strategy_result(
+    strategy_id: str = Query(..., description="e.g. S1_ORB, SW2_200DMA_BOUNCE"),
+    symbol: str = Query(...),
+    win: bool = Query(...),
+    r_multiple: float = Query(..., description="R-multiple: +1.0 = 1R gain, -1.0 = full SL"),
+    admin_user: dict = Depends(get_admin_user),
+):
+    """Record a trade result for a strategy to persist backtest stats."""
+    record = {
+        "id": str(uuid.uuid4()),
+        "strategy_id": strategy_id,
+        "symbol": symbol,
+        "win": win,
+        "r_multiple": round(r_multiple, 3),
+        "recorded_at": _utc_now_iso(),
+        "recorded_by": admin_user.get("username", "admin"),
+    }
+    await db.strategy_backtest.insert_one(record)
+
+    # Recompute current stats
+    all_records = await db.strategy_backtest.find(
+        {"strategy_id": strategy_id}, {"_id": 0}
+    ).to_list(length=500)
+    stats: dict[str, Any] = {"total_trades": 0, "wins": 0, "total_r_multiple": 0.0}
+    for r in all_records:
+        stats["total_trades"] += 1
+        if r.get("win"):
+            stats["wins"] += 1
+        stats["total_r_multiple"] += r.get("r_multiple") or 0
+    t = stats["total_trades"]
+    if t > 0:
+        stats["win_rate"] = round(stats["wins"] / t, 3)
+        stats["expectancy"] = round(stats["total_r_multiple"] / t, 3)
+    eligible, reason = check_strategy_eligible(stats, min_trades=10)
+    return {
+        "recorded": True,
+        "strategy_id": strategy_id,
+        "current_stats": stats,
+        "eligible": eligible,
+        "auto_disabled": not eligible,
+        "reason": reason,
+    }
+
+
+@api_router.get("/strategy-library")
+async def get_strategy_library(current_user: dict = Depends(get_current_user)):
+    """Return the full F&O strategy library with definitions and entry conditions."""
+    return {
+        "strategies": [
+            {"id": sid, **strat}
+            for sid, strat in STRATEGY_LIBRARY.items()
+        ],
+        "total": len(STRATEGY_LIBRARY),
+    }
+
+
+
 @api_router.post("/admin/domain-mappings")
 async def admin_create_domain_mapping(
     payload: DomainMappingCreateRequest,
@@ -6259,10 +6561,12 @@ async def create_custom_position(
         "created_at": now_iso,
         "last_update": now_iso,
         "status": "OPEN",
+        "signal_state": "ACTIVE",          # Batch 5: lifecycle state machine
         "alert": None,
         "latest_option_ltp": round(float(latest_option_ltp), 2),
         "target1": round(float(payload.buy_price) * 1.12, 2),
         "target2": round(float(payload.buy_price) * 1.5, 2),
+        "stop_loss": round(float(payload.buy_price) * 0.88, 2),   # Default SL = -12% from entry
         "projected_exit_price": None,
         "best_exit_price": None,
         "best_exit_days": None,
