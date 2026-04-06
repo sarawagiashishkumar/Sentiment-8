@@ -46,6 +46,18 @@ except Exception:  # pragma: no cover
 from data.fno_contracts import FNO_CONTRACTS, get_fno_contract
 from data.symbols import MULTIBAGGER_UNIVERSE
 from services.market_data import get_stock_core, market_data_client
+from services.research_engine import (
+    check_stock_eligibility,
+    check_urgent_exit,
+    classify_market_regime,
+    compute_atr_based_fno_targets,
+    compute_full_technical_snapshot,
+    compute_historical_volatility,
+    compute_portfolio_risk_metrics,
+    compute_portfolio_verdict,
+    compute_realistic_price_bands,
+    compute_technical_confluence_bonus,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -309,6 +321,10 @@ INDIA_VIX_CACHE_TTL_SECONDS = 300
 # Fundamental data in-memory cache (24h TTL)  
 FUNDAMENTAL_CACHE: dict[str, dict] = {}
 FUNDAMENTAL_CACHE_TTL_SECONDS = 86400
+
+# Historical OHLCV in-memory cache (6h TTL)
+HIST_OHLCV_CACHE: dict[str, dict] = {}
+HIST_OHLCV_CACHE_TTL_SECONDS = 21600  # 6 hours
 
 SYMBOL_HEADERS = {
     "symbol",
@@ -639,6 +655,8 @@ class FNOGenerateResponse(BaseModel):
     nifty_projection: IndexProjectionPane
     banknifty_projection: IndexProjectionPane
     stock_signals: List[FNOSignalResponse]
+    no_signals_alert: str | None = None  # Alert when no signals pass 78% confluence
+    market_regime: dict | None = None    # VIX-based regime classification
 
 
 class PortfolioPositionInput(BaseModel):
@@ -695,6 +713,7 @@ class PortfolioAnalyzeResponse(BaseModel):
     parsed_positions_count: int
     stocks: List[PortfolioStockAnalysis]
     failed_symbols: List[str] = []
+    portfolio_risk_metrics: dict | None = None  # Portfolio-level risk: beta, Sharpe, VaR, max_drawdown, win_rate
 
 
 class CustomPositionCreateRequest(BaseModel):
@@ -1191,6 +1210,15 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
                 if underlying not in allowed:
                     continue
 
+                # Store numeric instrument_token for historical data API
+                raw_token = row.get("instrument_token", "")
+                numeric_token = None
+                try:
+                    if raw_token:
+                        numeric_token = int(float(str(raw_token).strip()))
+                except (ValueError, TypeError):
+                    numeric_token = None
+
                 rows.append(
                     {
                         "underlying": underlying,
@@ -1199,6 +1227,7 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
                         "option_type": instrument_type,
                         "tradingsymbol": tradingsymbol,
                         "instrument": f"NFO:{tradingsymbol}",
+                        "instrument_token": numeric_token,  # numeric token for historical API
                         "lot_size": int(_to_float(row.get("lot_size")) or LOT_SIZE_MAP.get(underlying, 1)),
                         "updated_at": _utc_now_iso(),
                     }
@@ -1278,13 +1307,14 @@ async def _get_kite_access_token() -> str | None:
 
 
 async def _resolve_kite_instrument_for_contract(contract: FNOContract) -> str | None:
+    """Returns numeric instrument_token for historical API, falls back to NFO:tradingsymbol."""
     rows = await db.kite_option_master.find(
         {
             "underlying": contract.underlying,
             "expiry": contract.expiry,
             "option_type": contract.option_type,
         },
-        {"_id": 0, "instrument": 1, "strike": 1},
+        {"_id": 0, "instrument": 1, "instrument_token": 1, "strike": 1},
     ).to_list(500)
     if not rows:
         return None
@@ -1294,6 +1324,11 @@ async def _resolve_kite_instrument_for_contract(contract: FNOContract) -> str | 
     best = rows[0]
     if abs(float(best.get("strike", 0.0)) - target_strike) > 0.01:
         return None
+    # Prefer numeric instrument_token for historical API
+    numeric_token = best.get("instrument_token")
+    if numeric_token and str(numeric_token).isdigit():
+        return str(numeric_token)
+    # Fallback: NFO:tradingsymbol format
     instrument = str(best.get("instrument", "")).strip()
     return instrument or None
 
@@ -1570,6 +1605,10 @@ async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: s
                 timeout=15,
             )
             if response.status_code != 200:
+                logger.warning(
+                    "Historical candles API %s for instrument=%s: %s",
+                    response.status_code, instrument, response.text[:300]
+                )
                 return None
             
             payload = response.json()
@@ -1679,7 +1718,37 @@ def _portfolio_horizon_ranges(
     value_flag: str,
     price_zone: str,
     pnl_pct: float,
+    ltp: float | None = None,
+    hist_vol: float | None = None,
+    sector: str = "Unknown",
+    pe_ratio: float | None = None,
 ) -> dict[str, PortfolioHorizonRange]:
+    """
+    Compute realistic horizon ranges using historical volatility when available.
+    Falls back to valuation-based static ranges if hist_vol is not available.
+    """
+    # If we have historical volatility, use the research engine for accurate bands
+    if hist_vol is not None and ltp is not None and ltp > 0:
+        vol_bands = compute_realistic_price_bands(
+            ltp=ltp,
+            hist_vol=hist_vol,
+            sector=sector,
+            pe_ratio=pe_ratio,
+        )
+        response: dict[str, PortfolioHorizonRange] = {}
+        for horizon in ["1W", "1M", "3M", "6M", "9M", "1Y"]:
+            band = vol_bands.get(horizon, {})
+            upside_pct = band.get("upside_pct", 5.0)
+            downside_pct = band.get("downside_pct", -5.0)
+            flag: Literal["GREEN", "RED"] = band.get("flag", "GREEN")
+            response[horizon] = PortfolioHorizonRange(
+                upside_pct=round(upside_pct, 2),
+                downside_pct=round(downside_pct, 2),
+                flag=flag,
+            )
+        return response
+
+    # Fallback: valuation-based static approach
     if value_flag == "Attractive" and price_zone == "Near 52W low":
         base_up, base_down = 20.0, 8.0
     elif value_flag == "Expensive" and price_zone == "Near 52W high":
@@ -1702,17 +1771,17 @@ def _portfolio_horizon_ranges(
         "9M": 1.2,
         "1Y": 1.35,
     }
-    response: dict[str, PortfolioHorizonRange] = {}
+    response2: dict[str, PortfolioHorizonRange] = {}
     for horizon, multiplier in horizons.items():
         upside = max(1.0, (base_up + oversold_bonus - overbought_penalty) * multiplier)
         downside = max(1.0, (base_down + overbought_penalty - oversold_bonus) * multiplier)
-        flag: Literal["GREEN", "RED"] = "GREEN" if upside >= downside * 1.15 else "RED"
-        response[horizon] = PortfolioHorizonRange(
+        flag2: Literal["GREEN", "RED"] = "GREEN" if upside >= downside * 1.15 else "RED"
+        response2[horizon] = PortfolioHorizonRange(
             upside_pct=round(upside, 2),
             downside_pct=round(-downside, 2),
-            flag=flag,
+            flag=flag2,
         )
-    return response
+    return response2
 
 
 async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyzeResponse:
@@ -1835,7 +1904,15 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         else:
             quality_proxy = "Moderate"
 
-        expected_ranges = _portfolio_horizon_ranges(value_flag, price_zone, row["pnl_pct"])
+        expected_ranges = _portfolio_horizon_ranges(
+            value_flag,
+            price_zone,
+            row["pnl_pct"],
+            ltp=stock.ltp,
+            hist_vol=None,  # Will be updated below if hist data available
+            sector=stock.sector or "Unknown",
+            pe_ratio=stock.pe_ratio,
+        )
         expected_signals: dict[str, PortfolioExpectedSignal] = {}
         for horizon, hr in expected_ranges.items():
             max_expected_price = round(stock.ltp * (1 + (hr.upside_pct / 100)), 2)
@@ -1852,20 +1929,20 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
                 direction="PROFIT" if delta_amount >= 0 else "LOSS",
             )
 
-        if value_flag == "Attractive" and price_zone != "Near 52W high":
-            recommendation = "Accumulate on dips"
-            comments = "Reasonably valued with favorable upside profile across medium horizons."
-        elif value_flag == "Expensive" and price_zone == "Near 52W high":
-            recommendation = "Consider partial profit booking"
-            comments = "Valuation is stretched near highs; downside risk dominates in near terms."
-        elif quality_proxy == "Speculative":
-            recommendation = "High risk – consider reducing exposure"
-            comments = "Signal quality is speculative due to weak earnings/valuation balance."
-        else:
-            recommendation = "Strong Hold"
-            comments = "Balanced profile; hold and monitor trend confirmations on declines."
-
+        # ── Use research engine verdict ──────────────────────────────────
         allocation_pct = (row["current_value"] / total_current_value) * 100 if total_current_value > 0 else 0.0
+        recommendation, comments = compute_portfolio_verdict(
+            pnl_pct=row["pnl_pct"],
+            price_zone=price_zone,
+            value_flag=value_flag,
+            rsi=None,           # Will be enhanced in future with live technical data
+            trend_alignment=None,
+            piotroski=None,
+            beneish=None,
+            hist_vol=None,
+            allocation_pct=allocation_pct,
+        )
+
         analyses.append(
             PortfolioStockAnalysis(
                 symbol=stock.symbol,
@@ -1893,12 +1970,28 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         )
 
     analyses.sort(key=lambda row: row.allocation_pct, reverse=True)
+
+    # ── Portfolio-level risk metrics ──────────────────────────────────────
+    holdings_for_risk = [
+        {
+            "symbol": a.symbol,
+            "ltp": a.ltp,
+            "current_value": a.ltp * a.quantity if a.ltp and a.quantity else 0,
+            "pnl_pct": a.pnl_pct,
+            "sector": a.sector or "Unknown",
+            "hist_vol": 0.30,  # default fallback
+        }
+        for a in analyses
+    ]
+    portfolio_risk = compute_portfolio_risk_metrics(holdings=holdings_for_risk)
+
     return PortfolioAnalyzeResponse(
         cost_charged=0.0,
         credits_remaining=0.0,
         parsed_positions_count=len(analyses),
         stocks=analyses,
         failed_symbols=failed_symbols,
+        portfolio_risk_metrics=portfolio_risk,
     )
 
 
@@ -2810,6 +2903,7 @@ def _fetch_yfinance_fundamentals(symbol: str) -> dict:
 
         # ROCE = EBIT / Capital Employed
         roce = None
+        fin, bs, cf = None, None, None
         try:
             fin = ticker.financials
             bs = ticker.balance_sheet
@@ -2859,6 +2953,58 @@ def _fetch_yfinance_fundamentals(symbol: str) -> dict:
         if gross_margin is not None:
             gross_margin = _sanitize_float(round(float(gross_margin) * 100, 2))
 
+        # ── New: Total Debt / Market Cap ratio ──────────────────────────────
+        total_debt_to_market_cap = None
+        try:
+            total_debt = _to_float(info.get("totalDebt"))
+            market_cap_raw = _to_float(info.get("marketCap"))
+            if total_debt is not None and market_cap_raw is not None and market_cap_raw > 0:
+                total_debt_to_market_cap = _sanitize_float(round(total_debt / market_cap_raw, 4))
+        except Exception:
+            pass
+
+        # ── New: Net profit positive in last 3 quarters ─────────────────────
+        recent_profit_positive = None
+        try:
+            q_fin = ticker.quarterly_financials
+            if q_fin is not None and not q_fin.empty:
+                net_income_labels = ["Net Income", "Net Income From Continuing Operations", "NetIncome"]
+                for lbl in net_income_labels:
+                    if lbl in q_fin.index:
+                        recent_3q = q_fin.loc[lbl].iloc[:3].tolist()
+                        recent_profit_positive = any(v > 0 for v in recent_3q if v is not None and str(v) != "nan")
+                        break
+        except Exception:
+            recent_profit_positive = None
+
+        # ── New: Revenue CAGR (3-year) ──────────────────────────────────────
+        revenue_cagr_3y = None
+        try:
+            if fin is not None and not fin.empty:
+                rev_labels = ["Total Revenue", "Revenue", "Operating Revenue"]
+                for lbl in rev_labels:
+                    if lbl in fin.index:
+                        rev_series = fin.loc[lbl].dropna()
+                        if len(rev_series) >= 3:
+                            oldest = float(rev_series.iloc[-1])
+                            newest = float(rev_series.iloc[0])
+                            n = len(rev_series) - 1
+                            if oldest > 0 and newest > 0 and n > 0:
+                                revenue_cagr_3y = _sanitize_float(round(((newest / oldest) ** (1 / n) - 1) * 100, 2))
+                        break
+        except Exception:
+            pass
+
+        # ── New: FCF Yield ──────────────────────────────────────────────────
+        fcf_yield = None
+        try:
+            free_cashflow = _to_float(info.get("freeCashflow"))
+            market_cap_raw2 = _to_float(info.get("marketCap"))
+            if free_cashflow is not None and market_cap_raw2 is not None and market_cap_raw2 > 0:
+                fcf_yield = _sanitize_float(round((free_cashflow / market_cap_raw2) * 100, 2))
+        except Exception:
+            pass
+
         return {
             "roe": _sanitize_float(roe),
             "roce": _sanitize_float(roce),
@@ -2868,6 +3014,10 @@ def _fetch_yfinance_fundamentals(symbol: str) -> dict:
             "gross_margin": _sanitize_float(gross_margin),
             "debt_to_equity": _sanitize_float(info.get("debtToEquity")),
             "current_ratio": _sanitize_float(info.get("currentRatio")),
+            "total_debt_to_market_cap": total_debt_to_market_cap,
+            "recent_profit_positive": recent_profit_positive,
+            "revenue_cagr_3y": revenue_cagr_3y,
+            "fcf_yield": fcf_yield,
         }
     except Exception as exc:
         logger.warning("yfinance fetch failed for %s: %s", symbol, exc)
@@ -2912,6 +3062,10 @@ async def _get_fundamental_data(symbol: str) -> dict:
         "gross_margin": data.get("gross_margin"),
         "debt_to_equity": data.get("debt_to_equity"),
         "current_ratio": data.get("current_ratio"),
+        "total_debt_to_market_cap": data.get("total_debt_to_market_cap"),
+        "recent_profit_positive": data.get("recent_profit_positive"),
+        "revenue_cagr_3y": data.get("revenue_cagr_3y"),
+        "fcf_yield": data.get("fcf_yield"),
         "cached_at_ts": now_ts,
         "_ts": now_ts,
     }
@@ -2928,6 +3082,92 @@ async def _get_fundamental_data(symbol: str) -> dict:
 
     FUNDAMENTAL_CACHE[symbol] = result
     return result
+
+
+def _fetch_yfinance_hist_ohlcv(symbol: str, period: str = "1y") -> dict | None:
+    """Fetch historical OHLCV from yfinance and return as serializable dict."""
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(f"{symbol}.NS")
+        hist = ticker.history(period=period, auto_adjust=True)
+        if hist is None or hist.empty:
+            return None
+        # Return as JSON-serializable records
+        records = []
+        for ts, row in hist.iterrows():
+            records.append({
+                "date": str(ts.date()),
+                "open": float(row.get("Open", 0)),
+                "high": float(row.get("High", 0)),
+                "low": float(row.get("Low", 0)),
+                "close": float(row.get("Close", 0)),
+                "volume": int(row.get("Volume", 0)),
+            })
+        return {"symbol": symbol, "records": records, "count": len(records)}
+    except Exception as exc:
+        logger.warning("yfinance hist OHLCV failed for %s: %s", symbol, exc)
+        return None
+
+
+async def _get_hist_ohlcv(symbol: str, period: str = "1y"):
+    """
+    Get historical OHLCV as pandas DataFrame with 6h in-memory cache and 12h MongoDB cache.
+    Returns pd.DataFrame or None.
+    """
+    import pandas as pd
+    now_ts = datetime.now(timezone.utc).timestamp()
+    cache_key = f"{symbol}_{period}"
+
+    # In-memory cache
+    if cache_key in HIST_OHLCV_CACHE:
+        cached = HIST_OHLCV_CACHE[cache_key]
+        if (now_ts - cached.get("_ts", 0)) < HIST_OHLCV_CACHE_TTL_SECONDS:
+            records = cached.get("records", [])
+            if records:
+                df = pd.DataFrame(records)
+                df.rename(columns={"open": "Open", "high": "High", "low": "Low",
+                                   "close": "Close", "volume": "Volume"}, inplace=True)
+                return df
+
+    # MongoDB cache (12h)
+    try:
+        cached_doc = await db.hist_ohlcv_cache.find_one({"symbol": symbol, "period": period}, {"_id": 0})
+        if cached_doc and (now_ts - float(cached_doc.get("cached_at_ts", 0))) < 43200:
+            records = cached_doc.get("records", [])
+            if records:
+                HIST_OHLCV_CACHE[cache_key] = {"records": records, "_ts": now_ts}
+                df = pd.DataFrame(records)
+                df.rename(columns={"open": "Open", "high": "High", "low": "Low",
+                                   "close": "Close", "volume": "Volume"}, inplace=True)
+                return df
+    except Exception:
+        pass
+
+    # Fetch from yfinance
+    try:
+        raw = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_hist_ohlcv, symbol, period), timeout=20.0)
+    except Exception:
+        raw = None
+
+    if not raw or not raw.get("records"):
+        return None
+
+    # Store in caches
+    HIST_OHLCV_CACHE[cache_key] = {"records": raw["records"], "_ts": now_ts}
+    try:
+        await db.hist_ohlcv_cache.update_one(
+            {"symbol": symbol, "period": period},
+            {"$set": {"symbol": symbol, "period": period, "records": raw["records"],
+                      "cached_at_ts": now_ts, "updated_at": _utc_now_iso()}},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+    df = pd.DataFrame(raw["records"])
+    df.rename(columns={"open": "Open", "high": "High", "low": "Low",
+                       "close": "Close", "volume": "Volume"}, inplace=True)
+    return df
 
 
 def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict | None = None) -> dict:
@@ -3079,16 +3319,35 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
     momentum_adj = (final_score - 55) / 280
     targeted_upside_price = {}
     targeted_upside_profit_pct = {}
+
+    # Use historical volatility from fundamental data if available
+    hist_vol = fundamental.get("hist_vol") if fundamental else None
+
+    # Compute volatility-based realistic price bands
+    vol_bands = compute_realistic_price_bands(
+        ltp=float(ltp),
+        hist_vol=hist_vol,
+        sector=getattr(stock, "sector", "Unknown") if hasattr(stock, "sector") else "Unknown",
+        pe_ratio=pe,
+    ) if ltp is not None else {}
+
     for key, base in duration_base.items():
         if ltp is None:
             targeted_upside_price[key] = None
             targeted_upside_profit_pct[key] = None
             continue
 
-        growth = base + momentum_adj
-        if upside_to_52w_high_pct is not None and upside_to_52w_high_pct > 0:
-            growth = min(growth, (upside_to_52w_high_pct / 100) * 1.25)
-        growth = max(growth, 0.005)
+        # Use volatility-based expected high if available, else fall back to scoring-based
+        if vol_bands and key in vol_bands:
+            # Expected upside from vol-based band
+            exp_upside_pct = vol_bands[key].get("upside_pct", 0) / 100
+            growth = max(exp_upside_pct, 0.005)
+        else:
+            growth = base + momentum_adj
+            if upside_to_52w_high_pct is not None and upside_to_52w_high_pct > 0:
+                growth = min(growth, (upside_to_52w_high_pct / 100) * 1.25)
+            growth = max(growth, 0.005)
+
         target_price = round(ltp * (1 + growth), 2)
         roi_pct = round(((target_price - ltp) / ltp) * 100, 2)
 
@@ -3172,6 +3431,32 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
             else:
                 thesis_parts.append(f"High leverage (D/E {round(de, 2)}) — watch debt servicing")
 
+        # ── New fundamental fields ───────────────────────────────────────
+        revenue_cagr = fundamental.get("revenue_cagr_3y")
+        fcf_yield_val = fundamental.get("fcf_yield")
+        debt_to_mktcap = fundamental.get("total_debt_to_market_cap")
+        recent_profitable = fundamental.get("recent_profit_positive")
+
+        if revenue_cagr is not None:
+            if revenue_cagr >= 20:
+                thesis_parts.append(f"Strong revenue CAGR {revenue_cagr:.1f}% (3Y)")
+            elif revenue_cagr >= 10:
+                thesis_parts.append(f"Healthy revenue CAGR {revenue_cagr:.1f}% (3Y)")
+            elif revenue_cagr < 0:
+                thesis_parts.append(f"Revenue decline {revenue_cagr:.1f}% CAGR — monitor closely")
+
+        if fcf_yield_val is not None:
+            if fcf_yield_val > 5:
+                thesis_parts.append(f"Strong FCF yield {fcf_yield_val:.1f}% — cash generative business")
+            elif fcf_yield_val < 0:
+                thesis_parts.append(f"Negative FCF yield {fcf_yield_val:.1f}% — cash burn concern")
+
+        if debt_to_mktcap is not None and debt_to_mktcap >= 0.20:
+            thesis_parts.append(f"Debt {debt_to_mktcap*100:.0f}% of market cap — watch leverage")
+
+        if recent_profitable is False:
+            thesis_parts.append("No profitable quarter in last 3Q — revenue recovery needed")
+
     # Tier breakdown
     passed_tiers = [k for k, threshold in tier_thresholds.items() if tier_scores.get(k, 0) >= threshold]
     if passed_tiers:
@@ -3217,6 +3502,11 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
         "debt_to_equity": de_ret,
         "current_ratio": cr_ret,
         "gross_margin": gm_ret,
+        "revenue_cagr_3y": fundamental.get("revenue_cagr_3y") if fundamental else None,
+        "fcf_yield": fundamental.get("fcf_yield") if fundamental else None,
+        "total_debt_to_market_cap": fundamental.get("total_debt_to_market_cap") if fundamental else None,
+        "recent_profit_positive": fundamental.get("recent_profit_positive") if fundamental else None,
+        "vol_bands": vol_bands,  # volatility-based realistic price bands for all horizons
     }
 
 
@@ -3233,6 +3523,15 @@ def _calculate_confluence_score_master_spec(
     india_vix: float | None = None,
     pcr: float | None = None,
     strategy: str | None = None,
+    # ── New: Technical bonus inputs from research engine ────────────────
+    rsi: float | None = None,
+    macd_bullish: bool | None = None,
+    macd_above_zero: bool | None = None,
+    trend_alignment: str | None = None,
+    obv_trend: str | None = None,
+    adx: float | None = None,
+    bb_pct_b: float | None = None,
+    stoch_k: float | None = None,
 ) -> tuple[int, str]:
     """
     Master Spec Confluence Scoring (0-100):
@@ -3428,6 +3727,19 @@ def _calculate_confluence_score_master_spec(
     if strategy in ("ORB_BREAKOUT", "VWAP_REVERSION"):
         strategy_bonus = 5
 
+    # ── Technical Analysis Bonus (RSI, MACD, Trend, OBV, ADX, BB, Stoch) ─────
+    tech_bonus, tech_tags = compute_technical_confluence_bonus(
+        direction=direction,
+        rsi=rsi,
+        macd_bullish=macd_bullish,
+        macd_above_zero=macd_above_zero,
+        trend_alignment=trend_alignment,
+        obv_trend=obv_trend,
+        adx=adx,
+        bb_pct_b=bb_pct_b,
+        stoch_k=stoch_k,
+    )
+
     # ── Expiry Penalty ────────────────────────────────────────────────────────
     if minutes_to_expiry < 60:
         technical_score = int(technical_score * 0.6)
@@ -3440,6 +3752,7 @@ def _calculate_confluence_score_master_spec(
     total_confluence = (
         technical_score + volume_score + breadth_score
         + pcr_score + vix_score + gex_score + fundamental_score + strategy_bonus
+        + tech_bonus  # additive technical bonus from RSI/MACD/trend
     )
     confluence_score = int(clamp(total_confluence, 0, 100))
 
@@ -3471,6 +3784,8 @@ async def build_fno_signal(
     option_day_low: float | None = None,
     india_vix: float | None = None,
     pcr: float | None = None,
+    # ── New: pre-computed technical snapshot from research engine ──────────
+    tech_snapshot: dict | None = None,
 ) -> FNOSignalResponse:
     underlying_ltp = stock_core.ltp
     if underlying_ltp is None:
@@ -3590,46 +3905,28 @@ async def build_fno_signal(
 
     entry_discount_pct = ((option_ltp - entry_price) / option_ltp) * 100 if option_ltp > entry_price else 0.5
     
-    typical_recovery_multiplier = 1.0 + (entry_discount_pct / 100) * 0.8
+    # ── Extract tech snapshot data ─────────────────────────────────────────
+    ts = tech_snapshot or {}
+    underlying_atr = ts.get("atr")  # Daily ATR of underlying from research engine
+    tech_rsi = ts.get("rsi")
+    tech_macd = ts.get("macd") or {}
+    tech_bb = ts.get("bollinger") or {}
+    tech_alignment = ts.get("trend_alignment")
+    tech_obv = (ts.get("obv") or {}).get("trend")
+    tech_adx = ts.get("adx")
+    tech_stoch = ts.get("stochastic") or {}
     
-    option_price_level = "HIGH" if option_ltp > 100 else ("MID" if option_ltp > 30 else "LOW")
+    # ── ATR-based targets (data-driven, not fixed %) ──────────────────────
+    target1, target2 = compute_atr_based_fno_targets(
+        entry_price=entry_price,
+        underlying_ltp=float(underlying_ltp),
+        atr=underlying_atr,
+        minutes_to_expiry=minutes_to_expiry,
+        option_type=contract.option_type,
+        vix=india_vix,
+    )
     
-    if option_price_level == "HIGH":
-        base_t1_pct = 0.08
-        base_t2_pct = 0.25
-    elif option_price_level == "MID":
-        base_t1_pct = 0.10
-        base_t2_pct = 0.35
-    else:
-        base_t1_pct = 0.12
-        base_t2_pct = 0.50
-    
-    if minutes_to_expiry < 180:
-        time_adjustment = 0.7
-    elif minutes_to_expiry < 360:
-        time_adjustment = 0.85
-    else:
-        time_adjustment = 1.0
-    
-    volatility_factor = 1.0
-    if option_day_high is not None and option_day_low is not None and option_day_low > 0:
-        intraday_range_pct = ((option_day_high - option_day_low) / option_day_low) * 100
-        if intraday_range_pct > 15:
-            volatility_factor = 1.15
-        elif intraday_range_pct > 10:
-            volatility_factor = 1.10
-        elif intraday_range_pct < 5:
-            volatility_factor = 0.90
-    
-    adjusted_t1_pct = base_t1_pct * time_adjustment * volatility_factor * typical_recovery_multiplier
-    adjusted_t2_pct = base_t2_pct * time_adjustment * volatility_factor * typical_recovery_multiplier
-    
-    adjusted_t1_pct = min(adjusted_t1_pct, 0.15)
-    adjusted_t2_pct = min(adjusted_t2_pct, 0.60)
-    
-    target1 = round(entry_price * (1 + adjusted_t1_pct), 2)
-    target2 = round(entry_price * (1 + adjusted_t2_pct), 2)
-    
+
     stop_loss = round(entry_price * 0.80, 2)
     
     if target1 > option_ltp * 1.20:
@@ -3716,28 +4013,34 @@ async def build_fno_signal(
         india_vix=india_vix,
         pcr=pcr,
         strategy=strategy,
+        # Pass technical bonus inputs from research engine
+        rsi=tech_rsi,
+        macd_bullish=tech_macd.get("bullish_crossover"),
+        macd_above_zero=tech_macd.get("above_zero"),
+        trend_alignment=tech_alignment,
+        obv_trend=tech_obv,
+        adx=tech_adx,
+        bb_pct_b=tech_bb.get("pct_b"),
+        stoch_k=(tech_stoch.get("%K")),
     )
+    
+    # Add technical tags to trigger_factors
+    if ts.get("data_available") and tech_alignment:
+        trigger_factors.append(f"TrendAlign={tech_alignment}")
+    if tech_rsi is not None:
+        trigger_factors.append(f"RSI={tech_rsi:.0f}")
+    if tech_adx is not None and tech_adx > 20:
+        trigger_factors.append(f"ADX={tech_adx:.0f}")
     
     signal_quality = _get_signal_quality(confluence_score)
 
-    if direction != "NEUTRAL" and 58 <= confluence_score < 80:
-        target1 = round(max(entry_price * 1.05, min(target1, entry_price * 1.12)), 2)
-        target2 = round(max(entry_price * 1.20, min(target2, entry_price * 1.30)), 2)
-        risk_reward_target1 = round((target1 - entry_price) / risk, 2)
-        risk_reward_target2 = round((target2 - entry_price) / risk, 2)
-    
-    if risk_reward_target2 < 1.2:
-        min_target2_needed = entry_price + (1.2 * risk)
-        target2 = round(max(target2, min_target2_needed), 2)
-        risk_reward_target2 = 1.2
+    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 78 and risk_reward_target2 >= 1.2
+    if is_potential_trade:
+        trigger_factors.append(f"Conviction={conviction_level}")
 
     ltp_margin_to_t1_amount = round(max(target1 - option_ltp, 0.0), 2)
     ltp_margin_to_t1_pct = round(((target1 - option_ltp) / max(option_ltp, 0.01)) * 100, 2)
     achievable_profit_pct = round(((target1 - entry_price) / max(entry_price, 0.01)) * 100, 2)
-
-    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 58 and risk_reward_target2 >= 1.2
-    if is_potential_trade:
-        trigger_factors.append(f"Conviction={conviction_level}")
 
     return FNOSignalResponse(
         script=contract.script,
@@ -4056,6 +4359,27 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         # ── Fetch India VIX ──────────────────────────────────────────────────
         india_vix = await _get_india_vix()
 
+        # ── Fetch index historical OHLCV for tech snapshot ───────────────────
+        idx_symbol = "^NSEI" if index_name == "NIFTY" else "^NSEBANK"
+        index_tech_snap: dict = {}
+        try:
+            # For NIFTY/BANKNIFTY, use yfinance with special ticker
+            hist_index = await _get_hist_ohlcv(index_name.replace("^", ""), period="6mo")
+            if hist_index is None or hist_index.empty:
+                # Try alternate symbol
+                import yfinance as yf
+                import pandas as pd
+                def _fetch_index_hist():
+                    t = yf.Ticker(idx_symbol)
+                    return t.history(period="6mo", auto_adjust=True)
+                hist_df_raw = await asyncio.to_thread(_fetch_index_hist)
+                if hist_df_raw is not None and not hist_df_raw.empty:
+                    hist_index = hist_df_raw
+            if hist_index is not None and not hist_index.empty:
+                index_tech_snap = compute_full_technical_snapshot(index_name, hist_index, ltp=stock.ltp)
+        except Exception as exc:
+            logger.warning(f"Index tech snapshot failed for {index_name}: {exc}")
+
         for contract in contracts:
             minutes_to_expiry = get_minutes_to_expiry(contract)
             try:
@@ -4073,6 +4397,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                     option_day_low=_to_float(snapshot.get("day_low")),
                     india_vix=india_vix,
                     pcr=pcr,
+                    tech_snapshot=index_tech_snap,
                 )
                 rows.append(signal)
             except HTTPException:
@@ -4083,7 +4408,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     directional_candidates = [
         item
         for item in rows
-        if item.direction != "NEUTRAL" and item.confluence_score >= 66 and item.risk_reward_target2 >= 1.3
+        if item.direction != "NEUTRAL" and item.confluence_score >= 78 and item.risk_reward_target2 >= 1.3
     ]
     by_strike: dict[float, list[FNOSignalResponse]] = defaultdict(list)
     for row in directional_candidates:
@@ -4281,9 +4606,29 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
             logger.warning(f"{symbol}: No LTP available")
             return None
 
+        # ── Eligibility filter ────────────────────────────────────────────
+        fundamental = await _get_fundamental_data(symbol)
+        eligibility = check_stock_eligibility(
+            ltp=core.ltp,
+            market_cap_cr=None,
+            fundamental=fundamental,
+        )
+        if not eligibility["eligible"]:
+            logger.info(f"{symbol}: DISQUALIFIED — {', '.join(eligibility['flags'])}")
+            return None
+
+        # ── Research engine: fetch historical OHLCV and compute technicals ─
+        tech_snap: dict = {}
+        try:
+            hist_df = await _get_hist_ohlcv(symbol, period="6mo")
+            if hist_df is not None and not hist_df.empty:
+                tech_snap = compute_full_technical_snapshot(symbol, hist_df, ltp=core.ltp)
+        except Exception as exc:
+            logger.warning(f"{symbol}: tech snapshot failed: {exc}")
+
         step = 20 if core.ltp > 400 else 10
         strike = round(core.ltp / step) * step
-        logger.info(f"{symbol}: LTP={core.ltp}, Strike={strike}")
+        logger.info(f"{symbol}: LTP={core.ltp}, Strike={strike}, Eligible=True")
 
         async with semaphore:
             expiry = await _get_nearest_expiry(symbol, prefer_monthly=True)
@@ -4326,6 +4671,7 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         option_day_high=_to_float(snapshot.get("day_high")),
                         option_day_low=_to_float(snapshot.get("day_low")),
                         india_vix=india_vix,
+                        tech_snapshot=tech_snap,
                     )
                     logger.info(f"{symbol} {option_type}: Signal generated - Direction={signal.direction}, Confluence={signal.confluence_score}, Conviction={signal.conviction_level}")
                 except HTTPException as exc:
@@ -4343,23 +4689,24 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
 
             logger.info(f"{symbol}: {len(symbol_rows)} signals before filtering")
             
+            # Enforce 78% minimum confluence score per Master Spec requirement
             potential = [
                 row
                 for row in symbol_rows
-                if row.confluence_score >= 58
+                if row.confluence_score >= 78
                 and row.risk_reward_target2 >= 1.2
                 and row.expiry_risk != "HIGH"
             ]
             
             if potential:
                 potential.sort(key=lambda row: row.confluence_score, reverse=True)
-                logger.info(f"{symbol}: ✅ QUALIFIED - Confluence={potential[0].confluence_score}, Conviction={potential[0].conviction_level}")
+                logger.info(f"{symbol}: QUALIFIED - Confluence={potential[0].confluence_score}, Conviction={potential[0].conviction_level}")
                 return potential[0]
             else:
                 for row in symbol_rows:
                     reasons = []
-                    if row.confluence_score < 58:
-                        reasons.append(f"Confluence {row.confluence_score} < 58")
+                    if row.confluence_score < 78:
+                        reasons.append(f"Confluence {row.confluence_score} < 78 (minimum required)")
                     if row.risk_reward_target2 < 1.2:
                         reasons.append(f"R:R {row.risk_reward_target2:.2f} < 1.2")
                     if row.expiry_risk == "HIGH":
@@ -4401,6 +4748,7 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
 
     semaphore = asyncio.Semaphore(18)
     fundamental_semaphore = asyncio.Semaphore(5)  # limit concurrent yfinance calls
+    hist_semaphore = asyncio.Semaphore(3)  # limit concurrent yfinance historical calls
 
     async def _fetch_one(symbol: str) -> dict | None:
         async with semaphore:
@@ -4420,13 +4768,28 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
             except Exception:
                 return (symbol, {})
 
+    async def _fetch_hist_one(symbol: str) -> tuple[str, float | None]:
+        """Fetch historical vol for a symbol."""
+        async with hist_semaphore:
+            try:
+                hist_df = await _get_hist_ohlcv(symbol, period="1y")
+                if hist_df is not None and not hist_df.empty:
+                    hist_vol = compute_historical_volatility(hist_df["Close"])
+                    return (symbol, hist_vol)
+            except Exception:
+                pass
+            return (symbol, None)
+
     fetched = await asyncio.gather(*[_fetch_one(symbol) for symbol in universe])
     results = [row for row in fetched if row is not None]
     valid_symbols = [row["symbol"] for row in results]
 
-    # Fetch fundamentals in parallel (uses cache, so mostly fast after first run)
+    # Fetch fundamentals and hist vols in parallel (uses cache, so mostly fast after first run)
     fundamental_results = await asyncio.gather(*[_fetch_fundamental_one(sym) for sym in valid_symbols])
     fundamental_map = {sym: data for sym, data in fundamental_results}
+
+    hist_vol_results = await asyncio.gather(*[_fetch_hist_one(sym) for sym in valid_symbols])
+    hist_vol_map = {sym: vol for sym, vol in hist_vol_results}
 
     candidates: list[MultibaggerCandidate] = []
     for row in results:
@@ -4435,7 +4798,26 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
             continue
 
         fundamental = fundamental_map.get(stock.symbol, {})
+
+        # ── Apply eligibility filters ───────────────────────────────────
+        eligibility = check_stock_eligibility(
+            ltp=stock.ltp,
+            market_cap_cr=stock.market_cap,
+            fundamental=fundamental,
+        )
+        # Inject hist_vol into fundamental dict for price band calculation
+        hist_vol = hist_vol_map.get(stock.symbol)
+        if hist_vol is not None:
+            fundamental = {**fundamental, "hist_vol": hist_vol}
+
         analysis = compute_multibagger_analysis(stock, fundamental=fundamental)
+
+        # Lower eligibility score if filters failed (don't fully exclude, just down-rank)
+        if not eligibility["eligible"]:
+            analysis["multibagger_score"] = max(0, analysis["multibagger_score"] - 20)
+            analysis["is_potential_multibagger"] = False
+            analysis["thesis"] = f"[ELIGIBILITY FLAGS: {'; '.join(eligibility['flags'])}] " + analysis.get("thesis", "")
+
         candidates.append(
             MultibaggerCandidate(
                 symbol=stock.symbol,
@@ -4647,6 +5029,25 @@ async def _refresh_open_position(position: dict) -> dict:
     elif minutes_to_expiry < 60 and ((position["target1"] - latest_option_ltp) / max(latest_option_ltp, 0.01)) > 0.12:
         alert = "RISKY_PREMIUM"
         revised_exit_plan = "High premium-risk near expiry; consider reducing exposure"
+
+    # ── Research Engine: Enhanced urgent exit detection ──────────────────
+    if alert is None:
+        now_ist = datetime.now(IST)
+        session_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+        mins_to_close = max(0, int((session_close - now_ist).total_seconds() / 60))
+        urgent_info = check_urgent_exit(
+            position={
+                "buy_price": position.get("buy_price", 0),
+                "remaining_trading_days": remaining_trading_days,
+            },
+            current_ltp=latest_option_ltp,
+            minutes_to_session_close=mins_to_close,
+        )
+        if urgent_info.get("urgent_exit"):
+            alert = "URGENT_EXIT_ENGINE"
+            revised_exit_plan = urgent_info["reason"]
+            if urgent_info.get("best_price_hint"):
+                best_exit_price = urgent_info["best_price_hint"]
 
     updated = await db.custom_positions.find_one_and_update(
         {"id": position["id"]},
@@ -5361,6 +5762,31 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
         top_pool.append(custom_signal)
     top_trades = sorted(top_pool, key=lambda row: (row.is_potential_trade, row.confluence_score), reverse=True)[:4]
 
+    # ── Market Regime classification ──────────────────────────────────────
+    india_vix = await _get_india_vix()
+    market_regime = classify_market_regime(vix=india_vix)
+
+    # ── No-signals alert with specific reason ─────────────────────────────
+    no_signals_alert = None
+    all_top_trades = [row for row in top_trades if row.is_potential_trade]
+    if not all_top_trades:
+        reasons: list[str] = []
+        # Check index projections
+        if nifty_projection.rejection_note:
+            reasons.append(f"NIFTY: {nifty_projection.rejection_note}")
+        if banknifty_projection.rejection_note:
+            reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
+        if not stock_signals:
+            reasons.append("Individual stock signals: No scripts passed 78% confluence & R:R ≥ 1.2 filters")
+        # Market regime context
+        regime = market_regime.get("regime", "UNKNOWN")
+        if regime in ("LOW_VOL_RANGE",):
+            reasons.append(f"Market in {regime} — directional setups lacking conviction; consider non-directional strategies")
+        elif regime in ("CRASH_MODE",):
+            reasons.append(f"Market in {regime} — extreme volatility; avoid aggressive directional entries")
+        reason_text = " | ".join(reasons) if reasons else "Current market conditions do not meet minimum 78% confluence threshold"
+        no_signals_alert = f"No script signals currently available. Reason: {reason_text}"
+
     return FNOGenerateResponse(
         cost_charged=charged,
         credits_remaining=round(float(updated_user.get("credits", 0)), 2),
@@ -5372,6 +5798,8 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
         nifty_projection=nifty_projection,
         banknifty_projection=banknifty_projection,
         stock_signals=stock_signals,
+        no_signals_alert=no_signals_alert,
+        market_regime=market_regime,
     )
 
 
