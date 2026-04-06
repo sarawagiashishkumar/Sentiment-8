@@ -91,6 +91,7 @@ from services.data_verifier import (
     is_market_open,
     get_market_session_status,
 )
+from services.sector_momentum import compute_sector_momentum_dashboard
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -349,6 +350,10 @@ FUNDAMENTAL_CACHE_TTL_SECONDS = 86400
 # Historical OHLCV in-memory cache (6h TTL)
 HIST_OHLCV_CACHE: dict[str, dict] = {}
 HIST_OHLCV_CACHE_TTL_SECONDS = 21600  # 6 hours
+
+# Sector Momentum in-memory cache (30-min TTL)
+SECTOR_MOMENTUM_CACHE: dict = {}
+SECTOR_MOMENTUM_CACHE_TTL_SECONDS = 1800  # 30 minutes
 
 SYMBOL_HEADERS = {
     "symbol",
@@ -4957,6 +4962,7 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
                 debt_to_equity=analysis.get("debt_to_equity"),
                 current_ratio=analysis.get("current_ratio"),
                 gross_margin=analysis.get("gross_margin"),
+                vol_bands=analysis.get("vol_bands"),
             )
         )
 
@@ -6473,10 +6479,8 @@ async def multibagger_custom_search(
         debt_to_equity=analysis.get("debt_to_equity"),
         current_ratio=analysis.get("current_ratio"),
         gross_margin=analysis.get("gross_margin"),
+        vol_bands=analysis.get("vol_bands"),
     )
-
-
-@api_router.get("/fno/contracts", response_model=List[FNOContract])
 async def get_fno_contracts():
     return [FNOContract(**row) for row in FNO_CONTRACTS]
 
@@ -6515,6 +6519,63 @@ async def get_potential_index_signals(refresh_nonce: str | None = Query(default=
     if rows:
         return rows[:6]
     return rows
+
+
+@api_router.get("/sector-momentum")
+async def get_sector_momentum(
+    force_refresh: bool = Query(default=False),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Compute or return cached sector momentum dashboard.
+    Returns momentum scores, 1W/1M/3M returns, RSI, ADX for 15 NSE sectors.
+    Results cached for 30 minutes. Use ?force_refresh=true to bypass cache.
+    """
+    _ = current_user
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    # In-memory cache check
+    if not force_refresh and SECTOR_MOMENTUM_CACHE:
+        cached_ts = SECTOR_MOMENTUM_CACHE.get("_ts", 0)
+        if (now_ts - cached_ts) < SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
+            data = {k: v for k, v in SECTOR_MOMENTUM_CACHE.items() if not k.startswith("_")}
+            data["from_cache"] = True
+            return data
+
+    # MongoDB cache check
+    if not force_refresh:
+        try:
+            cached_doc = await db.sector_momentum_cache.find_one(
+                {"_key": "sector_momentum"}, {"_id": 0}
+            )
+            if cached_doc and (now_ts - float(cached_doc.get("cached_at_ts", 0))) < SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
+                payload = {k: v for k, v in cached_doc.items() if k not in ("_key", "cached_at_ts")}
+                SECTOR_MOMENTUM_CACHE.update({**payload, "_ts": now_ts})
+                payload["from_cache"] = True
+                return payload
+        except Exception:
+            pass
+
+    # Compute fresh
+    try:
+        result = await compute_sector_momentum_dashboard()
+    except Exception as exc:
+        logger.error("Sector momentum computation failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Sector momentum computation failed: {exc}")
+
+    # Store in caches
+    SECTOR_MOMENTUM_CACHE.update({**result, "_ts": now_ts})
+    try:
+        await db.sector_momentum_cache.update_one(
+            {"_key": "sector_momentum"},
+            {"$set": {"_key": "sector_momentum", "cached_at_ts": now_ts, **result}},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+    result["from_cache"] = False
+    return result
 
 
 @api_router.get("/kite/auth-url")

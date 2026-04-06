@@ -141,6 +141,7 @@ class MultibaggerCandidate(BaseModel):
     debt_to_equity: float | None = None
     current_ratio: float | None = None
     gross_margin: float | None = None
+    vol_bands: dict | None = None
 
     from pydantic import model_validator
 

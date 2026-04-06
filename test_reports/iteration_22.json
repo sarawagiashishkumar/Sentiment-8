@@ -1,0 +1,92 @@
+{
+  "summary": "Iteration 22: Full testing of new features — Sector Momentum Dashboard and Multi-horizon Price Bands. All 36 backend tests pass. All frontend UI tests pass. Both features are fully functional and correctly integrated.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestHealthRegression::test_root_returns_200": "PASS",
+    "TestHealthRegression::test_auth_works": "PASS",
+    "TestSectorMomentumEndpoint::test_sector_momentum_requires_auth": "PASS",
+    "TestSectorMomentumEndpoint::test_sector_momentum_returns_200": "PASS",
+    "TestSectorMomentumEndpoint::test_response_has_sectors_key": "PASS",
+    "TestSectorMomentumEndpoint::test_sectors_is_a_list": "PASS",
+    "TestSectorMomentumEndpoint::test_sectors_count_is_15": "PASS",
+    "TestSectorMomentumEndpoint::test_each_sector_has_momentum_score": "PASS",
+    "TestSectorMomentumEndpoint::test_each_sector_has_direction": "PASS",
+    "TestSectorMomentumEndpoint::test_each_sector_has_return_fields": "PASS",
+    "TestSectorMomentumEndpoint::test_each_sector_has_rsi_field": "PASS",
+    "TestSectorMomentumEndpoint::test_each_sector_has_adx_field": "PASS",
+    "TestSectorMomentumEndpoint::test_sector_names_present": "PASS",
+    "TestSectorMomentumEndpoint::test_response_has_summary_key": "PASS",
+    "TestSectorMomentumEndpoint::test_summary_has_bullish_sectors": "PASS",
+    "TestSectorMomentumEndpoint::test_summary_has_bearish_sectors": "PASS",
+    "TestSectorMomentumEndpoint::test_summary_has_neutral_sectors": "PASS",
+    "TestSectorMomentumEndpoint::test_summary_has_market_breadth": "PASS",
+    "TestSectorMomentumEndpoint::test_summary_has_avg_momentum_score": "PASS",
+    "TestSectorMomentumEndpoint::test_response_has_from_cache_field": "PASS",
+    "TestSectorMomentumCaching::test_second_call_returns_from_cache_true": "PASS",
+    "TestSectorMomentumCaching::test_force_refresh_returns_from_cache_false": "PASS",
+    "TestMultibaggerVolBands::test_custom_search_returns_200": "PASS",
+    "TestMultibaggerVolBands::test_infy_result_has_vol_bands": "PASS",
+    "TestMultibaggerVolBands::test_vol_bands_has_all_horizons": "PASS",
+    "TestMultibaggerVolBands::test_vol_bands_1w_has_required_keys": "PASS",
+    "TestMultibaggerVolBands::test_vol_bands_1m_has_required_keys": "PASS",
+    "TestMultibaggerVolBands::test_vol_bands_3m_has_required_keys": "PASS",
+    "TestMultibaggerVolBands::test_vol_bands_6m_has_required_keys": "PASS",
+    "TestMultibaggerVolBands::test_vol_bands_9m_has_required_keys": "PASS",
+    "TestMultibaggerVolBands::test_vol_bands_1y_has_required_keys": "PASS",
+    "TestMultibaggerVolBands::test_upside_pct_is_positive": "PASS",
+    "TestMultibaggerVolBands::test_downside_pct_is_negative": "PASS",
+    "TestMultibaggerVolBands::test_flag_is_valid": "PASS",
+    "TestMultibaggerVolBands::test_hist_vol_pct_is_positive": "PASS",
+    "TestMultibaggerVolBands::test_custom_search_requires_auth": "PASS"
+  },
+
+  "key_findings": {
+    "sector_momentum_api": "GET /api/sector-momentum returns all 15 sectors with momentum_score, direction, return_1w/1m/3m, rsi, adx. Summary has bullish_sectors, bearish_sectors, neutral_sectors, market_breadth, avg_momentum_score.",
+    "sector_momentum_caching": "In-memory + MongoDB dual-layer caching. Second call returns from_cache=True. force_refresh=true bypasses both caches and returns from_cache=False.",
+    "sector_cards_testids": "All 15 sector card testids confirmed: sector-card-metal, sector-card-power, sector-card-it, sector-card-capital-goods, sector-card-defence, sector-card-telecom, sector-card-banking, sector-card-consumer-durables, sector-card-fmcg, sector-card-oil---gas, sector-card-pharma, sector-card-cement, sector-card-auto, sector-card-realty, sector-card-insurance",
+    "vol_bands_infy": "INFY vol_bands has all 6 horizons (1W,1M,3M,6M,9M,1Y). Each band has: upside_pct, downside_pct, conservative_high_pct, optimistic_high_pct, hist_vol_pct, flag. All flags are GREEN for INFY. hist_vol_pct=27.0%.",
+    "multibagger_bands_toggle": "45 toggle buttons in main Multibagger table (for stocks with vol_bands). Toggle shows 'Show Price Bands' → 'Hide Price Bands' on click. Expands to show table with all 6 horizons: Conservative, Expected Upside, Expected Downside, Optimistic, HV%, Signal.",
+    "custom_search_price_bands": "Custom search result (INFY) shows price bands inline (no toggle button - always visible below thesis row).",
+    "frontend_nav": "nav-sectors button (data-testid=nav-sectors) visible in nav bar. home-module-sectors card (data-testid=home-module-sectors) visible on home dashboard."
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration22_sector_momentum_vol_bands.py",
+    "/app/test_reports/pytest/iteration22_results.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "NOTE: sector-card testid for 'Oil & Gas' produces slug 'oil---gas' (triple dash from '& ' → '--' mapping via regex /[^a-z]/g). Not a bug but worth noting if UI filtering by slug is needed.",
+    "NOTE: Backend file /app/backend/server.py is 6715 lines — very large file that should ideally be split into routers per domain, but this is not a breaking issue.",
+    "VERIFIED: Sector momentum has dual-layer caching (in-memory dict + MongoDB) with 30-minute TTL — works correctly."
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration22_sector_momentum_vol_bands.py (new file, 36 tests)"
+  ],
+
+  "success_rate": {"backend": "100% (36/36 tests passing)", "frontend": "100% (all UI checks passing)"},
+
+  "test_credentials": "@shish123 / 1234",
+
+  "seed_data_creation": "None - used cached sector momentum data from previous test runs",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 22: Both new features fully working. (1) Sector Momentum Dashboard: GET /api/sector-momentum returns 15 sectors, uses dual-layer caching, sector cards use data-testid=sector-card-{slug} where slug = sector.toLowerCase().replace(/[^a-z]/g, '-'). Key slugs: it, banking, pharma, fmcg, auto, metal, realty, oil---gas, capital-goods, telecom, cement, consumer-durables, insurance, power, defence. (2) vol_bands: POST /api/multibagger/custom-search returns vol_bands dict with 6 horizons each having upside_pct, downside_pct, conservative_high_pct, optimistic_high_pct, hist_vol_pct, flag. Main multibagger table has 45 toggle buttons (data-testid=multibagger-bands-toggle-{symbol.toLowerCase()}). Custom search shows inline price bands. Previous open issue: compute_macro_context substring match for sector='IT' still open (from iteration 20)."
+}
