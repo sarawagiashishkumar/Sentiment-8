@@ -91,28 +91,11 @@ SCRIPT_PATTERN = re.compile(r"^([A-Z]+)(\d{1,2})([A-Z]{3})(\d+)(CE|PE)$")
 SESSION_STORE: Dict[str, dict] = {}
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# NSE Market Holidays (YYYY-MM-DD). Includes fixed national + major religious holidays.
-NSE_HOLIDAYS: set[str] = {
-    # 2025
-    "2025-01-26", "2025-02-26", "2025-03-14", "2025-04-10",
-    "2025-04-14", "2025-04-18", "2025-05-01", "2025-08-15",
-    "2025-10-02", "2025-10-24", "2025-10-25", "2025-11-05",
-    # 2026
-    "2026-01-26",             # Republic Day
-    "2026-02-19",             # Maha Shivaratri
-    "2026-03-25",             # Holi
-    "2026-04-03",             # Good Friday (NSE verified 2026 calendar)
-    "2026-04-14",             # Dr. Ambedkar Jayanti / Ram Navami
-    "2026-05-01",             # Maharashtra Day / Labour Day
-    "2026-08-15",             # Independence Day
-    "2026-10-02",             # Gandhi Jayanti
-    "2026-10-23",             # Diwali (Laxmi Pujan - tentative, NSE announces annually)
-    "2026-11-04",             # Gurunanak Jayanti (tentative)
-    "2026-11-24",             # Gurunanak Jayanti observed (tentative)
-    # 2027
-    "2027-01-26", "2027-03-16", "2027-04-02", "2027-04-14",
-    "2027-05-01", "2027-08-15", "2027-10-02",
-}
+# NSE holidays are now managed by services/holiday_manager.py (MongoDB-backed).
+# This module-level set is populated at startup by init_holiday_manager().
+from services.holiday_manager import get_nse_holidays, init_holiday_manager, shutdown_holiday_manager
+
+NSE_HOLIDAYS: set[str] = set()  # Populated at startup
 
 MONTH_MAP = {
     "JAN": 1,
@@ -2044,6 +2027,7 @@ def _expiry_risk_bucket(minutes_to_expiry: int) -> Literal["LOW", "MEDIUM", "HIG
 def get_remaining_trading_days(expiry_date_str: str) -> int:
     """Count NSE trading days from today (IST) to expiry date (inclusive)."""
     from datetime import date as _date
+    holidays = get_nse_holidays() or NSE_HOLIDAYS
     today = datetime.now(IST).date()
     try:
         expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
@@ -2058,13 +2042,13 @@ def get_remaining_trading_days(expiry_date_str: str) -> int:
     now_ist = datetime.now(IST)
     market_still_open_today = (now_ist.hour < 15) or (now_ist.hour == 15 and now_ist.minute < 30)
     d = today
-    if market_still_open_today and d.weekday() < 5 and d.strftime("%Y-%m-%d") not in NSE_HOLIDAYS:
+    if market_still_open_today and d.weekday() < 5 and d.strftime("%Y-%m-%d") not in holidays:
         if d <= expiry_date:
             count += 1
 
     d = today + timedelta(days=1)
     while d <= expiry_date:
-        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in NSE_HOLIDAYS:
+        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in holidays:
             count += 1
         d += timedelta(days=1)
 
@@ -2074,6 +2058,7 @@ def get_remaining_trading_days(expiry_date_str: str) -> int:
 def get_nth_trading_day_from_today(n: int) -> "datetime.date":
     """Return the calendar date that is exactly N trading days from today (IST)."""
     from datetime import date as _date
+    holidays = get_nse_holidays() or NSE_HOLIDAYS
     if n <= 0:
         return datetime.now(IST).date()
     today = datetime.now(IST).date()
@@ -2081,7 +2066,7 @@ def get_nth_trading_day_from_today(n: int) -> "datetime.date":
     count = 0
     while count < n:
         d += timedelta(days=1)
-        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in NSE_HOLIDAYS:
+        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in holidays:
             count += 1
     return d
 
@@ -5535,6 +5520,43 @@ async def admin_update_api_controls(
     return {"updated": True, "api_controls": updated}
 
 
+# ─── NSE Holiday Management Endpoints ─────────────────────────────────────────
+
+@api_router.get("/admin/nse-holidays")
+async def admin_get_nse_holidays(owner_user: dict = Depends(get_owner_user)):
+    """List all NSE holidays currently stored, grouped by year."""
+    _ = owner_user
+    holidays = get_nse_holidays()
+    # Also fetch full records from DB for display
+    cursor = db["nse_holidays"].find({}, {"_id": 0}).sort("date", 1)
+    records = await cursor.to_list(500)
+    return {
+        "total_in_memory": len(holidays),
+        "holidays": records,
+    }
+
+
+@api_router.post("/admin/nse-holidays/refresh")
+async def admin_refresh_nse_holidays(
+    owner_user: dict = Depends(get_owner_user),
+    year: int = Query(..., ge=2025, le=2030, description="Calendar year to refresh"),
+):
+    """Manually trigger a holiday fetch for a specific year."""
+    global NSE_HOLIDAYS
+    _ = owner_user
+    from services.holiday_manager import fetch_and_update_holidays
+    success = await fetch_and_update_holidays(year)
+    if success:
+        NSE_HOLIDAYS = get_nse_holidays()
+    return {
+        "success": success,
+        "year": year,
+        "total_holidays": len(NSE_HOLIDAYS),
+        "message": f"Holidays for {year} {'updated from external source' if success else 'could not be fetched; defaults remain'}.",
+    }
+
+
+
 @api_router.post("/admin/domain-mappings")
 async def admin_create_domain_mapping(
     payload: DomainMappingCreateRequest,
@@ -6380,6 +6402,12 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_tasks():
+    global NSE_HOLIDAYS
+    # Initialize NSE holiday manager (seeds DB, loads into memory, starts background updater)
+    loaded = await init_holiday_manager(db)
+    NSE_HOLIDAYS = loaded
+    logger.info("NSE_HOLIDAYS loaded: %d dates", len(NSE_HOLIDAYS))
+
     await _ensure_owner_exists()
     await _sync_script_master_daily()
     await _sync_kite_option_master_daily()
@@ -6387,4 +6415,5 @@ async def startup_tasks():
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    await shutdown_holiday_manager()
     client.close()

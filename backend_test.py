@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 # Get the backend URL from frontend/.env
-BACKEND_URL = "https://stock-analyzer-186.preview.emergentagent.com/api"
+BACKEND_URL = "https://fno-signals-4.preview.emergentagent.com/api"
 
 class BackendValidator:
     def __init__(self):
