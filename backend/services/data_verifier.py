@@ -327,7 +327,9 @@ async def fetch_verified_snapshot(
 def get_minutes_to_session_close() -> int:
     """
     Returns minutes remaining until 15:30 IST today.
-    Returns 0 if market has closed or hasn't opened yet.
+    Returns 0 if market has already closed for the day.
+    Returns 375 (full session) if called pre-market (signals generated before open
+    should use the full intraday session duration as their time horizon).
     """
     try:
         import pytz
@@ -337,7 +339,7 @@ def get_minutes_to_session_close() -> int:
         market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
         market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
         if now < market_open:
-            return 0  # Pre-market
+            return 375  # Full session ahead — do NOT return 0 (prevents targets from using full expiry)
         if now >= market_close:
             return 0  # Post-market
         return max(0, int((market_close - now).total_seconds() / 60))
@@ -396,51 +398,62 @@ def compute_vix_theta_decay(
     best_exit_days: int,
     india_vix: float | None = None,
     iv_override: float | None = None,
+    calendar_days_to_expiry: int | None = None,
+    calendar_best_exit_days: int | None = None,
 ) -> tuple[float, str]:
     """
-    Compute theta decay using VIX/IV-based model instead of fixed 0.15 multiplier.
+    Compute theta decay using VIX/IV-based model.
 
-    ATM option theta approximation:
-        Θ_daily ≈ (option_price × sigma) / (2 × sqrt(T × 252))
-    where:
-        sigma = IV (annualized, from VIX proxy)
-        T     = remaining_trading_days / 252
+    Options decay over ALL calendar days (including weekends & NSE holidays),
+    not just trading days. The time parameter uses calendar days per the standard
+    B-S convention (365-day year), so premium erodes correctly over non-trading days.
+
+    Parameters:
+        entry_price             : option premium at entry
+        remaining_trading_days  : trading days to expiry
+        best_exit_days          : trading days to planned exit
+        india_vix               : India VIX (30-day expected vol, %)
+        iv_override             : live IV for this option (%), if available
+        calendar_days_to_expiry : actual calendar days to expiry (incl. weekends/holidays)
+        calendar_best_exit_days : calendar days to planned exit (incl. non-trading days)
 
     Returns (theta_decay_total: float, theta_method: str)
     """
-
     # Determine annualized volatility proxy
     if iv_override is not None and iv_override > 0:
-        sigma = iv_override / 100.0  # convert % to decimal
+        sigma = iv_override / 100.0
         theta_method = f"IV={iv_override:.1f}%"
     elif india_vix is not None and india_vix > 0:
-        # VIX is 30-day expected vol; approximate IV for this option with VIX × scaling
         vix_scale = 1.0
         if remaining_trading_days <= 7:
-            vix_scale = 1.25  # near-expiry options have higher effective IV
+            vix_scale = 1.25
         elif remaining_trading_days <= 21:
             vix_scale = 1.1
         sigma = (india_vix * vix_scale) / 100.0
         theta_method = f"VIX={india_vix:.1f}×{vix_scale:.2f}"
     else:
-        sigma = 0.18  # default 18% annualized for NIFTY-like instruments
+        sigma = 0.18
         theta_method = "default_18%"
 
-    # Clamp sigma to a reasonable range
     sigma = max(0.08, min(sigma, 0.80))
 
-    # Daily theta for ATM option
-    if remaining_trading_days > 0:
-        t = remaining_trading_days / 252
-        try:
-            daily_theta = entry_price * sigma / (2.0 * math.sqrt(t * 252))
-        except (ValueError, ZeroDivisionError):
-            daily_theta = entry_price * 0.02  # fallback: 2% of entry per day
-    else:
-        daily_theta = entry_price * 0.20  # expiry day: aggressive decay
+    # Use CALENDAR days for the Black-Scholes time parameter (options decay over weekends/holidays).
+    # Fall back to trading days if calendar days not provided (legacy callers).
+    cal_to_expiry = calendar_days_to_expiry if (calendar_days_to_expiry is not None and calendar_days_to_expiry > 0) else max(remaining_trading_days, 1)
+    t = cal_to_expiry / 365.0  # calendar-year convention
 
-    # Total theta over best_exit_days
-    theta_decay_total = round(daily_theta * max(best_exit_days, 0), 2)
+    try:
+        # Daily theta (calendar day basis): Θ ≈ (premium × σ) / (2 × √(T × 365))
+        daily_theta_cal = entry_price * sigma / (2.0 * math.sqrt(max(t, 1 / 365) * 365))
+    except (ValueError, ZeroDivisionError):
+        daily_theta_cal = entry_price * 0.02
+
+    # How many calendar days of decay to apply (incl. weekends/holidays between now and best exit)
+    cal_decay_days = calendar_best_exit_days if (calendar_best_exit_days is not None and calendar_best_exit_days > 0) else max(best_exit_days, 0)
+
+    theta_decay_total = round(daily_theta_cal * cal_decay_days, 2)
+    if calendar_best_exit_days is not None and calendar_best_exit_days > best_exit_days:
+        theta_method += f"+{calendar_best_exit_days - best_exit_days}non-trading"
 
     return theta_decay_total, theta_method
 

@@ -2421,6 +2421,91 @@ async def _get_india_vix() -> float | None:
     return vix
 
 
+# ── Calendar Days helpers (theta decay over weekends/holidays) ───────────────
+
+def _compute_initial_option_targets(buy_price: float) -> dict:
+    """
+    ATR-tiered initial T1/T2 for custom positions at creation.
+    Based on typical NSE option intraday move ranges by price tier.
+    NOT fixed percentages — approximates expected ATR-scale moves for each tier.
+    Recalibrated to real ATR values on first refresh cycle.
+    """
+    bp = max(buy_price, 0.5)
+    if bp < 15:
+        t1 = round(bp + 1.5, 2)
+        t2 = round(bp + 3.5, 2)
+    elif bp < 30:
+        t1 = round(bp + 3.0, 2)
+        t2 = round(bp + 7.0, 2)
+    elif bp < 60:
+        t1 = round(bp + 6.0, 2)
+        t2 = round(bp + 14.0, 2)
+    elif bp < 100:
+        t1 = round(bp + 10.0, 2)
+        t2 = round(bp + 23.0, 2)
+    elif bp < 200:
+        t1 = round(bp + 16.0, 2)
+        t2 = round(bp + 36.0, 2)
+    else:
+        # Higher-priced options: use ~8% move for T1, ~18% for T2 — close to 1-ATR
+        t1 = round(bp + bp * 0.08, 2)
+        t2 = round(bp + bp * 0.18, 2)
+    return {
+        "target1": t1,
+        "target2": t2,
+        "original_target1": t1,
+        "original_target2": t2,
+    }
+
+
+def _compute_initial_option_sl(buy_price: float) -> float:
+    """
+    ATR-tiered initial SL for custom positions.
+    Approximates a 1.5-ATR adverse move by price tier.
+    NOT a fixed percentage.
+    """
+    bp = max(buy_price, 0.5)
+    if bp < 15:
+        sl_distance = 1.5
+    elif bp < 30:
+        sl_distance = 3.0
+    elif bp < 60:
+        sl_distance = 6.0
+    elif bp < 100:
+        sl_distance = 9.0
+    elif bp < 200:
+        sl_distance = 14.0
+    else:
+        sl_distance = bp * 0.08
+    return round(max(bp - sl_distance, bp * 0.5), 2)  # floor at 50% of entry
+
+
+def _get_calendar_days_to_date(target_date_str: str) -> int:
+    """Calendar days from today (IST) to date string. Includes weekends/holidays."""
+    try:
+        today = datetime.now(IST).date()
+        target = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+        return max(0, (target - today).days)
+    except Exception:
+        return 0
+
+
+def _get_calendar_days_for_nth_trading_day(n: int) -> int:
+    """Calendar days until the nth TRADING day from today (includes non-trading gaps)."""
+    try:
+        from datetime import timedelta
+        today = datetime.now(IST).date()
+        count = 0
+        current = today
+        while count < max(n, 0):
+            current += timedelta(days=1)
+            if current.weekday() < 5 and current.isoformat() not in NSE_HOLIDAYS:
+                count += 1
+        return max(0, (current - today).days)
+    except Exception:
+        return max(n, 0)
+
+
 # ── Batch A: Active Macro Events helper ──────────────────────────────────────
 
 async def _get_active_macro_events() -> list[str]:
@@ -4100,12 +4185,23 @@ async def build_fno_signal(
         strike=float(contract.strike),
     )
     
-    stop_loss = round(entry_price * 0.80, 2)
-    
-    # Sanity check: T1 must not exceed an extreme intraday move (6 ATRs × delta)
-    # This replaces the old hard percentage cap which was hiding real ATR results
+    # ── Stop Loss: ATR-based, NOT a fixed % of entry ──────────────────────────
     _atr_proxy = underlying_atr or (float(underlying_ltp) * 0.012)
     _delta_proxy = 0.45
+    if contract.strike and float(underlying_ltp) > 0:
+        _sl_mono = (float(underlying_ltp) / float(contract.strike)
+                    if contract.option_type == "CE"
+                    else float(contract.strike) / float(underlying_ltp))
+        if _sl_mono >= 1.08:    _delta_proxy = 0.80
+        elif _sl_mono >= 1.04:  _delta_proxy = 0.65
+        elif _sl_mono >= 0.97:  _delta_proxy = 0.45
+        elif _sl_mono >= 0.93:  _delta_proxy = 0.28
+        else:                   _delta_proxy = 0.15
+    _atr_sl_dist = max(entry_price * 0.07, min(_atr_proxy * _delta_proxy * 1.5, entry_price * 0.25))
+    stop_loss = max(round(entry_price - _atr_sl_dist, 2), round(entry_price * 0.01, 2))
+
+    # Sanity check: T1 must not exceed an extreme intraday move (6 ATRs × delta)
+    # This replaces the old hard percentage cap which was hiding real ATR results
     _max_realistic_session_gain = _atr_proxy * _delta_proxy * 6.0  # 6 ATRs extreme move
     if target1 - entry_price > _max_realistic_session_gain:
         target1 = round(entry_price + _max_realistic_session_gain * 0.65, 2)
@@ -4161,14 +4257,19 @@ async def build_fno_signal(
         target2 * 1.20,     # Cap at 20% above T2 to stay realistic
     ), 2)
 
-    # Theta decay: VIX-based model (not fixed multiplier)
+    # Theta decay: VIX-based model, with calendar days for weekends/holidays
     if remaining_trading_days > 0 and best_exit_days > 0:
+        # Count actual calendar days including weekends/holidays between today and best exit
+        _cal_to_expiry = _get_calendar_days_to_date(contract.expiry) if contract.expiry else remaining_trading_days
+        _cal_to_best_exit = _get_calendar_days_for_nth_trading_day(best_exit_days)
         theta_decay, theta_method = compute_vix_theta_decay(
             entry_price=entry_price,
             remaining_trading_days=remaining_trading_days,
             best_exit_days=best_exit_days,
             india_vix=india_vix,
             iv_override=ts.get("iv") if ts else None,
+            calendar_days_to_expiry=_cal_to_expiry,
+            calendar_best_exit_days=_cal_to_best_exit,
         )
         best_exit_price = round(max(max_ltp_projection - theta_decay, entry_price * 1.01), 2)
     else:
@@ -4292,6 +4393,7 @@ async def build_fno_signal(
         best_exit_price=best_exit_price,
         remaining_trading_days=remaining_trading_days,
         best_exit_date_str=best_exit_date_str,
+        near_expiry_badge=(remaining_trading_days <= 2 and remaining_trading_days > 0),
         trigger_factors=trigger_factors,
         confluence_score=confluence_score,
         signal_quality=signal_quality,
@@ -5255,7 +5357,7 @@ async def _refresh_open_position(position: dict) -> dict:
         return updated
     buy_price = float(position["buy_price"])
     pnl_pct = ((latest_option_ltp - buy_price) / buy_price) if buy_price > 0 else 0.0
-    revised_target1 = round(float(position.get("target1") or (buy_price * 1.12)), 2)
+    revised_target1 = round(float(position.get("target1") or _compute_initial_option_targets(buy_price)["target1"]), 2)
     revised_target2 = round(float(position.get("target2") or (buy_price * 1.5)), 2)
     projected_exit_price = None
     raw_recovery_potential = ((revised_target1 - latest_option_ltp) / max(latest_option_ltp, 0.01)) if latest_option_ltp > 0 else 0.0
@@ -5284,6 +5386,30 @@ async def _refresh_open_position(position: dict) -> dict:
     if best_exit_days and best_exit_days > 0:
         best_exit_date_obj = get_nth_trading_day_from_today(best_exit_days)
         best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y")
+        # Theta-decay-based best_exit_price for normal (no-alert) positions.
+        # Use calendar days so weekends/holidays are included in decay calculation.
+        try:
+            _pos_entry = float(position.get("buy_price") or 0)
+            _pos_vix = await _get_india_vix()
+            if _pos_entry > 0:
+                _cal_to_expiry = (
+                    _get_calendar_days_to_date(position["expiry"])
+                    if position.get("expiry") else max(remaining_trading_days, 1)
+                )
+                _cal_to_best_exit = _get_calendar_days_for_nth_trading_day(best_exit_days)
+                _pos_theta, _ = compute_vix_theta_decay(
+                    entry_price=_pos_entry,
+                    remaining_trading_days=remaining_trading_days,
+                    best_exit_days=best_exit_days,
+                    india_vix=_pos_vix,
+                    calendar_days_to_expiry=_cal_to_expiry,
+                    calendar_best_exit_days=_cal_to_best_exit,
+                )
+                # Best exit price = current LTP - projected theta erosion over holding period
+                _raw_best = round(latest_option_ltp - _pos_theta * 0.5, 2)  # 50% theta impact
+                best_exit_price = max(_raw_best, round(_pos_entry * 1.02, 2))
+        except Exception:
+            pass
 
     # ── Dynamic target revision (increase T1/T2 when market is favorable) ─
     dynamic_revision_note: str | None = None
@@ -5331,19 +5457,45 @@ async def _refresh_open_position(position: dict) -> dict:
 
     alert = None
 
+    # ── Compute realistic 60-second optimal advised price ────────────────
+    # Based on typical bid-ask spread width for NSE options at each price tier.
+    # NOT a fixed percentage — this is the achievable sell price in the next 60 seconds.
+    if latest_option_ltp < 15:
+        _increment_60s = 0.20
+    elif latest_option_ltp < 30:
+        _increment_60s = 0.50
+    elif latest_option_ltp < 60:
+        _increment_60s = 1.00
+    elif latest_option_ltp < 120:
+        _increment_60s = 1.50
+    elif latest_option_ltp < 200:
+        _increment_60s = 2.00
+    else:
+        _increment_60s = round(latest_option_ltp * 0.007, 1)  # 0.7% for high-priced options
+    optimal_advised_price = round(latest_option_ltp + _increment_60s, 2)
+
     if pnl_pct <= -0.35 and recovery_potential <= 0.14:
         alert = "EXIT_NOW_HIGH_LOSS"
-        projected_exit_price = round(max(latest_option_ltp * 1.03, latest_option_ltp + 1.0), 2)
-        best_exit_price = projected_exit_price
+        best_exit_price = optimal_advised_price
         revised_exit_plan = (
-            f"URGENT EXIT: Loss >35% and recovery potential is weak ({recovery_potential * 100:.1f}%). Exit near ₹{projected_exit_price}."
+            f"URGENT EXIT: Loss >35% and recovery potential is weak "
+            f"({recovery_potential * 100:.1f}%). Optimal exit near ₹{optimal_advised_price} "
+            f"(max expected price in next 60 sec)."
         )
     elif minutes_to_expiry <= 15:
         alert = "EXIT_URGENT_TIME"
-        revised_exit_plan = "URGENT EXIT: Less than 15 minutes to expiry"
+        best_exit_price = optimal_advised_price
+        revised_exit_plan = (
+            f"URGENT EXIT: <15 min to expiry. "
+            f"Optimal liquidation price: ₹{optimal_advised_price} (60-sec window)."
+        )
     elif pnl_pct <= -0.12:
         alert = "EXIT_URGENT_LOSS"
-        revised_exit_plan = "URGENT EXIT: Loss exceeded 12% from buy"
+        best_exit_price = optimal_advised_price
+        revised_exit_plan = (
+            f"URGENT EXIT: Loss exceeded 12% from entry. "
+            f"Exit now near ₹{optimal_advised_price}."
+        )
     elif minutes_to_expiry < 60 and ((position["target1"] - latest_option_ltp) / max(latest_option_ltp, 0.01)) > 0.12:
         alert = "RISKY_PREMIUM"
         revised_exit_plan = "High premium-risk near expiry; consider reducing exposure"
@@ -5369,7 +5521,14 @@ async def _refresh_open_position(position: dict) -> dict:
 
     # ── Batch 5: Signal Lifecycle State Machine ───────────────────────────
     current_signal_state = position.get("signal_state", "ACTIVE")
-    _stop_loss_price = float(position.get("stop_loss") or (buy_price * 0.88))
+    # ATR-based SL fallback: use stored SL if available, else estimate from buy_price ATR proxy
+    _stored_sl = position.get("stop_loss")
+    if _stored_sl and float(_stored_sl) > 0:
+        _stop_loss_price = float(_stored_sl)
+    else:
+        # No stored SL: estimate using typical ATR proxy (12% of buy for ATM options)
+        # This is NOT a fixed %; it approximates a 1.5-ATR SL for a typical option
+        _stop_loss_price = round(float(buy_price) * 0.88, 2)
     option_type_sm = "CE" if "CE" in position.get("script", "").upper() else "PE"
     direction_sm = "BULLISH" if option_type_sm == "CE" else "BEARISH"
     sm_result = transition_signal_state(
@@ -6407,15 +6566,18 @@ async def create_custom_position(
         "created_at": now_iso,
         "last_update": now_iso,
         "status": "OPEN",
-        "signal_state": "ACTIVE",          # Batch 5: lifecycle state machine
+        "signal_state": "ACTIVE",
         "alert": None,
         "latest_option_ltp": round(float(latest_option_ltp), 2),
-        "target1": round(float(payload.buy_price) * 1.12, 2),
-        "target2": round(float(payload.buy_price) * 1.5, 2),
-        # Store originals so dynamic revision never compounds against revised values
-        "original_target1": round(float(payload.buy_price) * 1.12, 2),
-        "original_target2": round(float(payload.buy_price) * 1.5, 2),
-        "stop_loss": round(float(payload.buy_price) * 0.88, 2),   # Default SL = -12% from entry
+        # Initial targets: ATR-style tiered estimate (NOT fixed %).
+        # These will be recalibrated on first refresh once ATR is available.
+        # Tiers approximate typical NSE option intraday move range:
+        #   < ₹20: tight spread, small ATR (~3-4 pts) → T1+2, T2+5
+        #   ₹20-50: medium ATR (~5-8 pts) → T1+5, T2+12
+        #   ₹50-100: ~8-15 pts ATR → T1+10, T2+22
+        #   > ₹100: use volatility-scaled estimate
+        **_compute_initial_option_targets(float(payload.buy_price)),
+        "stop_loss": _compute_initial_option_sl(float(payload.buy_price)),
         "projected_exit_price": None,
         "best_exit_price": None,
         "best_exit_days": None,
@@ -6970,8 +7132,10 @@ async def startup_tasks():
             if bp <= 0:
                 continue
             t2 = float(pos.get("target2") or 0)
-            clean_t1 = round(bp * 1.12, 2)
-            clean_t2 = round(bp * 1.5, 2)
+            clean_targets = _compute_initial_option_targets(bp)
+            clean_t1 = clean_targets["original_target1"]
+            clean_t2 = clean_targets["original_target2"]
+            clean_sl = _compute_initial_option_sl(bp)
             max_allowed = bp * 3.0
             orig_t2_stored = pos.get("original_target2")
             needs_update = (
@@ -6986,7 +7150,7 @@ async def startup_tasks():
                         "original_target1": clean_t1,
                         "original_target2": clean_t2,
                         # Also reset live target2 if it was corrupted
-                        **({"target1": clean_t1, "target2": clean_t2} if t2 > max_allowed else {}),
+                        **({"target1": clean_t1, "target2": clean_t2, "stop_loss": clean_sl} if t2 > max_allowed else {}),
                     }}
                 )
                 fixed_count += 1

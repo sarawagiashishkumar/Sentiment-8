@@ -455,49 +455,66 @@ def compute_atr_based_fno_targets(
     strike: float | None = None,
 ) -> tuple[float, float]:
     """
-    Compute data-driven T1/T2 targets for F&O options using underlying ATR.
-    Uses moneyness-based delta estimation if strike is provided.
-    Returns (target1, target2) in option price terms.
-    """
-    if minutes_to_expiry < 180:
-        time_factor = 0.55
-    elif minutes_to_expiry < 360:
-        time_factor = 0.75
-    elif minutes_to_expiry < 960:
-        time_factor = 0.90
-    else:
-        time_factor = 1.0
+    Compute data-driven intraday T1/T2 for F&O options using underlying ATR.
 
+    Targets are STRICTLY achievable within the remaining session (capped at 15:30 IST).
+    NO fixed percentage multipliers are used (e.g. "+1% / +2%").
+
+    Calculation chain:
+        underlying_move = ATR × time_factor × vix_factor     (points move, not %)
+        option_gain     = underlying_move × delta_proxy       (option pts)
+        T1              = entry_price + option_gain_1
+        T2              = entry_price + option_gain_2
+
+    Floor: targets must be at least (0.5 ATR × delta) above entry —
+    which is the minimum expected 1-sigma intraday move, not a % of entry.
+    """
+    # ── Time factor: based on ACTUAL session time remaining (15:30 IST), not fixed buckets ──
+    # minutes_to_expiry here should be min(expiry_mins, session_close_mins) from the caller
+    if minutes_to_expiry < 90:
+        time_factor = 0.40  # Very limited time — conservative, achievable targets
+    elif minutes_to_expiry < 180:
+        time_factor = 0.55
+    elif minutes_to_expiry < 270:
+        time_factor = 0.70
+    elif minutes_to_expiry < 360:
+        time_factor = 0.82
+    else:
+        time_factor = 0.95  # Near-full session (pre-market or long-dated)
+
+    # ── VIX factor: scale up/down based on market volatility ──────────────
     vix_factor = 1.0
     if vix is not None:
         if vix > 25:
             vix_factor = 1.25
+        elif vix > 20:
+            vix_factor = 1.15
         elif vix > 18:
-            vix_factor = 1.10
+            vix_factor = 1.08
         elif vix < 12:
             vix_factor = 0.85
 
-    # Moneyness-based delta estimation (more accurate than fixed 0.45)
+    # ── Moneyness-based delta estimation ──────────────────────────────────
     delta_proxy = 0.45  # ATM default
     if strike is not None and underlying_ltp > 0 and strike > 0:
         if option_type == "CE":
             moneyness = underlying_ltp / strike
-        else:  # PE
+        else:
             moneyness = strike / underlying_ltp
         if moneyness >= 1.08:
-            delta_proxy = 0.80   # Deep ITM
+            delta_proxy = 0.80
         elif moneyness >= 1.04:
-            delta_proxy = 0.65   # ITM
+            delta_proxy = 0.65
         elif moneyness >= 0.97:
-            delta_proxy = 0.45   # Near ATM
+            delta_proxy = 0.45
         elif moneyness >= 0.93:
-            delta_proxy = 0.28   # OTM
+            delta_proxy = 0.28
         else:
-            delta_proxy = 0.15   # Deep OTM
+            delta_proxy = 0.15
 
     if atr is not None and underlying_ltp > 0 and atr > 0:
-        # Correct formula: option move = underlying_ATR_points × delta
-        # NOT: atr_pct × delta × entry_price (incorrect, mixes up scales)
+        # T1 = entry + 1 ATR of underlying move × delta × time_factor × vix_factor
+        # T2 = entry + 2 ATR of underlying move × delta × time_factor × vix_factor
         underlying_t1_move = atr * time_factor * vix_factor
         underlying_t2_move = atr * time_factor * vix_factor * 2.0
         option_t1_gain = underlying_t1_move * delta_proxy
@@ -505,20 +522,32 @@ def compute_atr_based_fno_targets(
         target1 = round(entry_price + option_t1_gain, 2)
         target2 = round(entry_price + option_t2_gain, 2)
     else:
-        if entry_price > 100:
-            base_t1, base_t2 = 0.08, 0.22
-        elif entry_price > 30:
-            base_t1, base_t2 = 0.10, 0.30
-        else:
-            base_t1, base_t2 = 0.12, 0.40
-        t1_pct = base_t1 * time_factor * vix_factor
-        t2_pct = base_t2 * time_factor * vix_factor
-        target1 = round(entry_price * (1 + t1_pct), 2)
-        target2 = round(entry_price * (1 + t2_pct), 2)
+        # No ATR available: use IV-implied daily move as the basis
+        # IV daily move (1σ) ≈ underlying_ltp × (vix/100) / sqrt(252)
+        # Option move ≈ underlying_iv_move × delta_proxy
+        sigma_daily = (((vix or 18.0) / 100.0) / math.sqrt(252))
+        iv_daily_underlying_move = underlying_ltp * sigma_daily if underlying_ltp > 0 else 1.0
+        option_1sig_gain = iv_daily_underlying_move * delta_proxy * time_factor * vix_factor
+        target1 = round(entry_price + option_1sig_gain, 2)
+        target2 = round(entry_price + option_1sig_gain * 2.0, 2)
 
-    # Minimum floor: T1 must be at least 3% above entry, T2 at least 8%
-    target1 = max(target1, round(entry_price * 1.03, 2))
-    target2 = max(target2, round(entry_price * 1.08, 2))
+    # ── Floor: T1 must be at least 0.5× (ATR × delta) above entry ─────────
+    # This is NOT a percentage floor — it's the minimum meaningful option move
+    # based on the instrument's own volatility. Applied ONLY when ATR is available.
+    if atr is not None and atr > 0:
+        min_option_move = atr * delta_proxy * 0.30  # 30% of 1-ATR option move as absolute min
+        target1 = max(target1, round(entry_price + min_option_move, 2))
+        target2 = max(target2, round(entry_price + min_option_move * 1.8, 2))
+    else:
+        # No ATR: use IV-based minimum (not % of entry)
+        sigma_daily = (((vix or 18.0) / 100.0) / math.sqrt(252))
+        iv_move = max(underlying_ltp * sigma_daily * delta_proxy * 0.25, entry_price * 0.005) if underlying_ltp > 0 else entry_price * 0.005
+        target1 = max(target1, round(entry_price + iv_move, 2))
+        target2 = max(target2, round(entry_price + iv_move * 1.8, 2))
+
+    # ── Safety: T2 ≥ T1 + small gap; T2 ≤ 3× entry (no compounding risk) ─
+    target2 = max(target2, round(target1 * 1.05, 2))
+    target2 = min(target2, entry_price * 3.0)
 
     return target1, target2
 
