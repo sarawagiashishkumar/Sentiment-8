@@ -103,7 +103,17 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - **App.js utilities** → extracted to `src/utils/formatters.js`, `src/utils/exportUtils.js`, `src/components/shared/LiveInfoBox.jsx` (250 lines saved)
 - All tests pass: 40/40 regression tests (Iteration 21)
 
-### 2026 Apr — Macro Events Admin UI + F&O Export Enhancements (Iteration 26)
+### 2026 Apr — F&O Target Generation Audit & Fix (Iteration 27)
+- **No fixed % floors**: `compute_atr_based_fno_targets` rewritten. Removed hardcoded 3%/8% floors and 8%/22%/30% fallback multipliers. Now uses IV-daily-move model when ATR unavailable (sigma_daily = VIX/100/√252 × underlying × delta × time_factor).
+- **Pre-market session close**: `get_minutes_to_session_close()` now returns 375 (full session) when called before 09:15 IST, instead of 0. Prevents targets from using full expiry duration as session horizon.
+- **Calendar-day theta decay**: `compute_vix_theta_decay` upgraded with `calendar_days_to_expiry` and `calendar_best_exit_days` params. Options now decay over weekends and NSE holidays (calendar year / 365 convention). Backward compatible (defaults=None).
+- **ATR-based stop loss**: `build_fno_signal` stop_loss now uses `entry - max(1.5×ATR×delta, 7%)` capped at 25% from entry. Replaces fixed `entry × 0.80`.
+- **Tiered initial option targets**: `_compute_initial_option_targets` and `_compute_initial_option_sl` added. Entry=38 → T1=44, T2=52, SL=32 (not old *1.12/*1.5/*0.88). Covers 6 price tiers.
+- **Tier-based URGENT EXIT optimal_advised_price**: 60-second window price based on option LTP tier (₹0.20–₹2.00 or 0.7% for high-priced), NOT fixed 3%.
+- **near_expiry_badge field**: Added to `FNOSignalResponse` model (bool, default False). Set True when remaining_trading_days ≤ 2.
+- All 46 tests pass (iteration 27).
+
+
 - **Admin Macro Events Panel**: Added "Active Macro Events" card in Admin page (owner-only). Shows all 15 events as toggle buttons with intensity badges (LOW/MEDIUM/HIGH/CRITICAL), descriptions, and beneficiary sectors. One-click toggle saves instantly to MongoDB via POST /api/admin/macro-events/update. Active events highlighted with cyan border. Active summary bar shows current event keys. Refresh button available.
 - **F&O Export: PDF & Word Added**: Installed `jspdf`, `jspdf-autotable`, `docx` packages. Added `exportFnoAsPDF` (landscape A4, styled header, alternating rows, footer note) and `exportFnoAsWord` (DOCX table with dark header, styled rows) to `exportUtils.js`. Export menu now shows 5 options: CSV, XLS, PDF, Word, JPG.
 - **Column Re-ordering (14 cols, all formats)**: `buildExportRow` updated to Master Spec order: Script → Bias → Lot → Entry₹ → SL → T1 → T2 → Investment₹ → T1% → T1 Profit₹ → T2% → T2 Profit₹ → Conf → Bias Point (underlying_bias_score). XLS col widths and merge range updated to 14 cols.
