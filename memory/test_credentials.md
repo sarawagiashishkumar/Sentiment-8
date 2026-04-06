@@ -1,16 +1,18 @@
 # Test Credentials
 
-## Application Login
-- **Login Type**: Username + PIN (no password visible on screen, uses PIN on backend)
-- **Admin Account**: `@shish123` (PIN: `1234`)
-- **Auth Endpoint**: POST `/api/auth/access` with `{"username": "@shish123", "pin": "1234"}`
-- **Token field in response**: `token`
+## Admin / Owner Account
+- **Username**: `@shish123`
+- **PIN**: `1234`
+- **Role**: `owner`
 
-## Alternative Users
-- `rishaan@2017` (admin)
-- `Manas@123` (user)
+## Login Endpoint
+```
+POST /api/auth/access
+Body: { "username": "@shish123", "password": "1234" }
+```
 
-## Kite API
-- Kite access token stored in `system_meta` collection key `kite_session`
-- Kite API key available in backend `.env`
-- Redirect URL: https://multibagger-engine.preview.emergentagent.com/api/kite/callback
+## Notes
+- The "password" field is the PIN (4-digit)
+- Owner role has full access to all admin endpoints
+- Credits: admin-exempt (unlimited)
+- These credentials were verified working in test iteration 21 (2026-02-06)

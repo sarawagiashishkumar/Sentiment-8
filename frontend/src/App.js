@@ -224,6 +224,7 @@ export default function App() {
     if (currentPage === "admin" && token) {
       checkKiteStatus();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, token]);
 
   const syncCredits = (credits) => {
