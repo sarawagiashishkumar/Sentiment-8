@@ -1,168 +1,114 @@
-# PRD — Trading Research Platform (Multibagger Engine)
+# PRD — Trading Research Platform
 
 ## Original Problem Statement
-Build a minimalist full-stack web app for stock analysis using FastAPI, React, and MongoDB. Core purpose: Generate high-quality, profitable F&O (Futures and Options) trading signals based on a detailed "Master Spec."
+Build a minimalist full-stack web app for stock analysis using FastAPI, React, and MongoDB. Core feature: generate high-quality, profitable F&O (Futures and Options) trading signals based on the "Master Spec." All calculations (backtests, indicators, targets, P&L, probabilities, Greeks, valuations, scoring, risk metrics) MUST be computed strictly in backend Python using live/historical data. NO hallucination, no frontend calculations, no LLM estimations.
 
-## Key Product Requirements (Master Spec)
-1. **Global Architecture**: ALL calculations (backtests, indicators, targets, P&L, probabilities, Greeks, valuations, scoring, risk metrics) computed strictly in backend Python using live/historical data. NO HALLUCINATION. No frontend UI changes permitted. Minimum 78% Confluence Score for F&O signals.
-2. **Market Universe**: Restricted to NIFTY 500, NIFTY 50, BANKNIFTY, BSE 500. Liquid stock price ≥ ₹50. Not under NCLT/DRT. Debt < 30% of market cap. Net profit positive in at least 1 of the last 3 quarters.
-3. **Time/Expiry**: 09:15 to 15:30 IST strict session. Remaining trading days exclude weekends and NSE holidays.
-4. **Shared Pipeline**: Master stock snapshot, Complete technicals, Forensic audit, Macro/Geopolitical context.
-5. **F&O Signals**: Index-level weighted views, realistic data-driven T1/T2 based on intraday behavior, expiry-aware Best Exit based on VIX-theta decay.
-6. **Multibagger & Portfolio**: Forensic/quality filters, realistic multi-horizon price bands, portfolio risk metrics (Beta, Sharpe, VaR, max drawdown).
+## Core Requirements (User-Stated)
+1. **All analytics in Python backend** — never in LLM or frontend
+2. **Market universe**: NIFTY 500, NIFTY 50, BANKNIFTY, BSE 500 only
+3. **Data policy**: Kite Connect API is the ONLY preferred/verified live source. yfinance is fallback only when Kite unavailable.
+4. **F&O signals**: Include PCR, IV Rank, Max Pain, GEX, OI buildup classification
+5. **Forensic filters**: Piotroski, Beneish, Altman scores for multibagger/portfolio
+6. **NSE Holidays**: MongoDB-backed auto-fetch with background updater
+7. **No frontend UI changes** unless explicitly requested
 
-## User Personas
-- Primary: Admin/Owner (role: "owner") — manages users, triggers signals
-- Secondary: Sub-users (role: "user") — consume signals, analyze portfolios
-
-## Tech Stack
-- **Frontend**: React (App.js now modular)
-- **Backend**: FastAPI (server.py with modular services)
-- **Database**: MongoDB
-- **Live Data**: Kite Connect API v3 (primary), `yfinance` (fallback)
-- **Auth**: JWT-based (username + PIN)
-
----
-
-## Architecture (Current State — Post Refactoring)
-
+## Architecture
 ```
 /app
 ├── backend/
-│   ├── models/
-│   │   └── __init__.py         ← All 31 Pydantic models (428 lines)
 │   ├── services/
-│   │   ├── research_engine.py  ← Thin orchestrator (137 lines, re-exports all batches)
-│   │   ├── indicators.py       ← Basic indicators: RSI, MACD, BB, ATR, etc. (516 lines)
-│   │   ├── advanced_indicators.py ← Batch 1: Williams %R, Ichimoku, Fibonacci... (607 lines)
-│   │   ├── technical_core.py   ← Full snapshot, confluence, portfolio verdict (555 lines)
-│   │   ├── forensic_audit.py   ← Batch 2: Altman Z, Piotroski, Beneish (435 lines)
-│   │   ├── macro_context.py    ← Batch 3: Regime, SECTOR_MACRO_IMPACT_MAP (339 lines)
-│   │   ├── portfolio_risk.py   ← Batch 4: Correlation, Stress Tests, Diversification (483 lines)
-│   │   ├── strategy_library.py ← Batch 5: 13 strategies, State Machine, Weights (601 lines)
-│   │   ├── market_data.py
-│   │   ├── data_verifier.py
-│   │   └── holiday_manager.py  ← MongoDB NSE holiday storage + background auto-fetcher
+│   │   ├── market_data.py          # Kite Connect integration
+│   │   ├── research_engine.py      # Core analytics engine
+│   │   ├── data_verifier.py        # ATR, theta, VIX computations
+│   │   ├── indicators.py           # compute_realistic_price_bands (VIX-scaled)
+│   │   ├── technical_core.py       # RSI, trend_alignment, full tech snapshot
+│   │   ├── forensic_audit.py       # Piotroski, Beneish, Altman
+│   │   ├── macro_context.py        # Macro/geopolitical context
+│   │   ├── strategy_library.py     # Strategy thresholds (≥75% win, ≥0.40R)
+│   │   └── holiday_manager.py      # NSE holiday auto-fetch
 │   ├── tests/
-│   ├── .env
-│   ├── requirements.txt
-│   └── server.py               ← Main API routes (6654 lines, models extracted)
+│   │   └── test_iteration28_fno_analytics.py
+│   └── server.py                   # MONOLITH: ~7580 lines
 └── frontend/
-    ├── src/
-    │   ├── utils/
-    │   │   ├── formatters.js   ← Format utilities (72 lines)
-    │   │   └── exportUtils.js  ← F&O export (CSV/XLS/JPG) (136 lines)
-    │   ├── components/
-    │   │   ├── shared/
-    │   │   │   └── LiveInfoBox.jsx ← Live option LTP display component
-    │   │   └── ui/             ← shadcn components
-    │   ├── App.js              ← Main component (2521 lines, down from 2770)
-    │   ├── App.css
-    │   └── index.js
+    └── src/App.js                  # MONOLITH: ~2600 lines
 ```
 
----
+## What's Been Implemented (Chronological)
 
-## Key API Endpoints
-- `POST /api/auth/access` — Login
-- `GET /api/fno/generate` (POST) — Generate F&O signals
-- `GET /api/multibagger` — Multibagger screener
-- `POST /api/portfolio/analyze` — Portfolio analysis
-- `GET /api/admin/nse-holidays` — NSE holiday list
-- `POST /api/admin/nse-holidays/refresh` — Refresh holidays from NSE
-- `GET /api/admin/strategy-stats` — 13-strategy backtest stats
+### Session (Feb–Apr 2026)
+- ✅ JWT Auth, User Management (Admin/User roles)
+- ✅ Kite Connect API v3 integration (OAuth flow + access token mgmt)
+- ✅ F&O Signal Generation (78% confluence minimum enforcement)
+- ✅ NSE Holiday Management (MongoDB-backed, auto-fetch background task)
+- ✅ Master Spec Batches A-C (Forensics, Macro Context, Confluence Scoring)
+- ✅ Admin Macro Events Panel (toggle/manage active events)
+- ✅ F&O Export (PDF + Word, 14-column standardized layout)
+- ✅ F&O Target Generation Audit (removed hardcoded %, pure ATR/VIX/Theta math)
+- ✅ Custom F&O Positions (create, refresh, sell, close, delete)
+- ✅ Portfolio Analysis (Beta, Sharpe, VaR, max drawdown, correlation matrix)
+
+### Apr 2026 — Current Session (Iteration 28)
+- ✅ **P0 Bug Fix**: Custom F&O `best_exit_price` was showing BELOW current LTP (formula subtracted theta from current LTP instead of ATR-projected max). Fixed both the main path and the LIVE_LTP_UNAVAILABLE early-return path.
+- ✅ **P0 Feature**: `compute_option_chain_analytics()` — pure Python computation of Max Pain, PCR, IV Rank, GEX, OI Buildup from live Kite OI/IV/Gamma data
+- ✅ **P0 Feature**: `FNOSignalResponse` extended with `max_pain`, `iv_rank`, `oi_buildup`, `gex` fields
+- ✅ **P0 Feature**: Index F&O signals now use `compute_option_chain_analytics` (full chain)
+- ✅ **P0 Feature**: Individual stock F&O signals now fetch ±5-strike chain for analytics
+- ✅ **P0 Feature**: Kite equity live data as primary source (`_fetch_kite_equity_core` via `NSE:SYMBOL` format)
+- ✅ **P0 Feature**: Kite historical OHLCV as primary source (`_fetch_kite_hist_ohlcv_for_equity`), yfinance fallback
+- ✅ **P0 Feature**: NSE equity instrument tokens stored in `kite_equity_master` MongoDB collection (via `_sync_kite_option_master_daily`)
+- ✅ **P0 Feature**: `_get_hist_ohlcv` now tries Kite FIRST, then yfinance (Data Failover Policy)
+- ✅ **P0 Feature**: F&O Strategy Thresholds strictly enforced — signals blocked (422) when backtest data shows no strategy passes ≥75% win-rate / ≥0.40R expectancy
+- ✅ **P0 Feature**: Multibagger RSI fix — uses real RSI from historical data (`fundamental.get('rsi')`) instead of fake 52W-position-to-RSI proxy
+- ✅ **P0 Feature**: VIX-scaled price bands — `compute_realistic_price_bands` now scales `hist_vol` when India VIX > 15
+- ✅ **P0 Feature**: `_fetch_hist_one` now returns `{hist_vol, rsi, trend_alignment}` dict (was just float)
+- ✅ **P0 Fix**: DB startup cleanup — purges garbage positions (`buy_price≥999000` or null `expiry_date`)
 
 ## Key DB Schema
-- **users**: `{username, role, credits, created_at}`
-- **custom_positions**: `{user_id, script, buy_price, quantity_lots, status, signal_state}`
-- **kite_option_master**: `{underlying, expiry, strike, option_type, tradingsymbol, instrument_token, lot_size}`
-- **fundamental_cache**: `{symbol, ltp, pe_ratio, eps, total_debt_to_equity, recent_profit_positive, altman_z_score, earnings_quality, roic, fcf_yield}`
-- **strategy_stats**: `{strategy_id, win_rate, expectancy, total_trades, disabled}`
+- **users**: `{username, role, credits}`
+- **custom_positions**: `{script, underlying, buy_price, quantity_lots, status, best_exit_price, target1, target2, remaining_trading_days, ...}`
+- **macro_events**: Active toggled macro events
+- **strategy_backtest**: Trade records for strategy win-rate/expectancy enforcement
+- **kite_option_master**: F&O option contract tokens (daily sync from Kite)
+- **kite_equity_master**: NSE equity instrument tokens (daily sync from Kite) ← NEW
 - **nse_holidays**: `{date (YYYY-MM-DD), description, source, year}`
+- **hist_ohlcv_cache**: 12h MongoDB cache for historical OHLCV
 
----
+## Key API Endpoints
+- `POST /api/fno/generate` — Generate F&O signals
+- `GET /api/fno/signals/index` — NIFTY/BANKNIFTY constituent-weighted signals
+- `GET /api/fno/custom-positions` — Open custom F&O positions
+- `POST /api/fno/custom-position` — Create custom position
+- `GET /api/multibagger/screen` — Multibagger candidates
+- `GET /api/portfolio/analyze` — Portfolio risk analytics
+- `GET /api/admin/nse-holidays` — View NSE holiday list
+- `POST /api/admin/nse-holidays/refresh` — Force refresh holiday list
+- `GET /api/admin/macro-events` — View/toggle macro events
 
-## What's Been Implemented (Changelog)
+## Testing Status
+- **Iteration 28** (Apr 2026): 47/49 tests pass
+  - 1 expected skip (Kite not authenticated → no signals)
+  - 1 infrastructure note (502 timeout on heavy /fno/generate in preview env)
+  - All P0 features confirmed via code inspection + API tests
+- **Iteration 27**: 46/46 backend tests (F&O Target Generation Audit)
 
-### 2025 Q1 — Initial Build
-- JWT authentication (owner + sub-user roles)
-- Kite Connect API v3 integration
-- Basic F&O signal generation
+## Prioritized Backlog
 
-### 2025 Q2-Q3 — Master Spec Implementation
-- **Batch 1**: Advanced Technical Analysis (Ichimoku, Fibonacci, Candlestick Patterns, RSI Divergence, Multi-timeframe Trend)
-- **Batch 2**: Forensic Financial Audit (Altman Z-Score, Beneish M-Score, Piotroski F-Score, ROIC vs WACC)
-- **Batch 3**: Macro & Regime Context (8-regime classifier, SECTOR_MACRO_IMPACT_MAP with 15 events)
-- **Batch 4**: Portfolio Risk Analytics (Correlation Matrix, 5 Stress Scenarios, Diversification Audit)
-- **Batch 5**: Strategy Library (13 strategies, Signal State Machine, Constituent-weighted NIFTY/BANKNIFTY bias)
-- NSE Holiday Management (MongoDB-backed, background auto-fetcher for FY 2026-2027)
+### P1 — Next Priorities
+- **Codebase refactoring**: Split server.py (~7580 lines) into `routes/` directory
+  - `/app/backend/routes/fno.py`
+  - `/app/backend/routes/multibagger.py`
+  - `/app/backend/routes/portfolio.py`
+  - `/app/backend/routes/auth.py`
+  - `/app/backend/routes/admin.py`
+- **Position Sizing Calculator**: Risk-based position sizing logic
 
-### 2026 Feb — Codebase Refactoring
-- **research_engine.py** (3682 lines) → 8 modular files (avg ~500 lines each)
-- **server.py models** → extracted to `backend/models/__init__.py` (384 lines saved)
-- **App.js utilities** → extracted to `src/utils/formatters.js`, `src/utils/exportUtils.js`, `src/components/shared/LiveInfoBox.jsx` (250 lines saved)
-- All tests pass: 40/40 regression tests (Iteration 21)
-
-### 2026 Apr — F&O Target Generation Audit & Fix (Iteration 27)
-- **No fixed % floors**: `compute_atr_based_fno_targets` rewritten. Removed hardcoded 3%/8% floors and 8%/22%/30% fallback multipliers. Now uses IV-daily-move model when ATR unavailable (sigma_daily = VIX/100/√252 × underlying × delta × time_factor).
-- **Pre-market session close**: `get_minutes_to_session_close()` now returns 375 (full session) when called before 09:15 IST, instead of 0. Prevents targets from using full expiry duration as session horizon.
-- **Calendar-day theta decay**: `compute_vix_theta_decay` upgraded with `calendar_days_to_expiry` and `calendar_best_exit_days` params. Options now decay over weekends and NSE holidays (calendar year / 365 convention). Backward compatible (defaults=None).
-- **ATR-based stop loss**: `build_fno_signal` stop_loss now uses `entry - max(1.5×ATR×delta, 7%)` capped at 25% from entry. Replaces fixed `entry × 0.80`.
-- **Tiered initial option targets**: `_compute_initial_option_targets` and `_compute_initial_option_sl` added. Entry=38 → T1=44, T2=52, SL=32 (not old *1.12/*1.5/*0.88). Covers 6 price tiers.
-- **Tier-based URGENT EXIT optimal_advised_price**: 60-second window price based on option LTP tier (₹0.20–₹2.00 or 0.7% for high-priced), NOT fixed 3%.
-- **near_expiry_badge field**: Added to `FNOSignalResponse` model (bool, default False). Set True when remaining_trading_days ≤ 2.
-- All 46 tests pass (iteration 27).
-
-
-- **Admin Macro Events Panel**: Added "Active Macro Events" card in Admin page (owner-only). Shows all 15 events as toggle buttons with intensity badges (LOW/MEDIUM/HIGH/CRITICAL), descriptions, and beneficiary sectors. One-click toggle saves instantly to MongoDB via POST /api/admin/macro-events/update. Active events highlighted with cyan border. Active summary bar shows current event keys. Refresh button available.
-- **F&O Export: PDF & Word Added**: Installed `jspdf`, `jspdf-autotable`, `docx` packages. Added `exportFnoAsPDF` (landscape A4, styled header, alternating rows, footer note) and `exportFnoAsWord` (DOCX table with dark header, styled rows) to `exportUtils.js`. Export menu now shows 5 options: CSV, XLS, PDF, Word, JPG.
-- **Column Re-ordering (14 cols, all formats)**: `buildExportRow` updated to Master Spec order: Script → Bias → Lot → Entry₹ → SL → T1 → T2 → Investment₹ → T1% → T1 Profit₹ → T2% → T2 Profit₹ → Conf → Bias Point (underlying_bias_score). XLS col widths and merge range updated to 14 cols.
-- All tests passing: 19/19 backend, all UI admin panel tests passed (iteration 26).
-
-
-- **Batch A — Active Macro Events Management**: Replaced `active_events=[]` hardcoded empty in `build_fno_signal` and `compute_multibagger_analysis`. Added `_get_active_macro_events()` helper reading from MongoDB `macro_config` collection. Added admin endpoints `GET /api/admin/macro-events` (returns all 15 events + active flags) and `POST /api/admin/macro-events/update` (validates keys against SECTOR_MACRO_IMPACT_MAP, persists to DB). All 3 `build_fno_signal` callers updated to pass `fundamental` parameter (fixing pre-existing NameError). `compute_multibagger_analysis` now accepts `active_macro_events` param.
-- **Batch B — Forensic Scores in Confluence Scoring**: `_calculate_confluence_score_master_spec` now accepts `piotroski_score`, `beneish_m_score`, `altman_z_zone` params. `fundamental_score` component now uses real forensic data (Piotroski ≥7→10pts, ≥5→7pts, ≥3→4pts, <3→2pts; Beneish manipulation -3; Altman DISTRESS -4, SAFE +2; cap 10). Falls back to 52W proxy when no forensic data. Also fixed pre-existing bug: Batch 1 tech vars (`ts`, `_cci`, `_ichimoku`, etc.) were undefined in function scope — fixed by adding `tech_snapshot: dict | None = None` param.
-- **Batch C — Strategy Threshold Enforcement**: `_get_strategy_stats_for_selection()` now reads from `strategy_backtest` collection (same as admin endpoint) and aggregates win_rate/expectancy. Passed to `select_strategy_for_signal()` so strategies with <75% win rate / <0.40R expectancy are excluded from signal selection.
-- All 37 tests pass (iteration 25).
-
-
-- **Portfolio price bands**: Fixed broken update path — `expected_ranges` was always using static fallback due to wrong dict keys (`band.get("high")` → non-existent). Restructured `_analyze_portfolio_positions` to fetch hist_vol + Piotroski + RSI + trend FIRST, then compute `_portfolio_horizon_ranges()` in a single correct call.
-- **Quality-adjusted drift**: `compute_realistic_price_bands()` now computes drift per-stock based on Piotroski F-Score (+3%/-4%), RSI (overbought/oversold ±2.5%), trend alignment (±2.5-4%), and Beneish M-Score (-5% penalty). Was fixed 7% for all stocks.
-- **Multibagger custom-search**: Now fetches 1Y hist OHLCV to inject actual `hist_vol`, `rsi`, and `trend_alignment` into vol_bands (RELIANCE: 20.3% actual vol, 11% drift — was 30% fallback, 7% fixed).
-- **F&O T1/T2 formula**: Fixed fundamental math error — was computing `ATR% × entry_price × delta` (wrong scale). Now correctly computes `ATR_points × delta → absolute option gain`. NIFTY ATM: T1=+61% / T2=+122% (was stuck at +4%/+10% floor). Removed hard % caps (1.15x, 1.65x).
-- **F&O Best Exit**: Replaced fixed multipliers (1.4x/1.25x/1.15x) with `ATR × sqrt(days) × 2σ × delta` — dynamic projection per expiry and moneyness.
-- **Portfolio risk hist_vol**: Was hardcoded 0.30 for all holdings. Now uses actual per-stock computed hist_vol.
-- All 36 backend tests pass (Iteration 24).
-- **Portfolio Analysis Fix**: Fixed `NameError: _get_fundamental_cached` → corrected to `_get_fundamental_data` in `_analyze_portfolio_positions`. Manual portfolio entry (DMART, KAYNES, etc.) now returns HTTP 200 with full analysis.
-- **Custom F&O Alert Sound Upgrade**: Replaced single 0.5s beep with a rich 3-tier multi-tone engine: urgent exits → 3 rapid high-pitch square bursts; T1/T2 target hits → 3 ascending sine tones; warnings → 2 moderate triangle pulses. Now tracks ALL alert types (urgent, T1/T2 signal_state transitions, warnings) via separate refs.
-- All 16 backend tests pass (Iteration 23).
-- **Sector Momentum Dashboard**: New backend service `services/sector_momentum.py` — computes 1W/1M/3M returns, RSI(14), ADX(14), momentum score (0-100), direction for 15 NSE sectors using yfinance. 30-min dual-layer cache (in-memory + MongoDB). New API: `GET /api/sector-momentum`. New "Sectors" nav tab + sector grid UI.
-- **Multi-horizon Price Bands**: Added `vol_bands` field to `MultibaggerCandidate` response model. Full Conservative/Expected/Optimistic price band table (6 horizons) now shown as expandable row in Multibagger page and Custom Stock Search panel. Based on historical volatility (σ-scaled).
-- All 36 tests pass (Iteration 22).
-
----
-
-## Prioritized Backlog (ROADMAP)
-
-### P0 (Must Have — Next Sprint)
-- **server.py Route Extraction**: Move 49+ route handlers from server.py to `routes/` directory. Need to create `core/database.py` (db connection) and move helpers to `core/` modules. File is ~6,960 lines.
-
-### P1 (High Value)
-- **Position Sizing Calculator**: Based on risk %, lot size, and ATR.
-
-### P1 (High Value)
-- **Position Sizing Calculator**: Based on risk %, lot size, and ATR.
-- **Multi-horizon Price Bands**: ✅ DONE (Feb 2026)
-
-### P2 (Future)
-- **Sector Momentum Dashboard**: ✅ DONE (Feb 2026)
-- **server.py helper extraction**: Move business logic helpers to `core/kite_helpers.py`, `core/fno_helpers.py`, etc.
-- **Frontend page components**: Extract FNO page, Multibagger page, Portfolio page, Admin page to separate React component files.
-
----
+### P2 — Future Tasks
+- **App.js refactoring**: Split into separate page components
+- **Sector Momentum Dashboard**: Sector rotation visualization
+- **Streaming response for /fno/generate**: Avoid gateway timeouts in production (2.5min+ computation)
+- **52-week historical IV data**: For proper IV Rank (currently uses within-chain proxy)
 
 ## Known Constraints
-- Strict: ALL analytical metrics MUST be calculated mathematically in Python. No LLM estimation.
-- No UI changes: Frontend appearance must be preserved exactly.
-- Kite Connect API key required for live data; yfinance is the fallback.
-- NSE Holiday list auto-refreshes 1 week before April 1st each year.
+- Kite Connect API requires daily login (OAuth) for access token
+- Without valid Kite session: option analytics (max_pain, iv_rank, gex, oi_buildup) return null
+- Without valid Kite session: live equity prices fall back to Moneycontrol/RapidAPI
