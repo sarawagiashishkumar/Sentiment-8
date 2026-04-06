@@ -103,6 +103,11 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - **App.js utilities** → extracted to `src/utils/formatters.js`, `src/utils/exportUtils.js`, `src/components/shared/LiveInfoBox.jsx` (250 lines saved)
 - All tests pass: 40/40 regression tests (Iteration 21)
 
+### 2026 Feb — Sector Momentum & Price Bands (Iteration 22)
+- **Sector Momentum Dashboard**: New backend service `services/sector_momentum.py` — computes 1W/1M/3M returns, RSI(14), ADX(14), momentum score (0-100), direction for 15 NSE sectors using yfinance. 30-min dual-layer cache (in-memory + MongoDB). New API: `GET /api/sector-momentum`. New "Sectors" nav tab + sector grid UI.
+- **Multi-horizon Price Bands**: Added `vol_bands` field to `MultibaggerCandidate` response model. Full Conservative/Expected/Optimistic price band table (6 horizons) now shown as expandable row in Multibagger page and Custom Stock Search panel. Based on historical volatility (σ-scaled).
+- All 36 tests pass (Iteration 22).
+
 ---
 
 ## Prioritized Backlog (ROADMAP)
@@ -112,10 +117,10 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 
 ### P1 (High Value)
 - **Position Sizing Calculator**: Based on risk %, lot size, and ATR.
-- **Multi-horizon Price Bands**: Compute realistic 1W/1M/3M/6M/9M/1Y price bands for Multibagger and Portfolio views.
+- **Multi-horizon Price Bands**: ✅ DONE (Feb 2026)
 
 ### P2 (Future)
-- **Sector Momentum Dashboard**: Track sector-wise momentum scores.
+- **Sector Momentum Dashboard**: ✅ DONE (Feb 2026)
 - **server.py helper extraction**: Move business logic helpers to `core/kite_helpers.py`, `core/fno_helpers.py`, etc.
 - **Frontend page components**: Extract FNO page, Multibagger page, Portfolio page, Admin page to separate React component files.
 
