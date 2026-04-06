@@ -39,6 +39,7 @@ import {
 } from "./utils/formatters";
 import {
   collectAllFnoSignals, exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG,
+  exportFnoAsPDF, exportFnoAsWord,
 } from "./utils/exportUtils";
 import { LiveInfoBox } from "./components/shared/LiveInfoBox";
 
@@ -119,6 +120,9 @@ export default function App() {
   const [adminError, setAdminError] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminConfig, setAdminConfig] = useState(null);
+  // Macro Events state
+  const [macroEventsData, setMacroEventsData] = useState({ active_events: [], all_events: [] });
+  const [macroEventsSaving, setMacroEventsSaving] = useState(false);
   const [sectorMomentumData, setSectorMomentumData] = useState(null);
   const [sectorMomentumLoading, setSectorMomentumLoading] = useState(false);
   const [sectorMomentumError, setSectorMomentumError] = useState("");
@@ -280,6 +284,7 @@ export default function App() {
   useEffect(() => {
     if (currentPage === "admin" && token) {
       checkKiteStatus();
+      loadMacroEvents();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, token]);
@@ -651,6 +656,30 @@ export default function App() {
       }
     } catch (error) {
       setAdminError(error?.response?.data?.detail || "Unable to load admin config");
+    }
+  };
+
+  const loadMacroEvents = async () => {
+    try {
+      const response = await axios.get(`${API}/admin/macro-events`, { headers: authHeaders });
+      setMacroEventsData(response.data);
+    } catch (error) {
+      // Non-critical: silently skip
+    }
+  };
+
+  const toggleMacroEvent = async (key) => {
+    const current = macroEventsData.active_events || [];
+    const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+    setMacroEventsData((prev) => ({ ...prev, active_events: next }));
+    setMacroEventsSaving(true);
+    try {
+      await axios.post(`${API}/admin/macro-events/update`, { events: next }, { headers: authHeaders });
+    } catch (error) {
+      // Revert on error
+      setMacroEventsData((prev) => ({ ...prev, active_events: current }));
+    } finally {
+      setMacroEventsSaving(false);
     }
   };
 
@@ -1869,6 +1898,8 @@ export default function App() {
                           {[
                             { label: "Export as CSV", ext: "csv", icon: "📄", testid: "export-csv" },
                             { label: "Export as XLS", ext: "xls", icon: "📊", testid: "export-xls" },
+                            { label: "Export as PDF", ext: "pdf", icon: "📑", testid: "export-pdf" },
+                            { label: "Export as Word", ext: "doc", icon: "📝", testid: "export-doc" },
                             { label: "Export as JPG", ext: "jpg", icon: "🖼", testid: "export-jpg" },
                           ].map(({ label, ext, icon, testid }) => (
                             <button
@@ -1879,6 +1910,8 @@ export default function App() {
                                 setExportMenuOpen(false);
                                 if (ext === "csv") exportFnoAsCSV(fnoData);
                                 else if (ext === "xls") exportFnoAsXLS(fnoData);
+                                else if (ext === "pdf") exportFnoAsPDF(fnoData);
+                                else if (ext === "doc") exportFnoAsWord(fnoData);
                                 else exportFnoAsJPG(exportTableRef);
                               }}
                             >
@@ -2775,6 +2808,94 @@ export default function App() {
                 </CardContent>
               </Card>
             ) : null}
+
+            {isOwner && (
+              <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="admin-macro-events-card">
+                <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+                  <div>
+                    <CardTitle className="text-white">Active Macro Events</CardTitle>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Toggle events to influence sector macro bias in F&amp;O signals and Multibagger analysis. Changes apply instantly.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {macroEventsSaving && (
+                      <span className="text-xs text-cyan-400" data-testid="macro-events-saving">Saving…</span>
+                    )}
+                    <Button
+                      type="button"
+                      onClick={loadMacroEvents}
+                      className="bg-slate-800 text-slate-100 hover:bg-slate-700 h-8 px-3 text-xs"
+                      data-testid="admin-macro-events-refresh"
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {macroEventsData.active_events.length > 0 && (
+                    <div className="mb-3 flex flex-wrap gap-1.5" data-testid="macro-events-active-summary">
+                      <span className="text-xs text-slate-500">Active:</span>
+                      {macroEventsData.active_events.map((key) => (
+                        <span key={key} className="rounded-full bg-cyan-900/60 px-2 py-0.5 text-xs font-medium text-cyan-300 border border-cyan-700/50">
+                          {key}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3" data-testid="macro-events-grid">
+                    {(macroEventsData.all_events || []).map((event) => {
+                      const isActive = macroEventsData.active_events.includes(event.key);
+                      const intensityColor = {
+                        CRITICAL: "text-rose-400 border-rose-700/60 bg-rose-950/40",
+                        HIGH: "text-orange-400 border-orange-700/60 bg-orange-950/40",
+                        MEDIUM: "text-yellow-400 border-yellow-700/60 bg-yellow-950/40",
+                        LOW: "text-slate-400 border-slate-700/60 bg-slate-900/40",
+                      }[event.intensity] || "text-slate-400 border-slate-700/60 bg-slate-900/40";
+
+                      return (
+                        <button
+                          key={event.key}
+                          type="button"
+                          data-testid={`macro-event-toggle-${event.key}`}
+                          onClick={() => toggleMacroEvent(event.key)}
+                          className={`flex items-start justify-between rounded-lg border p-2.5 text-left transition-all ${
+                            isActive
+                              ? "border-cyan-500 bg-cyan-900/30 ring-1 ring-cyan-500/40"
+                              : "border-slate-700 bg-slate-900/60 hover:border-slate-600"
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`text-xs font-semibold ${isActive ? "text-cyan-300" : "text-slate-300"}`}>
+                                {event.key}
+                              </span>
+                              <span className={`rounded px-1 py-px text-[10px] font-medium border ${intensityColor}`}>
+                                {event.intensity}
+                              </span>
+                            </div>
+                            {event.description && (
+                              <p className="mt-0.5 text-[11px] text-slate-500 leading-tight line-clamp-2">{event.description}</p>
+                            )}
+                            {event.beneficiaries?.length > 0 && (
+                              <p className="mt-0.5 text-[10px] text-emerald-500/80">
+                                + {event.beneficiaries.slice(0, 3).join(", ")}
+                              </p>
+                            )}
+                          </div>
+                          <div className={`ml-2 mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 transition-colors ${
+                            isActive ? "border-cyan-400 bg-cyan-400" : "border-slate-600 bg-transparent"
+                          }`} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {macroEventsData.all_events.length === 0 && (
+                    <p className="text-xs text-slate-500" data-testid="macro-events-empty">No events loaded. Click Refresh to load.</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {isOwner && (
               <Card className="result-card border-slate-800 bg-slate-950/70">
