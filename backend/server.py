@@ -58,6 +58,15 @@ from services.research_engine import (
     compute_realistic_price_bands,
     compute_technical_confluence_bonus,
 )
+from services.data_verifier import (
+    fetch_verified_price,
+    fetch_verified_snapshot,
+    compute_vix_theta_decay,
+    compute_dynamic_target_revision,
+    get_minutes_to_session_close,
+    is_market_open,
+    get_market_session_status,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -89,9 +98,17 @@ NSE_HOLIDAYS: set[str] = {
     "2025-04-14", "2025-04-18", "2025-05-01", "2025-08-15",
     "2025-10-02", "2025-10-24", "2025-10-25", "2025-11-05",
     # 2026
-    "2026-01-26", "2026-02-19", "2026-03-25", "2026-04-06",
-    "2026-04-10", "2026-04-14", "2026-05-01", "2026-08-15",
-    "2026-10-02", "2026-11-04", "2026-11-05", "2026-11-24",
+    "2026-01-26",             # Republic Day
+    "2026-02-19",             # Maha Shivaratri
+    "2026-03-25",             # Holi
+    "2026-04-03",             # Good Friday (NSE verified 2026 calendar)
+    "2026-04-14",             # Dr. Ambedkar Jayanti / Ram Navami
+    "2026-05-01",             # Maharashtra Day / Labour Day
+    "2026-08-15",             # Independence Day
+    "2026-10-02",             # Gandhi Jayanti
+    "2026-10-23",             # Diwali (Laxmi Pujan - tentative, NSE announces annually)
+    "2026-11-04",             # Gurunanak Jayanti (tentative)
+    "2026-11-24",             # Gurunanak Jayanti observed (tentative)
     # 2027
     "2027-01-26", "2027-03-16", "2027-04-02", "2027-04-14",
     "2027-05-01", "2027-08-15", "2027-10-02",
@@ -657,6 +674,7 @@ class FNOGenerateResponse(BaseModel):
     stock_signals: List[FNOSignalResponse]
     no_signals_alert: str | None = None  # Alert when no signals pass 78% confluence
     market_regime: dict | None = None    # VIX-based regime classification
+    market_session: dict | None = None   # Current session status (is_open, minutes_to_close)
 
 
 class PortfolioPositionInput(BaseModel):
@@ -3917,16 +3935,22 @@ async def build_fno_signal(
     tech_stoch = ts.get("stochastic") or {}
     
     # ── ATR-based targets (data-driven, not fixed %) ──────────────────────
+    # Use min(minutes_to_expiry, minutes_to_session_close) for intraday realism
+    mins_to_session_close = get_minutes_to_session_close()
+    effective_minutes = (
+        min(minutes_to_expiry, mins_to_session_close)
+        if mins_to_session_close > 0
+        else minutes_to_expiry
+    )
     target1, target2 = compute_atr_based_fno_targets(
         entry_price=entry_price,
         underlying_ltp=float(underlying_ltp),
         atr=underlying_atr,
-        minutes_to_expiry=minutes_to_expiry,
+        minutes_to_expiry=effective_minutes,
         option_type=contract.option_type,
         vix=india_vix,
     )
     
-
     stop_loss = round(entry_price * 0.80, 2)
     
     if target1 > option_ltp * 1.20:
@@ -3969,17 +3993,28 @@ async def build_fno_signal(
     max_ltp_projection = round(entry_price * max_ltp_multiplier, 2)
     max_ltp_projection = min(max_ltp_projection, target2)
 
-    # Theta decay: daily theta ≈ (entry premium / (remaining days + 1)) × 0.15
+    # Theta decay: VIX-based model (not fixed multiplier)
     if remaining_trading_days > 0 and best_exit_days > 0:
-        daily_theta = (entry_price / (remaining_trading_days + 1)) * 0.15
-        theta_decay = round(daily_theta * best_exit_days, 2)
-        best_exit_price = round(max(max_ltp_projection - theta_decay, entry_price * 1.02), 2)
+        theta_decay, theta_method = compute_vix_theta_decay(
+            entry_price=entry_price,
+            remaining_trading_days=remaining_trading_days,
+            best_exit_days=best_exit_days,
+            india_vix=india_vix,
+            iv_override=ts.get("iv") if ts else None,
+        )
+        best_exit_price = round(max(max_ltp_projection - theta_decay, entry_price * 1.01), 2)
     else:
+        theta_decay = 0.0
+        theta_method = "none"
         best_exit_price = max_ltp_projection
 
     # Compute actual calendar date for best exit
     best_exit_date_obj = get_nth_trading_day_from_today(best_exit_days) if best_exit_days and best_exit_days > 0 else None
     best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y") if best_exit_date_obj else None
+
+    # Add theta method to trigger_factors for signal transparency
+    if theta_method and theta_method != "none":
+        trigger_factors.append(f"ThetaModel={theta_method}")
 
     underlying_day_change_pct = None
     if stock_core.prev_close and stock_core.prev_close > 0:
@@ -5011,8 +5046,49 @@ async def _refresh_open_position(position: dict) -> dict:
         best_exit_date_obj = get_nth_trading_day_from_today(best_exit_days)
         best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y")
 
+    # ── Dynamic target revision (increase T1/T2 when market is favorable) ─
+    dynamic_revision_note: str | None = None
+    revised_exit_plan: str = "Hold with trailing stop once target1 hits"
+    try:
+        now_ist = datetime.now(IST)
+        session_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+        mins_to_close = max(0, int((session_close - now_ist).total_seconds() / 60))
+        india_vix_for_pos = await _get_india_vix()
+        # Get underlying LTP for dynamic revision
+        underlying_sym = position.get("underlying") or position.get("script", "").split("2")[0][:10]
+        underlying_core = None
+        if underlying_sym:
+            try:
+                underlying_core = await _get_stock_core_cached(underlying_sym.upper())
+            except Exception:
+                pass
+        underlying_ltp_val = float(underlying_core.get("ltp", 0) or 0) if underlying_core else 0.0
+        underlying_entry_val = float(position.get("underlying_entry_price", underlying_ltp_val) or underlying_ltp_val)
+        option_type_pos = "CE" if "CE" in position.get("script", "").upper() else "PE"
+        dir_pos = "BULLISH" if option_type_pos == "CE" else "BEARISH"
+        rev_t1, rev_t2, dynamic_revision_note = compute_dynamic_target_revision(
+            entry_price=buy_price,
+            current_ltp=latest_option_ltp,
+            current_t1=revised_target1,
+            current_t2=revised_target2,
+            underlying_ltp=underlying_ltp_val,
+            underlying_entry=underlying_entry_val,
+            india_vix=india_vix_for_pos,
+            minutes_to_session_close=mins_to_close,
+            remaining_trading_days=remaining_trading_days,
+            direction=dir_pos,
+        )
+        if rev_t1 > revised_target1:
+            revised_target1 = rev_t1
+        if rev_t2 > revised_target2:
+            revised_target2 = rev_t2
+        if dynamic_revision_note:
+            revised_exit_plan = dynamic_revision_note
+    except Exception as exc:
+        logger.warning("Dynamic target revision failed: %s", exc)
+
     alert = None
-    revised_exit_plan = "Hold with trailing stop once target1 hits"
+
     if pnl_pct <= -0.35 and recovery_potential <= 0.14:
         alert = "EXIT_NOW_HIGH_LOSS"
         projected_exit_price = round(max(latest_option_ltp * 1.03, latest_option_ltp + 1.0), 2)
@@ -5765,6 +5841,7 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
     # ── Market Regime classification ──────────────────────────────────────
     india_vix = await _get_india_vix()
     market_regime = classify_market_regime(vix=india_vix)
+    market_session = get_market_session_status()
 
     # ── No-signals alert with specific reason ─────────────────────────────
     no_signals_alert = None
@@ -5784,6 +5861,9 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
             reasons.append(f"Market in {regime} — directional setups lacking conviction; consider non-directional strategies")
         elif regime in ("CRASH_MODE",):
             reasons.append(f"Market in {regime} — extreme volatility; avoid aggressive directional entries")
+        # Session context
+        if not market_session.get("is_open"):
+            reasons.append(f"Market is currently CLOSED ({market_session.get('status', 'CLOSED')}) — signals based on last available prices")
         reason_text = " | ".join(reasons) if reasons else "Current market conditions do not meet minimum 78% confluence threshold"
         no_signals_alert = f"No script signals currently available. Reason: {reason_text}"
 
@@ -5800,6 +5880,7 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
         stock_signals=stock_signals,
         no_signals_alert=no_signals_alert,
         market_regime=market_regime,
+        market_session=market_session,
     )
 
 

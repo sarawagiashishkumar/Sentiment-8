@@ -1,0 +1,72 @@
+{
+  "summary": "Iteration 17: Full backend upgrade tests covering all 13 items from the review request. 62/62 tests passed. Verified: dual-source data_verifier.py architecture, NSE holiday correction (2026-04-06 removed, 2026-04-14 present), VIX-based theta decay formula (~17 vs old ~7 static), market session status at 19:56 IST (CLOSED), F&O generate response fields (market_session + market_regime), 78% confluence enforcement, ThetaModel tag in trigger_factors (source-verified), dynamic target revision T2 increase when LTP > T1, no_signals_alert with specific CLOSED reason, near-expiry badge logic via remaining_trading_days.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "item_1_dual_source_fetch_verified_price_signature": "PASS - async function with symbol/kite_api_key/access_token/exchange=NSE params",
+    "item_1_fetch_verified_price_fallback_empty_credentials": "PASS - source='yfinance'|'failed' with empty Kite creds",
+    "item_1_kite_primary_yfinance_fallback_architecture": "PASS - VerifiedPrice dataclass supports kite_ltp/fallback_ltp/discrepancy fields",
+    "item_2_2026_04_06_not_in_nse_holidays": "PASS - '2026-04-06' NOT present anywhere in server.py",
+    "item_3_2026_04_14_in_nse_holidays": "PASS - '2026-04-14' IS in NSE_HOLIDAYS (Dr. Ambedkar Jayanti)",
+    "item_3_get_remaining_trading_days_logic": "PASS - uses NSE_HOLIDAYS, skips 2026-04-14, does not skip 2026-04-06",
+    "item_4_vix_theta_greater_than_10": "PASS - compute_vix_theta_decay(100.0, 14, 7, india_vix=16.5) = ~16.97 (>10)",
+    "item_4_vix_theta_approximately_17": "PASS - value in range [14, 21], approximately 17",
+    "item_4_theta_method_contains_vix_tag": "PASS - theta_method contains 'VIX=16.5×1.10'",
+    "item_4_not_static_formula": "PASS - formula gives ~17 vs old static ~7",
+    "item_5_market_session_closed_at_1956_ist": "PASS - get_market_session_status() returns is_open=False, status='CLOSED'",
+    "item_5_minutes_to_close_zero_when_closed": "PASS - minutes_to_close=0 after market close",
+    "item_6_fno_response_has_market_session": "PASS - market_session dict present in FNOGenerateResponse",
+    "item_6_fno_response_has_market_regime": "PASS - market_regime dict present in FNOGenerateResponse",
+    "item_6_market_session_is_closed": "PASS - market_session.is_open=False, status='CLOSED' at 19:56 IST",
+    "item_7_stock_signals_confluence_ge_78": "PASS - No stock signals at market close (expected); all potential top_trades have confluence>=78",
+    "item_8_theta_model_tag_in_source": "PASS - 'ThetaModel=' confirmed in build_fno_signal trigger_factors append",
+    "item_9_dynamic_revision_increases_t2": "PASS - T2 revised 130→137.5 when LTP(120)>=T1(115), Trigger 1 fires",
+    "item_9_dynamic_revision_t2_calculation": "PASS - new_t2 = t1 + (t2-t1)*1.5 = 137.5 (isolated with VIX>22 to disable Trigger 2)",
+    "item_9_revision_note_present": "PASS - revision_note set when T1 achieved",
+    "item_10_is_market_open_false_after_hours": "PASS - is_market_open()=False at 19:56 IST",
+    "item_11_data_verifier_imports_cleanly": "PASS - all 7 symbols importable: fetch_verified_price, fetch_verified_snapshot, compute_vix_theta_decay, compute_dynamic_target_revision, get_minutes_to_session_close, is_market_open, get_market_session_status",
+    "item_12_no_signals_alert_specific_reason": "PASS - alert contains 'CLOSED' status and '78%' confluence reason",
+    "item_13_near_expiry_badge_remaining_trading_days": "PASS - FNOSignalResponse.remaining_trading_days: int drives near-expiry badge (<=2 threshold)"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17_backend_upgrade.py",
+    "/app/test_reports/pytest/iteration17_results.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "data_verifier.py: clean architecture with 542 lines — well within file size guidelines",
+    "Dual-source architecture verified: Kite primary (8s timeout), yfinance fallback, parallel asyncio.gather",
+    "compute_vix_theta_decay formula: uses Black-Scholes ATM theta approximation: Θ = entry×σ/(2×√(T×252)); VIX scale=1.1 for 7<days<=21 and 1.25 for days<=7",
+    "Dynamic target revision T2 calculation: when both Trigger 1 AND Trigger 2 fire, the higher T2 wins (max of both); important behavioral note — india_vix=None is treated as 'calm' (not zero VIX risk)",
+    "NSE_HOLIDAYS 2026: 10 entries including all major national holidays; 2026-04-06 correctly excluded",
+    "FNOGenerateResponse: 3 new fields (no_signals_alert, market_regime, market_session) all Optional — backward compatible",
+    "ThetaModel= tag not visible in live signals at market close (no signals generated), but code logic is verified via source inspection",
+    "server.py is 6391 lines — significantly over 700 line guideline — recommend refactoring into separate modules (e.g., fno_logic.py, portfolio_logic.py, trading_helpers.py)"
+  ],
+
+  "updated_files": ["/app/backend/tests/test_iteration17_backend_upgrade.py"],
+
+  "success_rate": {
+    "backend": "100% (62/62 passed)",
+    "frontend": "N/A - backend-only test run"
+  },
+
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+
+  "context_for_next_testing_agent": "Iteration 17 tested all 13 backend upgrade items. All 62 tests pass. Key findings: (1) data_verifier.py imports cleanly with 7 functions exported. (2) NSE_HOLIDAYS: 2026-04-06 removed (correct), 2026-04-14 present (correct). (3) VIX theta: compute_vix_theta_decay(100,14,7,india_vix=16.5)=~16.97 (>10, not old static ~7). (4) Market session CLOSED at 19:56 IST verified. (5) F&O generate returns market_session+market_regime fields. (6) 78% confluence enforced. (7) ThetaModel= tag in trigger_factors (source-verified). (8) Dynamic target revision: T2 increases when LTP>=T1; NOTE: india_vix=None is treated as vix_calm=True in Trigger 2, so both triggers can fire simultaneously. (9) No-signals alert mentions CLOSED and 78% reasons. Test file: /app/backend/tests/test_iteration17_backend_upgrade.py."
+}
