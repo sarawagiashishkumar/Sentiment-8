@@ -103,7 +103,10 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - **App.js utilities** → extracted to `src/utils/formatters.js`, `src/utils/exportUtils.js`, `src/components/shared/LiveInfoBox.jsx` (250 lines saved)
 - All tests pass: 40/40 regression tests (Iteration 21)
 
-### 2026 Feb — Sector Momentum & Price Bands (Iteration 22)
+### 2026 Apr — Bug Fixes & Sound Upgrade (Iteration 23)
+- **Portfolio Analysis Fix**: Fixed `NameError: _get_fundamental_cached` → corrected to `_get_fundamental_data` in `_analyze_portfolio_positions`. Manual portfolio entry (DMART, KAYNES, etc.) now returns HTTP 200 with full analysis.
+- **Custom F&O Alert Sound Upgrade**: Replaced single 0.5s beep with a rich 3-tier multi-tone engine: urgent exits → 3 rapid high-pitch square bursts; T1/T2 target hits → 3 ascending sine tones; warnings → 2 moderate triangle pulses. Now tracks ALL alert types (urgent, T1/T2 signal_state transitions, warnings) via separate refs.
+- All 16 backend tests pass (Iteration 23).
 - **Sector Momentum Dashboard**: New backend service `services/sector_momentum.py` — computes 1W/1M/3M returns, RSI(14), ADX(14), momentum score (0-100), direction for 15 NSE sectors using yfinance. 30-min dual-layer cache (in-memory + MongoDB). New API: `GET /api/sector-momentum`. New "Sectors" nav tab + sector grid UI.
 - **Multi-horizon Price Bands**: Added `vol_bands` field to `MultibaggerCandidate` response model. Full Conservative/Expected/Optimistic price band table (6 horizons) now shown as expandable row in Multibagger page and Custom Stock Search panel. Based on historical volatility (σ-scaled).
 - All 36 tests pass (Iteration 22).
