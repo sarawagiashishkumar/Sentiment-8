@@ -38,7 +38,7 @@ import {
   heatmapClass, formatSignedPct, directionBadge, qualityBadge, scoreBadge,
 } from "./utils/formatters";
 import {
-  collectAllFnoSignals, exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG,
+  collectAllFnoSignals, buildExportRow, exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG,
   exportFnoAsPDF, exportFnoAsWord,
 } from "./utils/exportUtils";
 import { LiveInfoBox } from "./components/shared/LiveInfoBox";
@@ -2209,7 +2209,7 @@ export default function App() {
                 <table style={{ width: "100%", borderCollapse: "collapse", color: "#1A1A1A" }}>
                   <thead>
                     <tr style={{ background: "#1E3A5F" }}>
-                      {["Script", "Bias", "Lot", "Entry ₹", "Investment (₹)", "SL", "T1", "T1%", "T1 Profit ₹", "T2", "T2%", "T2 Profit ₹", "Conf"].map((h) => (
+                      {["Script", "Bias", "Lot", "Entry ₹", "SL", "T1", "T2", "Investment (₹)", "T1%", "T1 Profit ₹", "T2%", "T2 Profit ₹", "Conf", "Bias Point"].map((h) => (
                         <th key={h} style={{ border: "1px solid #d1d5db", padding: "6px 8px", textAlign: "center", fontWeight: "600", fontSize: "12px", color: "#FFFFFF" }}>{h}</th>
                       ))}
                     </tr>
@@ -2223,17 +2223,18 @@ export default function App() {
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", color: row["Bias"] === "BULLISH" ? "#059669" : "#dc2626", fontWeight: "600" }}>{row["Bias"]}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["Lot"]}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>₹{row["Entry ₹"]}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>₹{Number(row["Investment (₹)"]).toLocaleString("en-IN")}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#dc2626" }}>{row["SL"]}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["T1"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["T2"]}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>₹{Number(row["Investment (₹)"]).toLocaleString("en-IN")}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{Number(row["T1%"]).toFixed(2)}%</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T1 Profit ₹"]).toLocaleString("en-IN")}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["T2"]}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{Number(row["T2%"]).toFixed(2)}%</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T2 Profit ₹"]).toLocaleString("en-IN")}</td>
                           <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", fontWeight: "600", color: row["Conf"] >= 80 ? "#D97706" : "#1A1A1A" }}>
                             {row["Conf"] >= 80 ? "⭐ " : ""}{row["Conf"]}
                           </td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: row["Bias Point"] >= 0 ? "#2563EB" : "#EA580C" }}>{Number(row["Bias Point"]).toFixed(2)}</td>
                         </tr>
                       );
                     })}
