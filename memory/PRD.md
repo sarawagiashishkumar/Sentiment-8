@@ -105,6 +105,15 @@ plus Multibagger Screener and Portfolio Analysis for Indian equities.
 
 12. **Historical OHLCV Cache** — _get_hist_ohlcv() with 6h in-memory + 12h MongoDB cache
 
+### Session 4 Completions (2026-04-06)
+1. **NSE Holiday Calendar FY 2026-2027** — Corrected the hardcoded holiday list (old list had wrong dates: Feb 19 Shivaratri, Mar 25 Holi, Oct 23 Diwali). Now uses official NSE 2026 calendar (16 base holidays). Live NSE API fetch returned 20 total including Mahashivratri, Id-Ul-Fitr, Bakri Id, Muharram, Ganesh Chaturthi, Dussehra, Diwali-Balipratipada.
+2. **MongoDB-backed Holiday Storage** — `nse_holidays` collection stores holidays with fields: date, name, year, source, updated_at. Auto-seeds hardcoded defaults on first run.
+3. **Background Auto-Fetch Task** — Daily coroutine at 02:00 IST. During March 25-31 window (one week before April 1st), auto-fetches upcoming FY's holidays from NSE API (primary) + Zerodha (fallback). Also fetches if current year has 0 holidays loaded.
+4. **Admin Holiday Management Endpoints**:
+   - GET /api/admin/nse-holidays — View all holidays with source tracking
+   - POST /api/admin/nse-holidays/refresh?year=YYYY — Manual trigger for live fetch
+5. **Live Holiday Set in Trading Day Calc** — `get_remaining_trading_days()` and `get_nth_trading_day_from_today()` now read from the dynamic holiday set (MongoDB-backed) instead of static hardcoded values.
+
 ## Key API Endpoints
 - POST /api/auth/access — Login (username + pin)
 - POST /api/fno/generate — F&O signal generation (now includes market_regime + no_signals_alert)
@@ -113,6 +122,8 @@ plus Multibagger Screener and Portfolio Analysis for Indian equities.
 - POST /api/multibagger/custom-search — Custom search
 - POST /api/kite/refresh-option-master — Force re-sync (now stores instrument_token)
 - GET /api/kite/auth-url — Kite OAuth flow
+- GET /api/admin/nse-holidays — View all NSE holidays (admin)
+- POST /api/admin/nse-holidays/refresh?year=YYYY — Manual holiday refresh (admin)
 
 ## Key DB Schema
 - **app_users**: {username, hashed_pin, role, credits, created_by}
@@ -121,10 +132,13 @@ plus Multibagger Screener and Portfolio Analysis for Indian equities.
 - **system_meta**: {key: "kite_session", value: {access_token, ...}}
 - **fundamental_cache**: {symbol, roe, roce, piotroski_score, total_debt_to_market_cap (NEW), recent_profit_positive (NEW), revenue_cagr_3y (NEW), fcf_yield (NEW), ...}
 - **hist_ohlcv_cache**: {symbol, period, records, cached_at_ts} (NEW)
+- **nse_holidays**: {date (YYYY-MM-DD, unique index), name, year, source, updated_at} (NEW - Session 4)
 
 ## Architecture Files
-- /app/backend/server.py — Monolith: ~6310 lines (NEEDS REFACTORING - P2)
-- /app/backend/services/research_engine.py — New research engine
+- /app/backend/server.py — Monolith: ~6420 lines (NEEDS REFACTORING - P2)
+- /app/backend/services/research_engine.py — Research engine
+- /app/backend/services/data_verifier.py — Dual-source data verification
+- /app/backend/services/holiday_manager.py — NSE holiday management + background auto-updater (NEW - Session 4)
 - /app/backend/services/market_data.py — Market data helpers
 - /app/frontend/src/App.js — Frontend monolith: ~2700 lines (NEEDS REFACTORING - P2)
 - /app/frontend/src/App.css
@@ -154,3 +168,5 @@ plus Multibagger Screener and Portfolio Analysis for Indian equities.
 ## Test Reports
 - /app/test_reports/iteration_15.json — Session 1 final test (100% pass)
 - /app/test_reports/iteration_16.json — Session 2 final test (49/50 pass, 1 skip)
+- /app/test_reports/iteration_17.json — Session 3 final test (62/62 pass)
+- /app/test_reports/iteration_18.json — Session 4: NSE Holiday Management (21/21 pass)
