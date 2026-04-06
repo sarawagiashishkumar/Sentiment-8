@@ -2444,25 +2444,31 @@ async def _get_active_macro_events() -> list[str]:
 
 async def _get_strategy_stats_for_selection() -> dict[str, dict]:
     """
-    Load aggregated strategy backtest stats from MongoDB.
+    Load aggregated strategy backtest stats from MongoDB (strategy_backtest collection).
     Used by select_strategy_for_signal to enforce ≥75% win rate / ≥0.40R expectancy.
     Returns dict keyed by strategy_id.
     """
     try:
-        cursor = db["strategy_stats"].find({}, {"_id": 0})
-        records = await cursor.to_list(200)
+        records = await db.strategy_backtest.find({}, {"_id": 0}).to_list(length=500)
+        # Aggregate by strategy_id (same logic as admin endpoint)
+        agg: dict[str, dict] = {}
+        for r in records:
+            sid = r.get("strategy_id", "UNKNOWN")
+            if sid not in agg:
+                agg[sid] = {"wins": 0, "total_trades": 0, "total_r_multiple": 0.0, "disabled": False}
+            agg[sid]["total_trades"] += 1
+            if r.get("win"):
+                agg[sid]["wins"] += 1
+            agg[sid]["total_r_multiple"] += r.get("r_multiple", 0.0)
+            if r.get("disabled"):
+                agg[sid]["disabled"] = True
         stats_map: dict[str, dict] = {}
-        for rec in records:
-            sid = rec.get("strategy_id")
-            if not sid:
-                continue
-            total = rec.get("total_trades", 0)
-            wins = rec.get("wins", 0)
-            total_r = rec.get("total_r_multiple", 0.0)
+        for sid, s in agg.items():
+            total = s["total_trades"]
             stats_map[sid] = {
-                "win_rate": wins / total if total > 0 else 0.0,
-                "expectancy": total_r / total if total > 0 else 0.0,
-                "disabled": rec.get("disabled", False),
+                "win_rate": s["wins"] / total if total > 0 else 0.0,
+                "expectancy": s["total_r_multiple"] / total if total > 0 else 0.0,
+                "disabled": s["disabled"],
             }
         return stats_map
     except Exception as exc:

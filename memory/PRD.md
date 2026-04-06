@@ -103,7 +103,13 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - **App.js utilities** → extracted to `src/utils/formatters.js`, `src/utils/exportUtils.js`, `src/components/shared/LiveInfoBox.jsx` (250 lines saved)
 - All tests pass: 40/40 regression tests (Iteration 21)
 
-### 2026 Apr — Price Band & F&O Math Overhaul (Iteration 24)
+### 2026 Apr — Master Spec Batches A, B, C Implementation (Iteration 25)
+- **Batch A — Active Macro Events Management**: Replaced `active_events=[]` hardcoded empty in `build_fno_signal` and `compute_multibagger_analysis`. Added `_get_active_macro_events()` helper reading from MongoDB `macro_config` collection. Added admin endpoints `GET /api/admin/macro-events` (returns all 15 events + active flags) and `POST /api/admin/macro-events/update` (validates keys against SECTOR_MACRO_IMPACT_MAP, persists to DB). All 3 `build_fno_signal` callers updated to pass `fundamental` parameter (fixing pre-existing NameError). `compute_multibagger_analysis` now accepts `active_macro_events` param.
+- **Batch B — Forensic Scores in Confluence Scoring**: `_calculate_confluence_score_master_spec` now accepts `piotroski_score`, `beneish_m_score`, `altman_z_zone` params. `fundamental_score` component now uses real forensic data (Piotroski ≥7→10pts, ≥5→7pts, ≥3→4pts, <3→2pts; Beneish manipulation -3; Altman DISTRESS -4, SAFE +2; cap 10). Falls back to 52W proxy when no forensic data. Also fixed pre-existing bug: Batch 1 tech vars (`ts`, `_cci`, `_ichimoku`, etc.) were undefined in function scope — fixed by adding `tech_snapshot: dict | None = None` param.
+- **Batch C — Strategy Threshold Enforcement**: `_get_strategy_stats_for_selection()` now reads from `strategy_backtest` collection (same as admin endpoint) and aggregates win_rate/expectancy. Passed to `select_strategy_for_signal()` so strategies with <75% win rate / <0.40R expectancy are excluded from signal selection.
+- All 37 tests pass (iteration 25).
+
+
 - **Portfolio price bands**: Fixed broken update path — `expected_ranges` was always using static fallback due to wrong dict keys (`band.get("high")` → non-existent). Restructured `_analyze_portfolio_positions` to fetch hist_vol + Piotroski + RSI + trend FIRST, then compute `_portfolio_horizon_ranges()` in a single correct call.
 - **Quality-adjusted drift**: `compute_realistic_price_bands()` now computes drift per-stock based on Piotroski F-Score (+3%/-4%), RSI (overbought/oversold ±2.5%), trend alignment (±2.5-4%), and Beneish M-Score (-5% penalty). Was fixed 7% for all stocks.
 - **Multibagger custom-search**: Now fetches 1Y hist OHLCV to inject actual `hist_vol`, `rsi`, and `trend_alignment` into vol_bands (RELIANCE: 20.3% actual vol, 11% drift — was 30% fallback, 7% fixed).
@@ -123,7 +129,10 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 ## Prioritized Backlog (ROADMAP)
 
 ### P0 (Must Have — Next Sprint)
-- **server.py Route Extraction**: Move 49 route handlers from server.py to `routes/` directory. Need to create `core/database.py` (db connection) and move helpers to `core/` modules.
+- **server.py Route Extraction**: Move 49+ route handlers from server.py to `routes/` directory. Need to create `core/database.py` (db connection) and move helpers to `core/` modules. File is ~6,960 lines.
+
+### P1 (High Value)
+- **Position Sizing Calculator**: Based on risk %, lot size, and ATR.
 
 ### P1 (High Value)
 - **Position Sizing Calculator**: Based on risk %, lot size, and ATR.
