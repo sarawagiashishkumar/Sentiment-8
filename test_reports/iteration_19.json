@@ -1,0 +1,186 @@
+{
+  "summary": "Iteration 19: Batch 1-5 Research Engine comprehensive testing. 120/120 tests passed. All new functions across Batches 1-5 validated. One bug found and fixed: missing datetime/timezone import in update_backtest_stats. One design issue found: breadth_score in compute_index_constituent_bias can exceed 100.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "research_engine.py::update_backtest_stats",
+        "issue": "NameError: 'datetime' and 'timezone' not imported at module level. Function at line 3415 uses datetime.now(timezone.utc) without module-level import. FIXED: Added 'from datetime import datetime, timezone' to research_engine.py top-level imports.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "research_engine.py::compute_index_constituent_bias",
+        "issue": "breadth_score formula: round(norm_bull - norm_bear + 50) can exceed [0,100] range. E.g., all-BULLISH BANKNIFTY with high conviction gives breadth_score=116. Consider clamping to max(0, min(100, breadth_score)).",
+        "priority": "LOW"
+      }
+    ]
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestHealthCheck::test_backend_root_returns_200": "PASS",
+    "TestWilliamsR::test_returns_float_in_valid_range": "PASS",
+    "TestWilliamsR::test_returns_none_for_insufficient_data": "PASS",
+    "TestWilliamsR::test_oversold_detection": "PASS",
+    "TestCCI::test_returns_valid_dict_with_cci": "PASS",
+    "TestCCI::test_insufficient_data_returns_none_cci": "PASS",
+    "TestCCI::test_overbought_flag_mutually_exclusive": "PASS",
+    "TestVPT::test_returns_valid_dict": "PASS",
+    "TestVPT::test_insufficient_data_returns_flat": "PASS",
+    "TestADLine::test_returns_valid_dict": "PASS",
+    "TestADLine::test_uptrend_data_should_mostly_rise": "PASS",
+    "TestIchimoku::test_returns_available_true_with_260_bars": "PASS",
+    "TestIchimoku::test_returns_all_expected_keys": "PASS",
+    "TestIchimoku::test_price_vs_cloud_valid_value": "PASS",
+    "TestIchimoku::test_returns_not_available_for_insufficient_data": "PASS",
+    "TestIchimoku::test_cloud_color_is_green_or_red": "PASS",
+    "TestFibonacci::test_returns_available_true_with_260_bars": "PASS",
+    "TestFibonacci::test_returns_all_fib_levels": "PASS",
+    "TestFibonacci::test_fib_zone_is_valid": "PASS",
+    "TestFibonacci::test_swing_high_greater_than_swing_low": "PASS",
+    "TestFibonacci::test_extensions_present": "PASS",
+    "TestPivotPoints::test_returns_available_true": "PASS",
+    "TestPivotPoints::test_classic_levels_present": "PASS",
+    "TestPivotPoints::test_camarilla_levels_present": "PASS",
+    "TestPivotPoints::test_ltp_vs_pp_valid": "PASS",
+    "TestSupportResistance::test_returns_lists": "PASS",
+    "TestSupportResistance::test_available_flag": "PASS",
+    "TestSupportResistance::test_insufficient_data_returns_empty_lists": "PASS",
+    "TestRSIDivergence::test_returns_valid_dict": "PASS",
+    "TestRSIDivergence::test_divergence_string_is_valid": "PASS",
+    "TestRSIDivergence::test_bullish_bearish_flags_consistent": "PASS",
+    "TestCandlestickPatterns::test_returns_patterns_list_and_bias": "PASS",
+    "TestCandlestickPatterns::test_insufficient_data_returns_neutral": "PASS",
+    "TestMultiframeTrend::test_returns_daily_weekly_monthly_alignment": "PASS",
+    "TestMultiframeTrend::test_bullish_frames_count_matches": "PASS",
+    "TestChartPatterns::test_returns_patterns_dict_with_flags": "PASS",
+    "TestChartPatterns::test_insufficient_data": "PASS",
+    "TestFullTechnicalSnapshot::test_returns_batch1_fields": "PASS",
+    "TestFullTechnicalSnapshot::test_returns_symbol_and_data_available": "PASS",
+    "TestFullTechnicalSnapshot::test_technical_bias_is_valid": "PASS",
+    "TestTechnicalConfluenceBonus::test_returns_tuple_int_list": "PASS",
+    "TestTechnicalConfluenceBonus::test_bonus_is_capped_at_18": "PASS",
+    "TestTechnicalConfluenceBonus::test_bonus_floor_is_minus_6": "PASS",
+    "TestTechnicalConfluenceBonus::test_backward_compat_no_batch1_params": "PASS",
+    "TestAltmanZScore::test_safe_zone": "PASS",
+    "TestAltmanZScore::test_distress_zone": "PASS",
+    "TestAltmanZScore::test_grey_zone": "PASS",
+    "TestAltmanZScore::test_returns_zone_safe_grey_or_distress": "PASS",
+    "TestAltmanZScore::test_missing_data_returns_unavailable": "PASS",
+    "TestEarningsQuality::test_high_quality_earnings": "PASS",
+    "TestEarningsQuality::test_low_quality_earnings": "PASS",
+    "TestEarningsQuality::test_accrual_ratio_computed": "PASS",
+    "TestEarningsQuality::test_missing_data_returns_unavailable": "PASS",
+    "TestForensicRedFlags::test_returns_flag_count_and_severity": "PASS",
+    "TestForensicRedFlags::test_high_pledging_generates_flag": "PASS",
+    "TestForensicRedFlags::test_clean_company_has_zero_flags": "PASS",
+    "TestROICvsWACC::test_value_creation_company": "PASS",
+    "TestROICvsWACC::test_value_destruction_company": "PASS",
+    "TestROICvsWACC::test_missing_ebit_returns_unavailable": "PASS",
+    "TestGrowthQuality::test_strong_revenue_growth": "PASS",
+    "TestGrowthQuality::test_declining_revenue": "PASS",
+    "TestGrowthQuality::test_insufficient_data_returns_not_available": "PASS",
+    "TestForensicAudit::test_returns_composite_score_and_investable_flag": "PASS",
+    "TestMarketRegimeEnhanced::test_returns_one_of_8_regimes": "PASS",
+    "TestMarketRegimeEnhanced::test_low_vol_bull_regime": "PASS",
+    "TestMarketRegimeEnhanced::test_crash_regime": "PASS",
+    "TestMarketRegimeEnhanced::test_pre_event_regime": "PASS",
+    "TestMarketRegimeEnhanced::test_post_event_iv_crush_regime": "PASS",
+    "TestMarketRegimeEnhanced::test_returns_strategy_grid": "PASS",
+    "TestMarketRegimeEnhanced::test_vix_none_returns_unknown_regime": "PASS",
+    "TestSectorMacroMap::test_has_15_entries": "PASS",
+    "TestSectorMacroMap::test_each_entry_has_required_keys": "PASS",
+    "TestSectorMacroMap::test_specific_events_present": "PASS",
+    "TestMacroContext::test_returns_regime_and_macro_bias": "PASS",
+    "TestMacroContext::test_geopolitical_flag_activated": "PASS",
+    "TestMacroContext::test_returns_event_impacts_list": "PASS",
+    "TestPortfolioCorrelationMatrix::test_returns_matrix_and_high_pairs": "PASS",
+    "TestPortfolioCorrelationMatrix::test_diagonal_is_1": "PASS",
+    "TestPortfolioCorrelationMatrix::test_insufficient_data_returns_not_available": "PASS",
+    "TestPortfolioStressTests::test_returns_5_scenarios": "PASS",
+    "TestPortfolioStressTests::test_each_scenario_has_impact_pct": "PASS",
+    "TestPortfolioStressTests::test_worst_scenario_key_present": "PASS",
+    "TestDiversificationAudit::test_returns_sector_allocation_pct": "PASS",
+    "TestDiversificationAudit::test_flags_over_concentrated_sector": "PASS",
+    "TestUpcomingCatalysts::test_returns_macro_events_list": "PASS",
+    "TestUpcomingCatalysts::test_earnings_dates_detected": "PASS",
+    "TestMergeHoldings::test_merges_same_symbol_entries": "PASS",
+    "TestMergeHoldings::test_no_duplicates_unchanged": "PASS",
+    "TestMasterStockSnapshot::test_returns_52w_high_low_and_ath": "PASS",
+    "TestMasterStockSnapshot::test_market_cap_category": "PASS",
+    "TestMasterStockSnapshot::test_pct_from_52w_high_and_low": "PASS",
+    "TestStrategyLibrary::test_has_13_strategies": "PASS",
+    "TestStrategyLibrary::test_required_strategy_ids_present": "PASS",
+    "TestStrategyLibrary::test_each_strategy_has_required_fields": "PASS",
+    "TestGetEligibleStrategies::test_filters_by_regime_and_instrument": "PASS",
+    "TestGetEligibleStrategies::test_filters_by_backtest_stats": "PASS",
+    "TestGetEligibleStrategies::test_returns_empty_for_unknown_regime": "PASS",
+    "TestSelectStrategyForSignal::test_returns_strategy_for_normal_regime": "PASS",
+    "TestSelectStrategyForSignal::test_returns_swing_strategy_for_swing_mode": "PASS",
+    "TestSelectStrategyForSignal::test_pre_event_prefers_expiry_strategy": "PASS",
+    "TestCheckStrategyEligible::test_no_stats_is_eligible": "PASS",
+    "TestCheckStrategyEligible::test_below_win_rate_threshold_ineligible": "PASS",
+    "TestCheckStrategyEligible::test_disabled_strategy_ineligible": "PASS",
+    "TestCheckStrategyEligible::test_high_win_rate_is_eligible": "PASS",
+    "TestCheckStrategyEligible::test_insufficient_trades_provisional": "PASS",
+    "TestSignalStateMachine::test_active_to_watching_t1": "PASS",
+    "TestSignalStateMachine::test_active_to_watching_sl": "PASS",
+    "TestSignalStateMachine::test_watching_sl_to_closed_loss": "PASS",
+    "TestSignalStateMachine::test_watching_t1_to_closed_win_no_t2": "PASS",
+    "TestSignalStateMachine::test_urgent_exit_when_15_min_to_expiry": "PASS",
+    "TestSignalStateMachine::test_terminal_state_no_transition": "PASS",
+    "TestSignalStateMachine::test_bearish_signal_state_machine": "PASS",
+    "TestUpdateBacktestStats::test_updates_correctly_with_win": "PASS (after fix)",
+    "TestIndexConstituentBias::test_returns_bullish_bias": "PASS",
+    "TestIndexConstituentBias::test_returns_bearish_bias": "PASS",
+    "TestIndexConstituentBias::test_empty_signals_returns_neutral": "PASS",
+    "TestIndexConstituentBias::test_nifty50_weights_populated": "PASS",
+    "TestIndexConstituentBias::test_banknifty_weights_populated": "PASS",
+    "TestRegimeStrategyGrid::test_has_8_regimes": "PASS",
+    "TestRegimeStrategyGrid::test_each_regime_has_strategy_fields": "PASS"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19_batch1_5_research_engine.py",
+    "/app/test_reports/pytest/iteration19_results.xml"
+  ],
+
+  "action_items": [
+    "DESIGN: compute_index_constituent_bias - breadth_score can exceed 100 (e.g., all-bullish BANKNIFTY constituents gives 116). Consider clamping: breadth_score = max(0, min(100, round(norm_bull - norm_bear + 50)))"
+  ],
+
+  "critical_code_review_comments": [
+    "BUG FIXED: research_engine.py line 3415 - update_backtest_stats() used datetime.now(timezone.utc) without module-level import. Fixed by adding 'from datetime import datetime, timezone' to top-level imports.",
+    "DESIGN ISSUE: compute_index_constituent_bias breadth_score formula can exceed [0,100]: round(norm_bull - norm_bear + 50) yields 116 when norm_bull=66, norm_bear=0, +50=116. Should be clamped.",
+    "CODE QUALITY: research_engine.py is 3676 lines - at the upper limit. Consider splitting into batch modules (batch1_technical.py, batch2_forensic.py, batch3_macro.py, batch4_portfolio.py, batch5_strategy.py) for maintainability.",
+    "UNUSED VARS: make_ohlcv used pd.date_range with end='2026-02-28' (Saturday) which gives n-1 periods with freq='B' - caught in testing, test helper fixed to use start='2020-01-02' instead."
+  ],
+
+  "updated_files": [
+    "/app/backend/services/research_engine.py (added 'from datetime import datetime, timezone' to imports)",
+    "/app/backend/tests/test_iteration19_batch1_5_research_engine.py (new test file)"
+  ],
+
+  "success_rate": {"backend": "100% (120/120 tests passing)"},
+
+  "seed_data_creation": "None - all tests use synthetic OHLCV data generated in-memory",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": true,
+
+  "context_for_next_testing_agent": "Iteration 19 tested all Batch 1-5 functions in research_engine.py directly (unit tests, no HTTP). Backend HTTP health check: GET /api/ returns 200. Tests import functions from /app/backend/services/research_engine.py. One bug was fixed: missing 'from datetime import datetime, timezone' at module level in research_engine.py. One design issue remains: breadth_score in compute_index_constituent_bias can exceed 100.",
+
+  "rca_of_issue": {
+    "bug": "NameError in update_backtest_stats (research_engine.py:3415)",
+    "root_cause": "The function uses datetime.now(timezone.utc) but research_engine.py only has local imports of datetime (inside functions compute_upcoming_catalysts and compute_master_stock_snapshot). The module-level imports were missing 'from datetime import datetime, timezone'.",
+    "reproduction": "Call update_backtest_stats({'total_trades': 5}, {'win': True, 'r_multiple': 1.5}) → NameError: name 'datetime' is not defined",
+    "mitigation": "Added 'from datetime import datetime, timezone' to module-level imports in research_engine.py line 11"
+  }
+}

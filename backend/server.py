@@ -57,6 +57,30 @@ from services.research_engine import (
     compute_portfolio_verdict,
     compute_realistic_price_bands,
     compute_technical_confluence_bonus,
+    compute_altman_z_score,
+    compute_earnings_quality,
+    compute_forensic_red_flags,
+    compute_roic_vs_wacc,
+    compute_growth_quality,
+    compute_forensic_audit,
+    classify_market_regime_enhanced,
+    compute_macro_context,
+    get_sector_macro_beneficiaries,
+    SECTOR_MACRO_IMPACT_MAP,
+    compute_portfolio_correlation_matrix,
+    compute_portfolio_stress_tests,
+    compute_diversification_audit,
+    compute_upcoming_catalysts,
+    merge_duplicate_holdings,
+    compute_master_stock_snapshot,
+    STRATEGY_LIBRARY,
+    get_eligible_strategies,
+    select_strategy_for_signal,
+    check_strategy_eligible,
+    transition_signal_state,
+    compute_index_constituent_bias,
+    NIFTY50_WEIGHTS,
+    BANKNIFTY_WEIGHTS,
 )
 from services.data_verifier import (
     fetch_verified_price,
@@ -578,6 +602,9 @@ class FNOSignalResponse(BaseModel):
     achievable_profit_pct: float
     direction: Literal["BULLISH", "BEARISH", "NEUTRAL"]
     strategy: str
+    strategy_library_id: str | None = None      # Batch 5: e.g. "S1_ORB"
+    strategy_library_name: str | None = None    # Batch 5: e.g. "Opening Range Breakout"
+    market_regime: str | None = None            # Batch 5: e.g. "LOW_VOL_TREND_BULL"
     entry_price: float
     stop_loss: float
     target1: float
@@ -715,6 +742,7 @@ class PortfolioAnalyzeResponse(BaseModel):
     stocks: List[PortfolioStockAnalysis]
     failed_symbols: List[str] = []
     portfolio_risk_metrics: dict | None = None  # Portfolio-level risk: beta, Sharpe, VaR, max_drawdown, win_rate
+    enhanced_analytics: dict | None = None      # Batch 4: stress tests, diversification, correlation, catalysts
 
 
 class CustomPositionCreateRequest(BaseModel):
@@ -1980,11 +2008,46 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
             "current_value": a.ltp * a.quantity if a.ltp and a.quantity else 0,
             "pnl_pct": a.pnl_pct,
             "sector": a.sector or "Unknown",
-            "hist_vol": 0.30,  # default fallback
+            "market_cap": a.market_cap,
+            "hist_vol": 0.30,
         }
         for a in analyses
     ]
     portfolio_risk = compute_portfolio_risk_metrics(holdings=holdings_for_risk)
+
+    # ── Batch 4: Enhanced portfolio analytics ────────────────────────────────
+    # Stress tests
+    stress_tests = compute_portfolio_stress_tests(holdings=holdings_for_risk)
+
+    # Diversification audit
+    div_audit = compute_diversification_audit(holdings=holdings_for_risk)
+
+    # Correlation matrix (from historical returns — 90 day window)
+    returns_dict: dict[str, list[float]] = {}
+    for a in analyses[:15]:  # cap at 15 to limit API calls
+        try:
+            hist_c = await _get_hist_ohlcv(a.symbol, period="3mo")
+            if hist_c is not None and len(hist_c) >= 20:
+                rets = hist_c["Close"].pct_change().dropna().tolist()
+                returns_dict[a.symbol] = rets
+        except Exception:
+            pass
+    corr_matrix = compute_portfolio_correlation_matrix(returns_dict)
+
+    # Upcoming catalysts (next 15 days)
+    catalyst_data = compute_upcoming_catalysts(
+        symbols=[a.symbol for a in analyses],
+        days_window=15,
+    )
+
+    # Merge metadata into response
+    enhanced_risk = {
+        **(portfolio_risk if isinstance(portfolio_risk, dict) else portfolio_risk.dict() if hasattr(portfolio_risk, 'dict') else {}),
+        "stress_tests": stress_tests,
+        "diversification_audit": div_audit,
+        "correlation_matrix": corr_matrix,
+        "upcoming_catalysts": catalyst_data,
+    }
 
     return PortfolioAnalyzeResponse(
         cost_charged=0.0,
@@ -1993,6 +2056,7 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         stocks=analyses,
         failed_symbols=failed_symbols,
         portfolio_risk_metrics=portfolio_risk,
+        enhanced_analytics=enhanced_risk,
     )
 
 
@@ -3008,6 +3072,127 @@ def _fetch_yfinance_fundamentals(symbol: str) -> dict:
         except Exception:
             pass
 
+        # ── Batch 2: Altman Z-Score ─────────────────────────────────────────
+        altman_z_result: dict = {}
+        try:
+            if bs is not None and not bs.empty and fin is not None and not fin.empty:
+                def _b2_get(df, labels):
+                    for lbl in labels:
+                        if lbl in df.index:
+                            v = df.loc[lbl].iloc[0] if len(df.loc[lbl]) > 0 else None
+                            return float(v) if v is not None and str(v) != "nan" else None
+                    return None
+
+                ta_z = _b2_get(bs, ["Total Assets"])
+                ca_z = _b2_get(bs, ["Total Current Assets", "Current Assets"])
+                cl_z = _b2_get(bs, ["Total Current Liabilities", "Current Liabilities"])
+                re_z = _b2_get(bs, ["Retained Earnings", "Retained Earnings (Deficit)"])
+                tl_z = _b2_get(bs, ["Total Liabilities Net Minority Interest", "Total Liabilities"])
+                rev_z = _b2_get(fin, ["Total Revenue", "Revenue"])
+                ebit_z = _b2_get(fin, ["Operating Income", "EBIT", "Ebit"])
+                mc_z = _to_float(info.get("marketCap"))
+
+                wc_z = (ca_z - cl_z) if (ca_z is not None and cl_z is not None) else None
+
+                if all(v is not None for v in [ta_z, rev_z, ebit_z, mc_z, tl_z]) and ta_z > 0 and tl_z > 0:
+                    altman_z_result = compute_altman_z_score(
+                        working_capital=wc_z,
+                        retained_earnings=re_z,
+                        ebit=ebit_z,
+                        market_cap=mc_z,
+                        total_liabilities=tl_z,
+                        revenue=rev_z,
+                        total_assets=ta_z,
+                    )
+        except Exception as exc:
+            logger.debug("Altman Z error for %s: %s", symbol, exc)
+
+        # ── Batch 2: Earnings Quality (CFO/NI ratio, Accrual Ratio) ─────────
+        earnings_quality_result: dict = {}
+        try:
+            if cf is not None and not cf.empty and fin is not None and not fin.empty:
+                def _cf_get(df, labels):
+                    for lbl in labels:
+                        if lbl in df.index:
+                            v = df.loc[lbl].iloc[0] if len(df.loc[lbl]) > 0 else None
+                            return float(v) if v is not None and str(v) != "nan" else None
+                    return None
+
+                ocf_eq = _cf_get(cf, ["Operating Cash Flow", "Total Cash From Operating Activities", "Cash From Operations"])
+                ni_eq = _cf_get(fin, ["Net Income", "Net Income Applicable To Common Shares"])
+                ta_eq = _b2_get(bs, ["Total Assets"]) if bs is not None and not bs.empty else None
+
+                if ocf_eq is not None and ni_eq is not None:
+                    earnings_quality_result = compute_earnings_quality(
+                        operating_cash_flow=ocf_eq,
+                        net_income=ni_eq,
+                        total_assets=ta_eq,
+                    )
+        except Exception as exc:
+            logger.debug("Earnings quality error for %s: %s", symbol, exc)
+
+        # ── Batch 2: ROIC vs WACC ───────────────────────────────────────────
+        roic_result: dict = {}
+        try:
+            if fin is not None and not fin.empty and bs is not None and not bs.empty:
+                def _rv_get(df, labels):
+                    for lbl in labels:
+                        if lbl in df.index:
+                            v = df.loc[lbl].iloc[0] if len(df.loc[lbl]) > 0 else None
+                            return float(v) if v is not None and str(v) != "nan" else None
+                    return None
+
+                ebit_rv = _rv_get(fin, ["Operating Income", "EBIT", "Ebit"])
+                ta_rv = _rv_get(bs, ["Total Assets"])
+                cl_rv = _rv_get(bs, ["Total Current Liabilities", "Current Liabilities"])
+                td_rv = _to_float(info.get("totalDebt"))
+                mc_rv = _to_float(info.get("marketCap"))
+                eff_tax = _to_float(info.get("effectiveTaxRate")) or 0.25
+
+                if ebit_rv is not None:
+                    ic_rv = (ta_rv - cl_rv) if (ta_rv is not None and cl_rv is not None) else None
+                    roic_result = compute_roic_vs_wacc(
+                        ebit=ebit_rv,
+                        tax_rate=min(max(float(eff_tax), 0.15), 0.40),
+                        invested_capital=ic_rv,
+                        total_assets=ta_rv,
+                        current_liabilities=cl_rv,
+                        total_debt=td_rv,
+                        market_cap=mc_rv,
+                    )
+        except Exception as exc:
+            logger.debug("ROIC vs WACC error for %s: %s", symbol, exc)
+
+        # ── Batch 2: Growth Quality (EBITDA margin trend) ───────────────────
+        growth_quality_result: dict = {}
+        try:
+            if fin is not None and not fin.empty:
+                def _gq_get_series(df, labels, n=4):
+                    for lbl in labels:
+                        if lbl in df.index:
+                            return [float(v) if str(v) != "nan" else None for v in df.loc[lbl].iloc[:n].tolist()]
+                    return []
+
+                rev_list = _gq_get_series(fin, ["Total Revenue", "Revenue"])
+                ebit_list = _gq_get_series(fin, ["Operating Income", "EBIT", "Ebit"])
+                rev_list2 = _gq_get_series(fin, ["Total Revenue", "Revenue"])
+                ebitda_margins = []
+                if rev_list and ebit_list:
+                    for r, e in zip(rev_list, ebit_list):
+                        if r and r > 0 and e is not None:
+                            ebitda_margins.append(round(e / r * 100, 2))
+                        else:
+                            ebitda_margins.append(None)
+
+                if rev_list:
+                    growth_quality_result = compute_growth_quality(
+                        revenues=rev_list,
+                        ebitda_margins=ebitda_margins,
+                        fcf_yield=fcf_yield,
+                    )
+        except Exception as exc:
+            logger.debug("Growth quality error for %s: %s", symbol, exc)
+
         return {
             "roe": _sanitize_float(roe),
             "roce": _sanitize_float(roce),
@@ -3021,6 +3206,20 @@ def _fetch_yfinance_fundamentals(symbol: str) -> dict:
             "recent_profit_positive": recent_profit_positive,
             "revenue_cagr_3y": revenue_cagr_3y,
             "fcf_yield": fcf_yield,
+            # Batch 2 additions
+            "altman_z": altman_z_result if altman_z_result.get("available") else None,
+            "altman_z_score": altman_z_result.get("z_score") if altman_z_result.get("available") else None,
+            "altman_z_zone": altman_z_result.get("zone") if altman_z_result.get("available") else None,
+            "earnings_quality": earnings_quality_result if earnings_quality_result.get("available") else None,
+            "cfo_ni_ratio": earnings_quality_result.get("cfo_ni_ratio"),
+            "accrual_ratio": earnings_quality_result.get("accrual_ratio"),
+            "roic_vs_wacc": roic_result if roic_result.get("available") else None,
+            "roic": roic_result.get("roic"),
+            "wacc": roic_result.get("wacc"),
+            "roic_wacc_spread": roic_result.get("spread"),
+            "growth_quality": growth_quality_result if growth_quality_result.get("available") else None,
+            "ebitda_margin_latest": growth_quality_result.get("ebitda_margin_latest"),
+            "ebitda_margin_trend": growth_quality_result.get("ebitda_margin_trend"),
         }
     except Exception as exc:
         logger.warning("yfinance fetch failed for %s: %s", symbol, exc)
@@ -3069,6 +3268,20 @@ async def _get_fundamental_data(symbol: str) -> dict:
         "recent_profit_positive": data.get("recent_profit_positive"),
         "revenue_cagr_3y": data.get("revenue_cagr_3y"),
         "fcf_yield": data.get("fcf_yield"),
+        # Batch 2
+        "altman_z_score": data.get("altman_z_score"),
+        "altman_z_zone": data.get("altman_z_zone"),
+        "altman_z": data.get("altman_z"),
+        "cfo_ni_ratio": data.get("cfo_ni_ratio"),
+        "accrual_ratio": data.get("accrual_ratio"),
+        "earnings_quality": data.get("earnings_quality"),
+        "roic": data.get("roic"),
+        "wacc": data.get("wacc"),
+        "roic_wacc_spread": data.get("roic_wacc_spread"),
+        "roic_vs_wacc": data.get("roic_vs_wacc"),
+        "growth_quality": data.get("growth_quality"),
+        "ebitda_margin_latest": data.get("ebitda_margin_latest"),
+        "ebitda_margin_trend": data.get("ebitda_margin_trend"),
         "cached_at_ts": now_ts,
         "_ts": now_ts,
     }
@@ -3460,6 +3673,38 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
         if recent_profitable is False:
             thesis_parts.append("No profitable quarter in last 3Q — revenue recovery needed")
 
+        # ── Batch 2: Altman Z, ROIC vs WACC, Earnings Quality ───────────────
+        altman_z_s = fundamental.get("altman_z_score")
+        altman_z_zone = fundamental.get("altman_z_zone")
+        roic_val = fundamental.get("roic")
+        wacc_val = fundamental.get("wacc")
+        roic_spread = fundamental.get("roic_wacc_spread")
+        cfo_ni = fundamental.get("cfo_ni_ratio")
+        ebitda_trend = fundamental.get("ebitda_margin_trend")
+
+        if altman_z_zone is not None:
+            if altman_z_zone == "SAFE":
+                thesis_parts.append(f"Altman Z={altman_z_s:.2f} — financially sound")
+            elif altman_z_zone == "GREY":
+                thesis_parts.append(f"Altman Z={altman_z_s:.2f} — grey zone; watch leverage")
+            else:
+                thesis_parts.append(f"Altman Z={altman_z_s:.2f} — DISTRESS zone (red flag)")
+
+        if roic_spread is not None:
+            if roic_spread > 3:
+                thesis_parts.append(f"ROIC {roic_val:.1f}% > WACC {wacc_val:.1f}% — value creating (+{roic_spread:.1f}%)")
+            elif roic_spread < -3:
+                thesis_parts.append(f"ROIC {roic_val:.1f}% < WACC {wacc_val:.1f}% — value destroying ({roic_spread:.1f}%)")
+
+        if cfo_ni is not None:
+            if cfo_ni < 0.5:
+                thesis_parts.append(f"CFO/NI={cfo_ni:.2f} — low earnings quality (accrual-heavy)")
+            elif cfo_ni >= 1.0:
+                thesis_parts.append(f"CFO/NI={cfo_ni:.2f} — high earnings quality")
+
+        if ebitda_trend == "DETERIORATING":
+            thesis_parts.append("EBITDA margin deteriorating — margin compression risk")
+
     # Tier breakdown
     passed_tiers = [k for k, threshold in tier_thresholds.items() if tier_scores.get(k, 0) >= threshold]
     if passed_tiers:
@@ -3509,6 +3754,15 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
         "fcf_yield": fundamental.get("fcf_yield") if fundamental else None,
         "total_debt_to_market_cap": fundamental.get("total_debt_to_market_cap") if fundamental else None,
         "recent_profit_positive": fundamental.get("recent_profit_positive") if fundamental else None,
+        # Batch 2 forensic
+        "altman_z_score": fundamental.get("altman_z_score") if fundamental else None,
+        "altman_z_zone": fundamental.get("altman_z_zone") if fundamental else None,
+        "roic": fundamental.get("roic") if fundamental else None,
+        "wacc": fundamental.get("wacc") if fundamental else None,
+        "roic_wacc_spread": fundamental.get("roic_wacc_spread") if fundamental else None,
+        "cfo_ni_ratio": fundamental.get("cfo_ni_ratio") if fundamental else None,
+        "ebitda_margin_latest": fundamental.get("ebitda_margin_latest") if fundamental else None,
+        "ebitda_margin_trend": fundamental.get("ebitda_margin_trend") if fundamental else None,
         "vol_bands": vol_bands,  # volatility-based realistic price bands for all horizons
     }
 
@@ -3730,7 +3984,7 @@ def _calculate_confluence_score_master_spec(
     if strategy in ("ORB_BREAKOUT", "VWAP_REVERSION"):
         strategy_bonus = 5
 
-    # ── Technical Analysis Bonus (RSI, MACD, Trend, OBV, ADX, BB, Stoch) ─────
+    # ── Technical Analysis Bonus (RSI, MACD, Trend, OBV, ADX, BB, Stoch + Batch 1) ─
     tech_bonus, tech_tags = compute_technical_confluence_bonus(
         direction=direction,
         rsi=rsi,
@@ -3741,6 +3995,21 @@ def _calculate_confluence_score_master_spec(
         adx=adx,
         bb_pct_b=bb_pct_b,
         stoch_k=stoch_k,
+        # Batch 1 additions
+        williams_r=ts.get("williams_r"),
+        cci=_cci,
+        vpt_trend=_vpt,
+        ad_trend=_ad,
+        ichimoku_price_vs_cloud=_ichimoku.get("price_vs_cloud"),
+        ichimoku_tk_cross=_ichimoku.get("tenkan_kijun_cross"),
+        ichimoku_bullish=_ichimoku.get("bullish_signal"),
+        ichimoku_bearish=_ichimoku.get("bearish_signal"),
+        rsi_divergence=_rsi_div.get("divergence"),
+        rsi_div_type=_rsi_div.get("type"),
+        candle_bias=_candle.get("bias"),
+        mf_alignment=_mf.get("alignment"),
+        has_bull_chart_pattern=_chart.get("has_bullish_pattern", False),
+        has_bear_chart_pattern=_chart.get("has_bearish_pattern", False),
     )
 
     # ── Expiry Penalty ────────────────────────────────────────────────────────
@@ -3918,6 +4187,36 @@ async def build_fno_signal(
     tech_obv = (ts.get("obv") or {}).get("trend")
     tech_adx = ts.get("adx")
     tech_stoch = ts.get("stochastic") or {}
+    # Batch 1 extras
+    _ichimoku = ts.get("ichimoku") or {}
+    _rsi_div = ts.get("rsi_divergence") or {}
+    _candle = ts.get("candlestick_patterns") or {}
+    _mf = ts.get("multiframe_trend") or {}
+    _chart = ts.get("chart_patterns") or {}
+    _cci = (ts.get("cci") or {}).get("cci")
+    _vpt = (ts.get("vpt") or {}).get("trend")
+    _ad = (ts.get("ad_line") or {}).get("trend")
+
+    # ── Batch 5: Strategy Library Selection ────────────────────────────────
+    _vix_curr = india_vix
+    _adx_curr = tech_adx
+    _rsi_curr = tech_rsi
+    _regime_obj = classify_market_regime_enhanced(
+        vix=_vix_curr, adx=_adx_curr, rsi=_rsi_curr
+    )
+    _regime = _regime_obj.get("regime", "NORMAL_VOL_TREND")
+    _selected_strategy = select_strategy_for_signal(
+        regime=_regime,
+        direction=direction,
+        adx=_adx_curr,
+        vix=_vix_curr,
+        instrument=contract.underlying,
+    )
+    _strategy_name = _selected_strategy.get("name", "Standard") if _selected_strategy else "Standard"
+    _strategy_id = _selected_strategy.get("id", "S3_SUPERTREND") if _selected_strategy else "S3_SUPERTREND"
+    if _selected_strategy:
+        trigger_factors.append(f"Strategy:{_strategy_id}")
+        trigger_factors.append(f"Regime:{_regime}")
     
     # ── ATR-based targets (data-driven, not fixed %) ──────────────────────
     # Use min(minutes_to_expiry, minutes_to_session_close) for intraday realism
@@ -4087,6 +4386,9 @@ async def build_fno_signal(
             if is_potential_trade
             else "Directional Projection (Low Confidence)"
         ),
+        strategy_library_id=_strategy_id,
+        strategy_library_name=_strategy_name,
+        market_regime=_regime,
         entry_price=entry_price,
         stop_loss=stop_loss,
         target1=target1,
@@ -5860,9 +6162,21 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
         top_pool.append(custom_signal)
     top_trades = sorted(top_pool, key=lambda row: (row.is_potential_trade, row.confluence_score), reverse=True)[:4]
 
-    # ── Market Regime classification ──────────────────────────────────────
+    # ── Market Regime classification (Enhanced Batch 3) ──────────────────
     india_vix = await _get_india_vix()
-    market_regime = classify_market_regime(vix=india_vix)
+    # Get ADX/RSI from NIFTY tech snapshot if available
+    _nifty_ts = None
+    try:
+        _nifty_hist = await _get_hist_ohlcv("NIFTY", period="3mo")
+        if _nifty_hist is not None:
+            _nifty_ts = compute_full_technical_snapshot("NIFTY", _nifty_hist)
+    except Exception:
+        pass
+    _nifty_adx = _nifty_ts.get("adx") if _nifty_ts else None
+    _nifty_rsi = _nifty_ts.get("rsi") if _nifty_ts else None
+    market_regime = classify_market_regime_enhanced(
+        vix=india_vix, adx=_nifty_adx, rsi=_nifty_rsi
+    )
     market_session = get_market_session_status()
 
     # ── No-signals alert with specific reason ─────────────────────────────
