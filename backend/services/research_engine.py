@@ -2489,12 +2489,17 @@ def compute_macro_context(
 
     if active_events and sector:
         sector_lower = sector.lower()
+        import re as _re
+        def _sector_in(name: str) -> bool:
+            """Word-boundary match to avoid 'IT' matching 'capital' as substring."""
+            return bool(_re.search(r'\b' + _re.escape(sector_lower) + r'\b', name.lower()))
+
         for event_key in active_events:
             impact = SECTOR_MACRO_IMPACT_MAP.get(event_key)
             if impact is None:
                 continue
-            is_ben = any(sector_lower in b.lower() for b in impact["beneficiaries"])
-            is_loser = any(sector_lower in l.lower() for l in impact["losers"])
+            is_ben = any(_sector_in(b) for b in impact["beneficiaries"])
+            is_loser = any(_sector_in(l) for l in impact["losers"])
             event_impacts.append({
                 "event": event_key,
                 "beneficiary": is_ben,

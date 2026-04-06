@@ -45,7 +45,43 @@ ALL calculations must be in backend Python — NEVER in LLM or frontend. No UI m
 2. Admin endpoints: GET/POST /api/admin/nse-holidays
 3. 21/21 backend tests passing (iteration_18)
 
-### Session 5 Completions — Master Spec Gap Implementation (2026-04-06)
+### Session 6 Completions — 5 Wiring Actions (2026-04-06)
+ALL wired into active API flows. 64/64 tests passing (iteration_20). Bug fixed: macro_context sector match.
+
+#### Action 1: Signal Lifecycle State Machine Wired
+- `transition_signal_state()` called inside `_refresh_open_position()` on every position refresh
+- States: PENDING→ACTIVE→WATCHING_SL→WATCHING_T1→WATCHING_T2→CLOSED_WIN|CLOSED_LOSS|EXPIRED|CANCELLED
+- `signal_state` + `signal_state_reason` + `stop_loss` fields now persisted in `custom_positions` MongoDB
+- URGENT_EXIT triggered when SL pressure + ≤60 min to expiry; EXPIRED triggered when ≤15 min to expiry
+
+#### Action 2: merge_duplicate_holdings + compute_master_stock_snapshot Wired
+- `merge_duplicate_holdings()` called at start of `_analyze_portfolio_positions()` — deduplicates same-symbol
+- `compute_master_stock_snapshot()` called per-stock in portfolio analysis → adds 52W/3M/1M levels, ATH%, index memberships
+- `compute_full_technical_snapshot()` used for live RSI/trend in portfolio verdicts (replaced placeholder None values)
+- `PortfolioStockAnalysis` model now has: `master_snapshot`, `altman_z_zone`, `roic_wacc_spread`, `piotroski_score`, `beneish_m_score`
+- Altman DISTRESS zone and ROIC<WACC appended to portfolio comments when detected
+
+#### Action 3: Strategy Backtest MongoDB Persistence
+- New collection: `strategy_backtest` — stores win/loss/r_multiple per strategy + symbol
+- `GET /api/admin/strategy-stats` — aggregated per strategy_id with win_rate, expectancy, eligible, auto_disabled
+- `POST /api/admin/strategy-stats/record` — record a trade result (admin only)
+- `GET /api/strategy-library` — public (authenticated) endpoint returning all 13 strategy definitions
+- `check_strategy_eligible()` auto-disables strategy if win_rate<75% or expectancy<0.40R after 10+ trades
+
+#### Action 4: Macro Context Wired into Signals + Multibagger
+- `compute_macro_context()` called inside `build_fno_signal()` for each F&O signal's sector
+- Macro TAILWIND/HEADWIND added to `trigger_factors` list
+- `FNOSignalResponse` now includes `macro_context` field (regime, sector bias, event impacts)
+- Multibagger thesis_parts includes sector macro bias (TAILWIND/HEADWIND flagged)
+- Bug fix: sector matching now uses word-boundary regex (fixes 'IT' matching 'capital' substring)
+
+#### Action 5: Constituent-Weighted NIFTY/BANKNIFTY Index Breadth (LIVE)
+- `_compute_enhanced_index_breadth()` async function: fetches tech snapshots for top 12 NIFTY/BANKNIFTY constituents
+- Calls `compute_index_constituent_bias()` with weighted conviction scores
+- For NIFTY/BANKNIFTY F&O signals: breadth_score and weighted_bias computed from live constituent data
+- `FNOSignalResponse` now includes `index_breadth` field with breadth_score [0–100], top positive/negative contributors
+
+
 ALL calculations pure Python backend. No UI changes. 120/120 tests passing (iteration_19).
 
 #### Batch 1: Advanced Technical Analysis (research_engine.py)
