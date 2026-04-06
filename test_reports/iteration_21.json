@@ -1,0 +1,105 @@
+{
+  "summary": "Iteration 21: Refactoring regression tests. All 40 backend tests pass. Frontend compiles cleanly (1 ESLint warning only). Login with @shish123/1234 works. All research_engine module imports verified across 8 modular files. All models/__init__.py imports verified. Frontend utility extractions (formatters.js, exportUtils.js, LiveInfoBox.jsx) confirmed working.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "App.js",
+        "issue": "ESLint warning: useEffect missing dependency 'checkKiteStatus' at line 227. Non-breaking warning.",
+        "priority": "LOW"
+      }
+    ]
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestHealthCheck::test_root_returns_200": "PASS",
+    "TestHealthCheck::test_root_has_message_field": "PASS",
+    "TestHealthCheck::test_root_message_is_string": "PASS",
+    "TestAuthentication::test_auth_access_returns_200": "PASS",
+    "TestAuthentication::test_auth_access_returns_token": "PASS",
+    "TestAuthentication::test_auth_access_returns_role": "PASS",
+    "TestAuthentication::test_auth_access_returns_user_key": "PASS",
+    "TestAuthentication::test_auth_access_invalid_user_returns_error": "PASS",
+    "TestFnoSignals::test_fno_generate_requires_auth": "PASS",
+    "TestFnoSignals::test_fno_generate_with_auth_returns_200": "PASS",
+    "TestFnoSignals::test_fno_generate_has_nifty_projection": "PASS",
+    "TestFnoSignals::test_fno_generate_has_banknifty_projection": "PASS",
+    "TestFnoSignals::test_fno_generate_nifty_projection_is_dict": "PASS",
+    "TestFnoSignals::test_fno_generate_banknifty_projection_is_dict": "PASS",
+    "TestFnoSignals::test_fno_signals_index_returns_list": "PASS",
+    "TestMultibagger::test_multibagger_generate_requires_auth": "PASS",
+    "TestMultibagger::test_multibagger_generate_with_auth_returns_200": "PASS",
+    "TestMultibagger::test_multibagger_generate_has_candidates": "PASS",
+    "TestPortfolioAnalyze::test_portfolio_analyze_requires_auth": "PASS",
+    "TestPortfolioAnalyze::test_portfolio_analyze_with_auth_returns_response": "PASS",
+    "TestAdminEndpoints::test_nse_holidays_requires_auth": "PASS",
+    "TestAdminEndpoints::test_nse_holidays_with_auth_returns_200": "PASS",
+    "TestAdminEndpoints::test_nse_holidays_returns_list": "PASS",
+    "TestAdminEndpoints::test_strategy_stats_requires_auth": "PASS",
+    "TestAdminEndpoints::test_strategy_stats_with_auth_returns_200": "PASS",
+    "TestResearchEngineImports::test_import_research_engine_module": "PASS",
+    "TestResearchEngineImports::test_indicators_accessible": "PASS",
+    "TestResearchEngineImports::test_advanced_indicators_accessible": "PASS",
+    "TestResearchEngineImports::test_technical_core_accessible": "PASS",
+    "TestResearchEngineImports::test_forensic_audit_accessible": "PASS",
+    "TestResearchEngineImports::test_macro_context_accessible": "PASS",
+    "TestResearchEngineImports::test_portfolio_risk_accessible": "PASS",
+    "TestResearchEngineImports::test_strategy_library_accessible": "PASS",
+    "TestResearchEngineImports::test_horizon_trading_days_accessible": "PASS",
+    "TestResearchEngineImports::test_all_models_importable": "PASS",
+    "TestResearchEngineImports::test_classify_market_regime_accessible": "PASS",
+    "TestResearchEngineImports::test_check_stock_eligibility_accessible": "PASS",
+    "TestResearchEngineImports::test_compute_atr_based_fno_targets_accessible": "PASS",
+    "TestResearchEngineImports::test_compute_realistic_price_bands_accessible": "PASS",
+    "TestResearchEngineImports::test_compute_portfolio_risk_metrics_accessible": "PASS"
+  },
+
+  "key_findings": {
+    "research_engine_module_structure": "research_engine.py is now a thin 138-line orchestrator re-exporting from 8 modules: indicators.py, advanced_indicators.py, technical_core.py, forensic_audit.py, macro_context.py, portfolio_risk.py, strategy_library.py",
+    "models_module": "models/__init__.py has 429 lines, all 31 models importable",
+    "frontend_utilities": "formatters.js (73 lines), exportUtils.js (137 lines), LiveInfoBox.jsx (44 lines) all correctly extracted",
+    "fno_endpoint": "Main FNO endpoint is POST /api/fno/generate (not GET /api/fno/signals as described in review_request). STRATEGY_LIBRARY is a dict not a list.",
+    "nse_holidays_response_structure": "GET /api/admin/nse-holidays returns {holidays: [...], total_in_memory: N} (not a plain list)",
+    "compilation_log_note": "Frontend log showed transient 'Can't resolve ../utils/formatters' errors during hot-reload, but CURRENT compilation state is successful (1 ESLint warning only). This was likely a timing artifact during the refactoring file saves."
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21_refactor_regression.py",
+    "/app/test_reports/pytest/iteration21_results.xml"
+  ],
+
+  "action_items": [
+    "OPTIONAL: Fix ESLint warning in App.js line 227 - add 'checkKiteStatus' to useEffect dependency array (non-breaking)"
+  ],
+
+  "critical_code_review_comments": [
+    "VERIFIED: research_engine.py thin orchestrator correctly re-exports all 60+ functions/constants from 8 modules - no regressions",
+    "VERIFIED: models/__init__.py correctly exports all 31 Pydantic models - server.py imports work correctly",
+    "VERIFIED: Frontend utility extractions - App.js imports from ./utils/formatters, ./utils/exportUtils, ./components/shared/LiveInfoBox all resolve correctly",
+    "NOTE: STRATEGY_LIBRARY is a dict (not list) - future tests should check isinstance(STRATEGY_LIBRARY, dict)",
+    "NOTE: GET /api/admin/nse-holidays returns {holidays: [...], total_in_memory: N} wrapped object, not a plain list - future tests should check for 'holidays' key"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration21_refactor_regression.py (new file, 40 tests)"
+  ],
+
+  "success_rate": {"backend": "100% (40/40 tests passing)", "frontend": "100% (compiles, login works)"},
+
+  "test_credentials": "@shish123 / 1234",
+
+  "seed_data_creation": "None",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 21: All refactoring regression tests pass. Key facts: (1) research_engine.py is 138-line thin orchestrator re-exporting from 8 modular files - all verified working. (2) models/__init__.py 429 lines - all 31 models verified importable. (3) Frontend utilities (formatters.js, exportUtils.js, LiveInfoBox.jsx) extracted and working. (4) FNO endpoint is POST /api/fno/generate with FNOGenerateRequest payload {custom_script: optional}. (5) STRATEGY_LIBRARY is a dict not a list. (6) NSE holidays endpoint returns {holidays: [...], total_in_memory: N}. Previous bug from iteration 20 (compute_macro_context substring match for sector='IT') was not fixed - still open."
+}
