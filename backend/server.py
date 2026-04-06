@@ -5316,6 +5316,9 @@ async def _refresh_open_position(position: dict) -> dict:
             minutes_to_session_close=mins_to_close,
             remaining_trading_days=remaining_trading_days,
             direction=dir_pos,
+            # Pass original targets to prevent compounding loop
+            original_t1=float(position.get("original_target1") or 0),
+            original_t2=float(position.get("original_target2") or 0),
         )
         if rev_t1 > revised_target1:
             revised_target1 = rev_t1
@@ -6409,6 +6412,9 @@ async def create_custom_position(
         "latest_option_ltp": round(float(latest_option_ltp), 2),
         "target1": round(float(payload.buy_price) * 1.12, 2),
         "target2": round(float(payload.buy_price) * 1.5, 2),
+        # Store originals so dynamic revision never compounds against revised values
+        "original_target1": round(float(payload.buy_price) * 1.12, 2),
+        "original_target2": round(float(payload.buy_price) * 1.5, 2),
         "stop_loss": round(float(payload.buy_price) * 0.88, 2),   # Default SL = -12% from entry
         "projected_exit_price": None,
         "best_exit_price": None,
@@ -6948,6 +6954,46 @@ async def startup_tasks():
     await _ensure_owner_exists()
     await _sync_script_master_daily()
     await _sync_kite_option_master_daily()
+
+    # ── One-time migration: backfill original_target1/original_target2 for existing positions
+    # that were created before this field was added, to prevent the T2 compounding bug.
+    # Also resets any positions whose T2 was corrupted by the bug (T2 > 3× buy_price).
+    try:
+        cursor = db.custom_positions.find(
+            {"status": "OPEN"},
+            {"_id": 0, "id": 1, "buy_price": 1, "target1": 1, "target2": 1, "original_target2": 1}
+        )
+        positions_to_check = await cursor.to_list(length=500)
+        fixed_count = 0
+        for pos in positions_to_check:
+            bp = float(pos.get("buy_price") or 0)
+            if bp <= 0:
+                continue
+            t2 = float(pos.get("target2") or 0)
+            clean_t1 = round(bp * 1.12, 2)
+            clean_t2 = round(bp * 1.5, 2)
+            max_allowed = bp * 3.0
+            orig_t2_stored = pos.get("original_target2")
+            needs_update = (
+                orig_t2_stored is None                         # Missing field
+                or float(orig_t2_stored or 0) > max_allowed   # Corrupt stored original
+                or t2 > max_allowed                            # Corrupt live target2
+            )
+            if needs_update:
+                await db.custom_positions.update_one(
+                    {"id": pos["id"]},
+                    {"$set": {
+                        "original_target1": clean_t1,
+                        "original_target2": clean_t2,
+                        # Also reset live target2 if it was corrupted
+                        **({"target1": clean_t1, "target2": clean_t2} if t2 > max_allowed else {}),
+                    }}
+                )
+                fixed_count += 1
+        if fixed_count:
+            logger.info("Migrated/fixed original_target for %d positions (T2 compounding guard)", fixed_count)
+    except Exception as exc:
+        logger.warning("original_target migration failed (non-fatal): %s", exc)
 
 
 @app.on_event("shutdown")

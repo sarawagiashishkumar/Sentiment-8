@@ -460,14 +460,19 @@ def compute_dynamic_target_revision(
     minutes_to_session_close: int,
     remaining_trading_days: int,
     direction: str = "BULLISH",
+    original_t1: float = 0.0,
+    original_t2: float = 0.0,
 ) -> tuple[float, float, str | None]:
     """
     Dynamically revise T1/T2 upward when market conditions support higher profit potential.
 
+    Revision is ALWAYS computed relative to the original targets stored at position creation,
+    NOT the already-revised values. This prevents compounding/infinite growth.
+
     Revision triggers:
-    1. LTP has already exceeded T1 → revise T2 up by 1.5× original T2-T1 gap
+    1. LTP has already exceeded T1 → revise T2 up by 1.5× ORIGINAL T2-T1 gap (one-time cap)
     2. Underlying has moved strongly in signal direction (> 0.5% since entry)
-       AND VIX has not spiked → increase targets proportionally
+       AND VIX has not spiked → increase targets proportionally from ORIGINAL values
     3. Remaining session time is adequate (> 90 min) for target achievement
 
     Returns (revised_t1, revised_t2, revision_note)
@@ -479,16 +484,20 @@ def compute_dynamic_target_revision(
     if entry_price <= 0 or current_t1 <= 0 or current_t2 <= 0:
         return revised_t1, revised_t2, None
 
-    original_gap_t1_t2 = current_t2 - current_t1
+    # Use original targets for gap/factor calculation to prevent compounding.
+    # Fall back to current values only if originals were never stored (legacy positions).
+    base_t1 = original_t1 if original_t1 > 0 else current_t1
+    base_t2 = original_t2 if original_t2 > 0 else current_t2
+    original_gap_t1_t2 = base_t2 - base_t1
 
-    # ── Trigger 1: LTP already exceeded T1 — revise T2 up ────────────────
+    # ── Trigger 1: LTP already exceeded T1 — revise T2 up (non-compounding) ─
     if current_ltp >= current_t1:
-        new_t2 = round(current_t1 + original_gap_t1_t2 * 1.5, 2)
+        new_t2 = round(base_t1 + original_gap_t1_t2 * 1.5, 2)
         if new_t2 > current_t2:
             revised_t2 = new_t2
             revision_note = f"T1 achieved ₹{current_ltp:.1f} ≥ T1 ₹{current_t1:.1f} — T2 revised up to ₹{new_t2:.1f}"
 
-    # ── Trigger 2: Strong underlying move in signal direction ─────────────
+    # ── Trigger 2: Strong underlying move in signal direction (non-compounding) ─
     if underlying_entry > 0:
         underlying_move_pct = (underlying_ltp - underlying_entry) / underlying_entry * 100
         favorable = (
@@ -500,8 +509,9 @@ def compute_dynamic_target_revision(
 
         if favorable and vix_calm and time_adequate:
             move_factor = min(abs(underlying_move_pct) / 2.0, 0.30)  # cap at 30% increase
-            new_t1 = round(current_t1 * (1 + move_factor * 0.5), 2)
-            new_t2 = round(current_t2 * (1 + move_factor), 2)
+            # Apply factor to ORIGINAL targets, not the already-revised ones
+            new_t1 = round(base_t1 * (1 + move_factor * 0.5), 2)
+            new_t2 = round(base_t2 * (1 + move_factor), 2)
             if new_t1 > revised_t1 or new_t2 > revised_t2:
                 revision_note_2 = (
                     f"Strong underlying move {underlying_move_pct:+.1f}% — targets increased "
@@ -513,11 +523,16 @@ def compute_dynamic_target_revision(
 
     # ── Near expiry: cap targets to realistic achievable levels ──────────
     if remaining_trading_days <= 1 and minutes_to_session_close < 120:
-        # Very close to expiry — cap T2 conservatively
         max_realistic_t2 = entry_price * 1.35
         if revised_t2 > max_realistic_t2:
             revised_t2 = max_realistic_t2
             revision_note = (revision_note or "") + " | T2 capped: near expiry + time constraint"
+
+    # ── Absolute safety cap: T2 must never exceed 3× entry (max realistic option gain) ──
+    max_absolute_t2 = entry_price * 3.0
+    if revised_t2 > max_absolute_t2:
+        revised_t2 = max_absolute_t2
+        revision_note = (revision_note or "") + f" | T2 hard-capped at 3× entry ₹{max_absolute_t2:.1f}"
 
     return round(revised_t1, 2), round(revised_t2, 2), revision_note
 
