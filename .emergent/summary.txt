@@ -1,50 +1,50 @@
 <analysis>**original_problem_statement**: 
 The user wants to build a minimalist full-stack web app for stock analysis using FastAPI, React, and MongoDB. The core of the application is to generate high-quality, profitable F&O (Futures and Options) trading signals based on a highly detailed Master Spec.
 
-PRODUCT REQUIREMENTS (Recent Master Spec Updates):
+PRODUCT REQUIREMENTS (Master Spec Updates):
 1. **Global architecture**: ALL calculations (backtests, indicators, targets, P&L, probabilities, Greeks, valuations, scoring, risk metrics) must be computed strictly in backend Python using live/historical data. NO HALLUCINATION. No frontend UI changes permitted. Enforce a minimum 78% Confluence Score for F&O signals. Dynamic target revision and URGENT EXIT alerts are required.
 2. **Market universe**: Restricted to NIFTY 500, NIFTY 50, BANKNIFTY, BSE 500. Liquid stock price ≥ ₹50. Not under NCLT/DRT. Debt < 30% of market cap. Net profit positive in at least 1 of the last 3 quarters.
 3. **Time/Expiry**: 09:15 to 15:30 IST strict session. Remaining trading days exclude weekends and NSE holidays.
-4. **Shared Pipeline**: Master stock snapshot, Complete technicals (Ichimoku, RSI, MACD, BB, Fibonacci), Forensic audit (Beneish M-Score, Piotroski F-Score, Altman Z-Score), Macro/Geopolitical context.
+4. **Shared Pipeline**: Master stock snapshot, Complete technicals, Forensic audit, Macro/Geopolitical context.
 5. **F&O Signals**: Index-level weighted views, realistic data-driven T1/T2 based on intraday behavior, and expiry-aware Best Exit based on VIX-theta decay.
-6. **Multibagger**: Forensic/quality filters, sector tailwinds, and realistic multi-horizon price bands (1W to 1Y) based on volatility.
-7. **Portfolio**: Merge same-symbol positions, compute portfolio risk metrics (Beta, Sharpe, VaR, max drawdown), provide actionable verdicts.
+6. **Multibagger & Portfolio**: Forensic/quality filters, realistic multi-horizon price bands, and portfolio risk metrics (Beta, Sharpe, VaR, max drawdown).
 
 **User's preferred language**: English
+*(Note for next agent: INSTRUCT next agent to respond in the user's preferred language only)*
 
 **what currently exists?** 
-A full-stack application (FastAPI + React + MongoDB) with JWT auth and Kite API integration. The backend has been upgraded with a  and  (for Kite vs. yfinance dual-source checks). The Kite Historical API 403 error is fixed by utilizing numeric . ATR-based targets, VIX-based theta decay, URGENT EXIT logic, dynamic target revisions, and the 78% confluence filter are implemented and tested (Iteration 17 passed 100%).
+A full-stack application (FastAPI + React + MongoDB) with JWT auth and Kite API integration. The backend includes a  and . F&O constraints (78% confluence, ATR-based targets, VIX-based theta decay) are active. **Newly Added:** A dynamic, MongoDB-backed NSE Holiday Management system () with a background task that automatically fetches and updates the upcoming year's NSE holiday list every year one week before April 1st. 
 
 **Last working item**: 
-    - Last item agent was working: The agent performed a comprehensive gap analysis between the existing codebase and the user's exhaustive Master Spec requirements. It drafted an implementation plan to build the remaining forensic, technical, macro, and portfolio risk components and used  to seek user approval to begin the next batch of work.
+    - Last item agent was working: Implemented dynamic NSE trading holiday list for FY 2026-2027, replacing hardcoded dates with a live NSE API auto-fetch background task and MongoDB storage.
     - Status: USER VERIFICATION PENDING
-    - Agent Testing Done: Y (for the previous batch)
+    - Agent Testing Done: Y
     - Which testing method agent to use? backend testing agent
     - User Testing Done: N
 
 **All Pending/In progress Issue list**:  
   - Issue 1: Full Master Spec Logic Implementation (Gap filling) (P0)
-     - Attempted fixes: The agent has prepared an implementation plan for the missing components (e.g., Piotroski, Beneish, Altman scores, Ichimoku, Portfolio VaR/Sharpe). 
-     - Next debug checklist: Read the user's response to the pending  prompt. Once approved, systematically implement the missing backend Python logic in  and integrate it into  without modifying the frontend UI.
-     - Why fix this issue and what will be achieved with the fix? It satisfies the user's strict requirement for comprehensive, hallucination-free, backend-driven financial analysis.
-     - Status: BLOCKED (Waiting for user approval)
+     - Attempted fixes: The agent previously prepared an implementation plan for the missing components (e.g., Piotroski, Beneish, Altman scores, Ichimoku, Portfolio VaR/Sharpe). The user briefly pivoted to request the NSE Holiday task. Now that it is done, the main plan needs to be resumed.
+     - Next debug checklist: Ask the user if they are ready to proceed with the Master Spec implementation batches (Forensics, Macro, Technicals). 
+     - Why fix this issue and what will be achieved with the fix? Satisfies the user's strict requirement for comprehensive, hallucination-free, backend-driven financial analysis.
+     - Status: BLOCKED (Waiting for user confirmation to start the next heavy batch)
      - Is recurring issue? N
      - Should Test frontend/backend/both after fix? backend
-     - Blocked on other issue: Pending user response.
+     - Blocked on other issue: Pending user confirmation.
 
 **In progress Task List**: 
   - Task 1: Master Spec Gap Analysis & Phased Implementation
-     - Where to resume: Await user approval on the gap analysis plan. Once confirmed, begin coding the first batch of missing features (likely the Forensic and advanced Technical indicators).
+     - Where to resume: Await user approval on the gap analysis plan. Once confirmed, begin coding the first batch of missing features (Forensic and advanced Technical indicators) into .
      - What will be achieved with this? Complete alignment with the requested multi-layer research pipeline.
      - Status: BLOCKED
      - Should Test frontend/backend/both after fix? backend
-     - Blocked on something: User confirmation via .
+     - Blocked on something: User confirmation.
 
 **Upcoming and Future Tasks**
     Upcoming Tasks:
     - **P0: Complete Technical Analysis Implementation:** Add Ichimoku cloud, Fibonacci retracements, OBV, VPT, and Candlestick patterns to .
     - **P0: Forensic Financial Audit:** Implement Beneish M-Score, Piotroski F-Score, and Altman Z-Score calculations.
-    - **P0: Macro, Geopolitical & Regime Context:** Implement logic to map global/India-specific events to sector impacts and classify market regimes (low-vol, high-vol crash, etc.).
+    - **P0: Macro, Geopolitical & Regime Context:** Implement logic to map global/India-specific events to sector impacts and classify market regimes.
     - **P0: Portfolio-level Risk Analytics:** Calculate portfolio beta, Sharpe ratio, maximum drawdown, VaR (95%), and correlation matrix. Merge identical script holdings.
     - **P1: Multi-horizon Price Bands:** Compute realistic 1W/1M/3M/6M/9M/1Y price bands derived from historical volatility and drawdown for Multibagger and Portfolio views.
     - **P1: Strategy Library & Backtest Thresholds:** Enforce that F&O signals are only generated for strategies with ≥75% win rate and ≥0.40R expectancy.
@@ -55,16 +55,16 @@ A full-stack application (FastAPI + React + MongoDB) with JWT auth and Kite API 
     - **P2: Sector Momentum Dashboard.**
 
 **Completed work in this session**
-- Kite Historical API Fix (DONE): Updated option master sync to store numeric , unlocking historical historical candle fetch.
-- Research Engine & Data Verifier (DONE): Created  and  (Kite vs yfinance dual-source fallback).
-- F&O Constraints Enforced (DONE): Enforced 78% minimum confluence score, ATR-based targets, VIX-based theta decay, dynamic target revisions, URGENT EXIT triggers, and correct NSE holiday parsing.
-- Testing Agent (DONE): Test Iteration 16 & 17 executed. Backend logic passed 62/62 tests. 
+- NSE Holiday Management (DONE): Created  for MongoDB-backed storage. Replaced hardcoded default set in .
+- Background Auto-Fetcher (DONE): Added a background task to automatically refresh the holiday list from external sources 1 week before April 1st.
+- Admin APIs for Holidays (DONE): Added endpoints  and  to manually inspect and fetch holiday lists. Corrected missing 2026/2027 holidays.
+- Backend testing (DONE): Executed 21/21 tests perfectly via testing agent (Iteration 18).
 
 **Earlier issues found/mentioned but not fixed**
-   - None. The major Kite API 403 issue was successfully resolved.
+   - None.
 
 **Known issue recurrence from previous fork**
-  - Issue recurrence in previous fork: Kite Historical API failing (Resolved).
+  - Issue recurrence in previous fork: None
   - Recurrence count: 0
   - Status: RESOLVED
 
@@ -74,8 +74,8 @@ A full-stack application (FastAPI + React + MongoDB) with JWT auth and Kite API 
 **Key Technical Concepts**
 - Full-Stack App: React (Frontend) & FastAPI (Backend)
 - Database: MongoDB
-- Live Data: Kite Connect API v3 (primary),  (fallback)
-- Backend compute layer: Strict Python computation for financial logic (No LLM calculations).
+- Live Data: Kite Connect API v3 (primary),  (fallback), Web-scraped NSE Holidays
+- Backend compute layer: Strict Python computation for financial logic (No LLM calculations). Background tasks for scheduled updates.
 
 **key DB schema**
   - **users:** { , ,  }
@@ -84,60 +84,56 @@ A full-stack application (FastAPI + React + MongoDB) with JWT auth and Kite API 
 Script done., , ,  }
   - **kite_option_master:** { , , , , , ,  }
   - **fundamental_cache:** { , , , , ,  }
+  - **nse_holidays** (New): { Mon Apr  6 15:33:14 UTC 2026 (YYYY-MM-DD), , ,  }
 
 **changes in tech stack**
   - None
 
 **All files of reference** 
-1. : Heavily updated with logic hooks and endpoint modifications.
-2. : Created in this session to handle all technical/financial math.
-3. : Created for Kite vs. yfinance dual-source verification.
-4. : Latest 100% passing test report.
-5. : Updated.
+1. : Created for MongoDB holiday storage & fetching.
+2. : Updated to wire in  and remove hardcoded dates.
+3. : Latest 100% passing test report for NSE Holidays.
+4. : Updated with NSE Holiday logic.
 
 **Areas that need refactoring**: 
-- : Has grown beyond 6,300 lines. Needs modularization (routes, models, controllers) urgently.
+- : Currently over 6,400 lines. Routing, Models, and Admin logic desperately need splitting.
 
 **key api endpoints**
 - 
-- 
-- 
+-  (New)
+-  (New)
 
 **Critical Info for New Agent** 
-- **Strict User Constraint:** The user requires ALL metrics (Technical, Forensic, Macro, Risk) to be calculated mathematically in backend Python. You MUST NOT use the LLM to guess, hallucinate, or estimate numbers. 
+- **Strict User Constraint:** ALL analytical metrics MUST be calculated mathematically in backend Python. You MUST NOT use the LLM to guess or estimate numbers. 
 - **No UI Changes:** The user explicitly forbade modifications to the frontend UI/design/appearance.
-- **Current State:** The agent just sent an  request to the user detailing a gap analysis and an implementation plan to cover the missing Master Spec requirements (Forensics, Macro, Portfolio Risk). **Your immediate first step is to read the user's reply to that prompt and proceed with the approved implementation plan in verified batches.**
+- **Current Flow State:** The agent was waiting for approval on a massive implementation plan. The user provided an interim task (NSE holidays), which is now 100% complete. **Your immediate first step is to confirm with the user if you should now resume the Master Spec Implementation (Forensics, Technicals, Portfolio Risk) or if they have another priority.**
 - Test continuously using the backend testing agent after completing a batch of logic.
 
 **documents and test reports created in this job**
-  - /app/memory/PRD.md
-  - /app/test_reports/iteration_16.json
-  - /app/test_reports/iteration_17.json
-  - /app/memory/test_credentials.md
+  - /app/test_reports/iteration_18.json
+  - /app/memory/PRD.md (Updated)
 
 **Last 10 User Messages and any pending HUMAN messages** 
-1. User #242: Repeated the comprehensive Master Spec instructions, asking to ensure dual-source data verification and check if the constraints (78% confluence, URGENT EXIT, Session timing) are active.
-(Agent audited the codebase, found gaps, implemented data verifier, fixed holidays, added dynamic target revision and VIX theta, tested 100% pass, and summarized).
-2. User #327: Stated the implementation doesn't fully reflect the detailed instructions. Resubmitted the *entire* Master Spec again. Demanded a new implementation plan that cross-references all elements and required execution in verified batches.
-3. Agent #332: Performed a gap analysis and used  to present the plan.
-**Pending Human Messages:** Waiting for the user's response to the proposed gap analysis and implementation plan.
+1. User: Please use ask_human tool and confirm your plan now. (Completed)
+2. User: Ensure the NSE trading holiday list is current for FY 2026–2027. For long-term maintenance, develop a background task that automatically retrieves and updates... (Completed)
+**Pending Human Messages:** Need to ask the user if they have verified the newly implemented background holiday fetcher and if you should resume the previously discussed Master Spec Gap Plan.
 
 **Project Health Check:**
 - Broken: None. 
-- Mocked: Advanced indicators like Piotroski F-Score, Beneish M-Score, complex Ichimoku logic, and Portfolio VaR/Beta are either missing or using basic placeholders pending the new implementation batches.
+- Mocked: Advanced indicators like Piotroski F-Score, Beneish M-Score, complex Ichimoku logic, and Portfolio VaR/Beta are either missing or using placeholders pending the new implementation batches.
 
 **3rd Party Integrations** 
 - Kite Connect API v3 (Live Market Data) — requires User API Key. 
 -  (Fundamental Data / Fallback)
 
 **Testing status**
-  - Testing agent used after significant changes: YES (iteration 17, 62/62 passed)
+  - Testing agent used after significant changes: YES (iteration 18, 21/21 passed)
   - Troubleshoot agent used after agent stuck in loop: NO
-  - Test files created: [/app/test_reports/iteration_16.json, /app/test_reports/iteration_17.json]
+  - Test files created: [/app/test_reports/iteration_18.json]
   - Known regressions: None
 
 **Credentials to test flow:**
-- Check  if auth testing is required.
+- Check  (Admin Account:  / PIN: ).
 
 **What agent forgot to execute**
-- Nothing was forgotten; the agent correctly paused and requested user permission via  before beginning the massive, multi-batch implementation of the newly resubmitted Master Spec.</analysis>
+- Nothing. The agent successfully handled the requested background holiday logic without disrupting the codebase.</analysis>

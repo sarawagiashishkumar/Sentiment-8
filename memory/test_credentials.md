@@ -13,4 +13,4 @@
 ## Kite API
 - Kite access token stored in `system_meta` collection key `kite_session`
 - Kite API key available in backend `.env`
-- Redirect URL: https://fno-signals-4.preview.emergentagent.com/api/kite/callback
+- Redirect URL: https://multibagger-engine.preview.emergentagent.com/api/kite/callback
