@@ -219,9 +219,14 @@ def compute_realistic_price_bands(
     hist_vol: float | None,
     sector: str = "Unknown",
     pe_ratio: float | None = None,
+    piotroski_score: int | None = None,
+    rsi: float | None = None,
+    trend_alignment: str | None = None,
+    beneish_m_score: float | None = None,
 ) -> dict[str, dict[str, float]]:
     """
-    Compute realistic price bands using historical volatility.
+    Compute realistic price bands using historical volatility + quality-adjusted drift.
+    Drift is adjusted for Piotroski F-Score, RSI, trend alignment, and Beneish M-Score.
     Returns dict keyed by horizon ("1W", "1M", "3M", "6M", "9M", "1Y").
     Each value has: upside_pct, downside_pct (negative), flag.
     Falls back to sector/PE-based estimates if hist_vol is unavailable.
@@ -244,17 +249,60 @@ def compute_realistic_price_bands(
 
     hist_vol = max(0.10, min(hist_vol, 0.80))
 
+    # ── Quality-adjusted annual drift ────────────────────────────────────────
+    # Base: 7% equity market premium (India NIFTY long-run)
+    drift_adj = 0.07
+
+    # Piotroski F-Score: measures financial strength (0-9)
+    if piotroski_score is not None:
+        if piotroski_score >= 7:
+            drift_adj += 0.03    # High quality financials → extra +3%
+        elif piotroski_score >= 5:
+            drift_adj += 0.01    # Decent financials → +1%
+        elif piotroski_score <= 3:
+            drift_adj -= 0.04    # Weak financials → -4%
+        # score 4: no adjustment
+
+    # RSI: momentum signal
+    if rsi is not None:
+        if rsi > 68:
+            drift_adj -= 0.025   # Overbought — mean reversion risk
+        elif rsi > 55:
+            drift_adj += 0.01    # Mild bullish momentum
+        elif rsi < 35:
+            drift_adj += 0.03    # Heavily oversold — mean reversion upside
+        elif rsi < 42:
+            drift_adj += 0.015   # Moderately oversold
+
+    # Trend alignment signal
+    if trend_alignment:
+        ta = trend_alignment.lower()
+        if "bullish_all" in ta or "strong_uptrend" in ta or "uptrend" in ta:
+            drift_adj += 0.025   # All timeframes aligned bullish
+        elif "bearish_all" in ta or "strong_downtrend" in ta or "downtrend" in ta:
+            drift_adj -= 0.04    # All timeframes aligned bearish
+        elif "bullish" in ta:
+            drift_adj += 0.012
+
+    # Beneish M-Score: earnings manipulation flag
+    # > -1.78 = likely manipulator, -2.22 to -1.78 = grey zone, < -2.22 = safe
+    if beneish_m_score is not None and beneish_m_score > -1.78:
+        drift_adj -= 0.05        # Earnings manipulation risk — significant penalty
+
+    # Bound drift to [-8%, +22%] per year
+    drift_adj = max(-0.08, min(drift_adj, 0.22))
+
     bands: dict[str, dict[str, float]] = {}
     for horizon, t_days in HORIZON_TRADING_DAYS.items():
         t = t_days / 252
         sigma_t = hist_vol * math.sqrt(t)
+        drift = drift_adj * t  # Quality-adjusted drift (not fixed 7%)
 
         cons_low = round(ltp * math.exp(-1.5 * sigma_t) - ltp, 2)
         cons_high = round(ltp * math.exp(1.0 * sigma_t) - ltp, 2)
         cons_low_pct = round((cons_low / ltp) * 100, 2)
         cons_high_pct = round((cons_high / ltp) * 100, 2)
 
-        drift = 0.07 * t
         exp_low = round(ltp * math.exp(drift - sigma_t) - ltp, 2)
         exp_high = round(ltp * math.exp(drift + 1.5 * sigma_t) - ltp, 2)
         exp_low_pct = round((exp_low / ltp) * 100, 2)
@@ -275,6 +323,7 @@ def compute_realistic_price_bands(
             "conservative_low_pct": cons_low_pct,
             "optimistic_high_pct": opt_high_pct,
             "hist_vol_pct": round(hist_vol * 100, 1),
+            "annual_drift_pct": round(drift_adj * 100, 1),
         }
     return bands
 
@@ -403,9 +452,11 @@ def compute_atr_based_fno_targets(
     minutes_to_expiry: int,
     option_type: str,
     vix: float | None = None,
+    strike: float | None = None,
 ) -> tuple[float, float]:
     """
     Compute data-driven T1/T2 targets for F&O options using underlying ATR.
+    Uses moneyness-based delta estimation if strike is provided.
     Returns (target1, target2) in option price terms.
     """
     if minutes_to_expiry < 180:
@@ -426,11 +477,33 @@ def compute_atr_based_fno_targets(
         elif vix < 12:
             vix_factor = 0.85
 
+    # Moneyness-based delta estimation (more accurate than fixed 0.45)
+    delta_proxy = 0.45  # ATM default
+    if strike is not None and underlying_ltp > 0 and strike > 0:
+        if option_type == "CE":
+            moneyness = underlying_ltp / strike
+        else:  # PE
+            moneyness = strike / underlying_ltp
+        if moneyness >= 1.08:
+            delta_proxy = 0.80   # Deep ITM
+        elif moneyness >= 1.04:
+            delta_proxy = 0.65   # ITM
+        elif moneyness >= 0.97:
+            delta_proxy = 0.45   # Near ATM
+        elif moneyness >= 0.93:
+            delta_proxy = 0.28   # OTM
+        else:
+            delta_proxy = 0.15   # Deep OTM
+
     if atr is not None and underlying_ltp > 0 and atr > 0:
-        atr_pct = atr / underlying_ltp
-        delta_proxy = 0.45
-        t1_pct = atr_pct * delta_proxy * time_factor * vix_factor
-        t2_pct = atr_pct * delta_proxy * 2.0 * time_factor * vix_factor
+        # Correct formula: option move = underlying_ATR_points × delta
+        # NOT: atr_pct × delta × entry_price (incorrect, mixes up scales)
+        underlying_t1_move = atr * time_factor * vix_factor
+        underlying_t2_move = atr * time_factor * vix_factor * 2.0
+        option_t1_gain = underlying_t1_move * delta_proxy
+        option_t2_gain = underlying_t2_move * delta_proxy
+        target1 = round(entry_price + option_t1_gain, 2)
+        target2 = round(entry_price + option_t2_gain, 2)
     else:
         if entry_price > 100:
             base_t1, base_t2 = 0.08, 0.22
@@ -440,12 +513,12 @@ def compute_atr_based_fno_targets(
             base_t1, base_t2 = 0.12, 0.40
         t1_pct = base_t1 * time_factor * vix_factor
         t2_pct = base_t2 * time_factor * vix_factor
+        target1 = round(entry_price * (1 + t1_pct), 2)
+        target2 = round(entry_price * (1 + t2_pct), 2)
 
-    t1_pct = max(min(t1_pct, 0.18), 0.04)
-    t2_pct = max(min(t2_pct, 0.60), 0.10)
-
-    target1 = round(entry_price * (1 + t1_pct), 2)
-    target2 = round(entry_price * (1 + t2_pct), 2)
+    # Minimum floor: T1 must be at least 3% above entry, T2 at least 8%
+    target1 = max(target1, round(entry_price * 1.03, 2))
+    target2 = max(target2, round(entry_price * 1.08, 2))
 
     return target1, target2
 

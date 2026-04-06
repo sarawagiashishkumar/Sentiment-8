@@ -1,4 +1,5 @@
 import asyncio
+import math
 import csv
 import difflib
 import hashlib
@@ -1381,9 +1382,13 @@ def _portfolio_horizon_ranges(
     hist_vol: float | None = None,
     sector: str = "Unknown",
     pe_ratio: float | None = None,
+    piotroski_score: int | None = None,
+    rsi: float | None = None,
+    trend_alignment: str | None = None,
+    beneish_m_score: float | None = None,
 ) -> dict[str, PortfolioHorizonRange]:
     """
-    Compute realistic horizon ranges using historical volatility when available.
+    Compute realistic horizon ranges using historical volatility + quality-adjusted drift.
     Falls back to valuation-based static ranges if hist_vol is not available.
     """
     # If we have historical volatility, use the research engine for accurate bands
@@ -1393,6 +1398,10 @@ def _portfolio_horizon_ranges(
             hist_vol=hist_vol,
             sector=sector,
             pe_ratio=pe_ratio,
+            piotroski_score=piotroski_score,
+            rsi=rsi,
+            trend_alignment=trend_alignment,
+            beneish_m_score=beneish_m_score,
         )
         response: dict[str, PortfolioHorizonRange] = {}
         for horizon in ["1W", "1M", "3M", "6M", "9M", "1Y"]:
@@ -1407,7 +1416,7 @@ def _portfolio_horizon_ranges(
             )
         return response
 
-    # Fallback: valuation-based static approach
+    # Fallback: valuation-based static approach (only when no hist_vol)
     if value_flag == "Attractive" and price_zone == "Near 52W low":
         base_up, base_down = 20.0, 8.0
     elif value_flag == "Expensive" and price_zone == "Near 52W high":
@@ -1527,6 +1536,7 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         )
 
     analyses: list[PortfolioStockAnalysis] = []
+    hist_vol_map: dict[str, float] = {}  # Track per-stock hist_vol for risk metrics
     for row in stock_rows:
         stock = row["core"]
         pe = stock.pe_ratio
@@ -1566,35 +1576,12 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         else:
             quality_proxy = "Moderate"
 
-        expected_ranges = _portfolio_horizon_ranges(
-            value_flag,
-            price_zone,
-            row["pnl_pct"],
-            ltp=stock.ltp,
-            hist_vol=None,  # Will be updated below if hist data available
-            sector=stock.sector or "Unknown",
-            pe_ratio=stock.pe_ratio,
-        )
         expected_signals: dict[str, PortfolioExpectedSignal] = {}
-        for horizon, hr in expected_ranges.items():
-            max_expected_price = round(stock.ltp * (1 + (hr.upside_pct / 100)), 2)
-            min_expected_price = round(stock.ltp * (1 + (hr.downside_pct / 100)), 2)
-            delta_amount = max_expected_price - row["avg_price"]
-            delta_pct = (delta_amount / row["avg_price"]) * 100 if row["avg_price"] > 0 else 0.0
-            amount_signal = f"{delta_amount:+.2f}"
-            percent_signal = f"{delta_pct:+.2f}%"
-            expected_signals[horizon] = PortfolioExpectedSignal(
-                max_expected_price=max_expected_price,
-                min_expected_price=min_expected_price,
-                amount_signal=amount_signal,
-                percent_signal=percent_signal,
-                direction="PROFIT" if delta_amount >= 0 else "LOSS",
-            )
 
         # ── Use research engine verdict ──────────────────────────────────
         allocation_pct = (row["current_value"] / total_current_value) * 100 if total_current_value > 0 else 0.0
 
-        # ── Fetch fundamental cache for richer verdict ────────────────────
+        # ── Step 1: Fetch fundamental cache ─────────────────────────────
         try:
             _fund = await _get_fundamental_data(stock.symbol)
         except Exception:
@@ -1606,7 +1593,7 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         _trend_val = None
         _master_snap: dict | None = None
 
-        # ── Fetch hist OHLCV for tech snapshot + master snapshot ──────────
+        # ── Step 2: Fetch hist OHLCV for technical snapshot ──────────────
         try:
             _hist_df = await _get_hist_ohlcv(stock.symbol, period="1y")
             if _hist_df is not None and len(_hist_df) >= 20:
@@ -1614,31 +1601,49 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
                 _hist_vol_val = _ts.get("hist_vol")
                 _rsi_val = _ts.get("rsi")
                 _trend_val = _ts.get("trend_alignment")
-                # Master stock snapshot
                 _master_snap = compute_master_stock_snapshot(
                     symbol=stock.symbol,
                     ltp=stock.ltp,
                     hist=_hist_df,
                     sector=stock.sector,
                     market_cap=stock.market_cap,
-                    index_memberships=[],  # enriched if available
+                    index_memberships=[],
                 )
-                # Use volatility-based price bands if hist available
-                _hv_bands = compute_realistic_price_bands(
-                    ltp=stock.ltp, hist_vol=_hist_vol_val
-                )
-                if _hv_bands:
-                    for hor, band in _hv_bands.items():
-                        if hor in expected_signals:
-                            expected_signals[hor] = PortfolioExpectedSignal(
-                                max_expected_price=band.get("high", expected_signals[hor].max_expected_price),
-                                min_expected_price=band.get("low", expected_signals[hor].min_expected_price),
-                                amount_signal=expected_signals[hor].amount_signal,
-                                percent_signal=expected_signals[hor].percent_signal,
-                                direction=expected_signals[hor].direction,
-                            )
         except Exception:
             pass
+
+        # ── Step 3: Compute horizon ranges with ALL quality parameters ───
+        # This single call uses hist_vol + Piotroski + RSI + trend + Beneish
+        # for quality-adjusted drift instead of fixed 7%.
+        if _hist_vol_val is not None:
+            hist_vol_map[stock.symbol] = _hist_vol_val
+        expected_ranges = _portfolio_horizon_ranges(
+            value_flag,
+            price_zone,
+            row["pnl_pct"],
+            ltp=stock.ltp,
+            hist_vol=_hist_vol_val,
+            sector=stock.sector or "Unknown",
+            pe_ratio=stock.pe_ratio,
+            piotroski_score=_piotroski,
+            rsi=_rsi_val,
+            trend_alignment=_trend_val,
+            beneish_m_score=_beneish,
+        )
+
+        # ── Step 4: Build expected_signals from computed ranges ──────────
+        for horizon, hr in expected_ranges.items():
+            max_expected_price = round(stock.ltp * (1 + (hr.upside_pct / 100)), 2)
+            min_expected_price = round(stock.ltp * (1 + (hr.downside_pct / 100)), 2)
+            delta_amount = max_expected_price - row["avg_price"]
+            delta_pct = (delta_amount / row["avg_price"]) * 100 if row["avg_price"] > 0 else 0.0
+            expected_signals[horizon] = PortfolioExpectedSignal(
+                max_expected_price=max_expected_price,
+                min_expected_price=min_expected_price,
+                amount_signal=f"{delta_amount:+.2f}",
+                percent_signal=f"{delta_pct:+.2f}%",
+                direction="PROFIT" if delta_amount >= 0 else "LOSS",
+            )
 
         recommendation, comments = compute_portfolio_verdict(
             pnl_pct=row["pnl_pct"],
@@ -1701,7 +1706,7 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
             "pnl_pct": a.pnl_pct,
             "sector": a.sector or "Unknown",
             "market_cap": a.market_cap,
-            "hist_vol": 0.30,
+            "hist_vol": hist_vol_map.get(a.symbol, 0.30),  # Use actual computed hist_vol
         }
         for a in analyses
     ]
@@ -3231,12 +3236,16 @@ def compute_multibagger_analysis(stock: StockCoreNormalized, fundamental: dict |
     # Use historical volatility from fundamental data if available
     hist_vol = fundamental.get("hist_vol") if fundamental else None
 
-    # Compute volatility-based realistic price bands
+    # Compute volatility-based realistic price bands with quality-adjusted drift
+    _mb_piotroski = fundamental.get("piotroski_score") if fundamental else None
+    _mb_beneish = fundamental.get("beneish_m_score") if fundamental else None
     vol_bands = compute_realistic_price_bands(
         ltp=float(ltp),
         hist_vol=hist_vol,
         sector=getattr(stock, "sector", "Unknown") if hasattr(stock, "sector") else "Unknown",
         pe_ratio=pe,
+        piotroski_score=_mb_piotroski,
+        beneish_m_score=_mb_beneish,
     ) if ltp is not None else {}
 
     for key, base in duration_base.items():
@@ -3977,14 +3986,20 @@ async def build_fno_signal(
         minutes_to_expiry=effective_minutes,
         option_type=contract.option_type,
         vix=india_vix,
+        strike=float(contract.strike),
     )
     
     stop_loss = round(entry_price * 0.80, 2)
     
-    if target1 > option_ltp * 1.20:
-        target1 = round(option_ltp * 1.15, 2)
-    if target2 > option_ltp * 1.80:
-        target2 = round(option_ltp * 1.65, 2)
+    # Sanity check: T1 must not exceed an extreme intraday move (6 ATRs × delta)
+    # This replaces the old hard percentage cap which was hiding real ATR results
+    _atr_proxy = underlying_atr or (float(underlying_ltp) * 0.012)
+    _delta_proxy = 0.45
+    _max_realistic_session_gain = _atr_proxy * _delta_proxy * 6.0  # 6 ATRs extreme move
+    if target1 - entry_price > _max_realistic_session_gain:
+        target1 = round(entry_price + _max_realistic_session_gain * 0.65, 2)
+    if target2 - entry_price > _max_realistic_session_gain * 1.8:
+        target2 = round(entry_price + _max_realistic_session_gain * 1.5, 2)
 
     if minutes_to_expiry < 60 and entry_price > 0:
         required_gain = (target1 - entry_price) / entry_price
@@ -4007,19 +4022,33 @@ async def build_fno_signal(
 
     if remaining_trading_days >= 5:
         best_exit_days = min(int(remaining_trading_days * 0.6), remaining_trading_days - 1)
-        max_ltp_multiplier = 1.4
     elif remaining_trading_days >= 3:
         best_exit_days = min(int(remaining_trading_days * 0.7), remaining_trading_days - 1)
-        max_ltp_multiplier = 1.25
     elif remaining_trading_days >= 2:
         best_exit_days = 1
-        max_ltp_multiplier = 1.15
     else:
         best_exit_days = 0
-        max_ltp_multiplier = 1.05
 
-    max_ltp_projection = round(entry_price * max_ltp_multiplier, 2)
-    max_ltp_projection = min(max_ltp_projection, target2)
+    # ── ATR-based max achievable option projection ────────────────────────────
+    # Maximum underlying move = ATR × sqrt(best_exit_days) × 2σ scenario
+    # Maximum option gain = underlying_move × moneyness_delta
+    _atr_for_best_exit = underlying_atr or (float(underlying_ltp) * 0.012)
+    _underlying_max_move = _atr_for_best_exit * math.sqrt(max(best_exit_days, 1)) * 2.0
+    # Re-compute delta_proxy for best exit (same moneyness logic)
+    _be_delta = 0.45
+    if contract.strike and float(underlying_ltp) > 0:
+        _mono = float(underlying_ltp) / float(contract.strike) if contract.option_type == "CE" else float(contract.strike) / float(underlying_ltp)
+        if _mono >= 1.08: _be_delta = 0.80
+        elif _mono >= 1.04: _be_delta = 0.65
+        elif _mono >= 0.97: _be_delta = 0.45
+        elif _mono >= 0.93: _be_delta = 0.28
+        else: _be_delta = 0.15
+    _max_option_gain_from_atr = _underlying_max_move * _be_delta * 1.2  # 20% leverage premium
+    max_ltp_projection = round(min(
+        entry_price + _max_option_gain_from_atr,
+        entry_price * 3.0,  # Hard cap: never more than 3x entry
+        target2 * 1.20,     # Cap at 20% above T2 to stay realistic
+    ), 2)
 
     # Theta decay: VIX-based model (not fixed multiplier)
     if remaining_trading_days > 0 and best_exit_days > 0:
