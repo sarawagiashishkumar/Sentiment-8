@@ -164,6 +164,15 @@ from services.confluence_score_v2 import (
     BUCKET_WEIGHTS,
 )
 
+# ── Mini-Batch: F&O Universe ─────────────────────────────────────────────────
+from services.fo_universe import (
+    NSE_FO_STOCKS,
+    INDEX_FO_UNDERLYINGS,
+    get_fo_universe,
+    get_fo_universe_from_db,
+    get_fo_universe_size,
+)
+
 __all__ = [
     # Core
     "HORIZON_TRADING_DAYS",
@@ -223,4 +232,7 @@ __all__ = [
     # NEW: Confluence Score V2 (Batch 3)
     "compute_bucket_a", "compute_bucket_b", "compute_bucket_c", "compute_bucket_d",
     "compute_confluence_score_v2", "CONFLUENCE_THRESHOLD", "BUCKET_WEIGHTS",
+    # NEW: F&O Universe
+    "NSE_FO_STOCKS", "INDEX_FO_UNDERLYINGS",
+    "get_fo_universe", "get_fo_universe_from_db", "get_fo_universe_size",
 ]

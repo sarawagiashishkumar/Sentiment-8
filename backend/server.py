@@ -123,6 +123,9 @@ from services.research_engine import (
     compute_bucket_d,
     compute_confluence_score_v2,
     CONFLUENCE_THRESHOLD,
+    # ── Mini-Batch: F&O Universe ─────────────────────────────────────────
+    get_fo_universe,
+    get_fo_universe_from_db,
 )
 from services.data_verifier import (
     fetch_verified_price,
@@ -951,7 +954,8 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
                 return []
 
             reader = csv.DictReader(io.StringIO(response.text))
-            allowed = {"NIFTY", "BANKNIFTY", *STOCK_FNO_UNIVERSE}
+            # ── Mini-Batch: Use full F&O universe for option chain loading ──
+            allowed = {"NIFTY", "BANKNIFTY", *get_fo_universe(lot_size_map=LOT_SIZE_MAP)}
             rows: list[dict] = []
             equity_rows: list[dict] = []
             for row in reader:
@@ -2214,7 +2218,7 @@ async def _sync_script_master_daily(force: bool = False) -> None:
 
     seed_symbols = {
         *MULTIBAGGER_UNIVERSE,
-        *STOCK_FNO_UNIVERSE,
+        *get_fo_universe(lot_size_map=LOT_SIZE_MAP),
         *[row["underlying"] for row in FNO_CONTRACTS],
         "NIFTY",
         "BANKNIFTY",
@@ -4611,44 +4615,48 @@ async def build_fno_signal(
     # probability tables to validate/refine ATR-based targets.
     _prob_targets: dict = {}
     _mfe_library: list = []
-    try:
-        _hist_for_mfe = await _get_hist_ohlcv(contract.underlying, period="1y")
-        if _hist_for_mfe is not None and not _hist_for_mfe.empty and len(_hist_for_mfe) >= 100:
-            _atr_for_mfe = underlying_atr or (float(underlying_ltp) * 0.012)
-            _mfe_library = build_mfe_mae_library(
-                hist_df=_hist_for_mfe,
-                atr=_atr_for_mfe,
-                strategy_id=_strategy_id,
-                direction="LONG",
-                window_bars=min(75, len(_hist_for_mfe) // 4),
-            )
-            if _mfe_library and len(_mfe_library) >= 20:
-                _sl_dist_pct = ((entry_price - stop_loss) / entry_price) * 100
-                _prob_table = build_probability_table(
-                    _mfe_library,
-                    sl_distance_pct=max(_sl_dist_pct, 5.0),
+    _hist_for_mfe = None
+    # Skip MFE/MAE for indices (yfinance unreliable for $BANKNIFTY.NS/$NIFTY.NS)
+    _skip_mfe = contract.underlying in ("NIFTY", "BANKNIFTY")
+    if not _skip_mfe:
+        try:
+            _hist_for_mfe = await _get_hist_ohlcv(contract.underlying, period="1y")
+            if _hist_for_mfe is not None and not _hist_for_mfe.empty and len(_hist_for_mfe) >= 100:
+                _atr_for_mfe = underlying_atr or (float(underlying_ltp) * 0.012)
+                _mfe_library = build_mfe_mae_library(
+                    hist_df=_hist_for_mfe,
+                    atr=_atr_for_mfe,
+                    strategy_id=_strategy_id,
+                    direction="LONG",
+                    window_bars=min(75, len(_hist_for_mfe) // 4),
                 )
-                _prob_targets = select_targets_from_probability(
-                    _prob_table,
-                    entry_price=entry_price,
-                    stop_loss=stop_loss,
-                    minutes_remaining=effective_minutes,
-                )
-                if _prob_targets.get("method") == "probability_based":
-                    _pt1 = _prob_targets.get("t1")
-                    _pt2 = _prob_targets.get("t2")
-                    # Use probability targets only if they are MORE conservative
-                    # (lower) than ATR targets — ensures higher hit probability
-                    if _pt1 and _pt1 < target1:
-                        target1 = _pt1
-                        trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
-                    if _pt2 and _pt2 < target2:
-                        target2 = _pt2
-                        trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
-                    # Ensure T2 > T1
-                    target2 = max(target2, round(target1 * 1.05, 2))
-    except Exception as _mfe_err:
-        logger.debug(f"MFE/MAE probability refinement failed: {_mfe_err}")
+                if _mfe_library and len(_mfe_library) >= 20:
+                    _sl_dist_pct = ((entry_price - stop_loss) / entry_price) * 100
+                    _prob_table = build_probability_table(
+                        _mfe_library,
+                        sl_distance_pct=max(_sl_dist_pct, 5.0),
+                    )
+                    _prob_targets = select_targets_from_probability(
+                        _prob_table,
+                        entry_price=entry_price,
+                        stop_loss=stop_loss,
+                        minutes_remaining=effective_minutes,
+                    )
+                    if _prob_targets.get("method") == "probability_based":
+                        _pt1 = _prob_targets.get("t1")
+                        _pt2 = _prob_targets.get("t2")
+                        # Use probability targets only if they are MORE conservative
+                        # (lower) than ATR targets — ensures higher hit probability
+                        if _pt1 and _pt1 < target1:
+                            target1 = _pt1
+                            trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
+                        if _pt2 and _pt2 < target2:
+                            target2 = _pt2
+                            trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
+                        # Ensure T2 > T1
+                        target2 = max(target2, round(target1 * 1.05, 2))
+        except Exception as _mfe_err:
+            logger.debug(f"MFE/MAE probability refinement failed: {_mfe_err}")
 
     # ── Batch 2 NEW: No-chasing rule (section 1.8) ───────────────────────
     try:
@@ -4816,12 +4824,12 @@ async def build_fno_signal(
 
     # ── Batch 2 NEW: Forward MFE-based Best Exit refinement ──────────────
     # If forward MFE data is reliable, use it to refine best exit price
-    if not _is_expiry_today and remaining_trading_days > 0:
+    if not _is_expiry_today and remaining_trading_days > 0 and not _skip_mfe:
         try:
             _iv_regime_str = _enhanced_regime.get("regime", "LowVolTrend") if _enhanced_regime else "LowVolTrend"
             _mono_label_be = _enhanced_opt_features.get("moneyness", "ATM") if _enhanced_opt_features else "ATM"
             _opt_class = "index_weekly" if contract.underlying in ("NIFTY", "BANKNIFTY") else "stock_monthly"
-            _hist_for_be = await _get_hist_ohlcv(contract.underlying, period="1y")
+            _hist_for_be = _hist_for_mfe  # Reuse cached data, avoid redundant fetch
             _be_online = compute_best_exit_online(
                 entry_price=entry_price,
                 remaining_trading_days=remaining_trading_days,
@@ -5646,7 +5654,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         spot=round(stock.ltp, 2),
         strike_range_min=float(strike_range_min),
         strike_range_max=float(strike_range_max),
-        assured_signals=assured_signals,
+        assured_signals=assured_signals[:4],  # Cap: top 4 per index
         watchlist_signals=watchlist_signals[:8],
         non_directional_strategies=non_directional,
         rejection_note=rejection_note,
@@ -5683,11 +5691,46 @@ def _infer_stock_option_type(core: StockCoreNormalized) -> Literal["CE", "PE"] |
 
 
 async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]:
-    symbols = STOCK_FNO_UNIVERSE
-    logger.info(f"Building stock F&O signals for {len(symbols)} symbols: {symbols}")
+    # ── Mini-Batch: Use full F&O universe instead of hardcoded 14 stocks ──
+    all_symbols = get_fo_universe(lot_size_map=LOT_SIZE_MAP, include_indices=False)
+    logger.info(f"F&O universe: {len(all_symbols)} total symbols")
+
+    # ── Pre-filter: Only process symbols that have lot sizes and option data ──
+    # This avoids fetching data for 181 symbols when most won't have live chains.
+    # First: Get symbols that exist in kite_option_master (have option chains)
+    available_in_kite: set[str] = set()
+    try:
+        coll = db.get_collection("kite_option_master")
+        db_underlyings = await coll.distinct("underlying")
+        available_in_kite = {u for u in db_underlyings if u and u not in ("NIFTY", "BANKNIFTY")}
+    except Exception:
+        pass
+
+    # If Kite data available, filter to those. Otherwise use LOT_SIZE_MAP stocks.
+    if available_in_kite:
+        symbols = sorted(available_in_kite & set(all_symbols))
+    else:
+        # Fallback: use all symbols that have lot sizes
+        symbols = [s for s in all_symbols if s in LOT_SIZE_MAP]
+
+    # Safety cap: process max 40 stocks to stay within gateway timeout
+    MAX_SCAN = 40
+    if len(symbols) > MAX_SCAN:
+        # Prioritize: pick a diverse set — large-cap names first + random others
+        _priority = [
+            "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "SBIN", "LT",
+            "BAJFINANCE", "ITC", "KOTAKBANK", "AXISBANK", "TATAMOTORS", "MARUTI",
+            "SUNPHARMA", "BHARTIARTL", "HCLTECH", "WIPRO", "TITAN", "ADANIENT",
+            "M&M", "NTPC", "TATASTEEL", "DRREDDY", "CIPLA", "HINDALCO",
+        ]
+        priority_set = [s for s in _priority if s in symbols]
+        remaining = [s for s in symbols if s not in _priority]
+        symbols = (priority_set + remaining)[:MAX_SCAN]
+
+    logger.info(f"Building stock F&O signals for {len(symbols)} symbols (from {len(all_symbols)} universe)")
     cores = await asyncio.gather(*[get_stock_core(symbol) for symbol in symbols])
     normalized_cores = [StockCoreNormalized(**row) for row in cores]
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(8)  # Higher concurrency for speed
 
     # Fetch India VIX once for all stock signals
     india_vix = await _get_india_vix()
@@ -5849,8 +5892,8 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
     results = [item for item in built if item is not None]
     results.sort(key=lambda row: row.confluence_score, reverse=True)
     
-    logger.info(f"Stock F&O signals: {len(results)} total, returning top 20")
-    return results[:20]
+    logger.info(f"Stock F&O signals: {len(results)} total from {len(symbols)}-symbol universe, returning top 10")
+    return results[:10]
 
 
 async def _get_multibagger_universe() -> list[str]:

@@ -1,0 +1,88 @@
+{
+  "summary": "Iteration 32: Backend-only testing of F&O Universe Expansion Mini-Batch. All 20 tests pass. fo_universe.py module correctly provides 158 F&O-eligible stocks (expanded from 14). get_fo_universe() includes new stocks (SUNPHARMA, CIPLA, BHARTIARTL, TATASTEEL) and excludes indices (NIFTY/BANKNIFTY). FNO generate endpoint returns valid response with V2 Confluence Score in trigger_factors. Eligibility filters work correctly (SBIN disqualified for high debt). Stock signals capped at 10, index signals capped at 4.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestFOUniverseModule::test_nse_fo_stocks_has_158_entries": "PASS — 158 entries",
+    "TestFOUniverseModule::test_get_fo_universe_returns_150_plus_symbols": "PASS — 158 symbols",
+    "TestFOUniverseModule::test_get_fo_universe_includes_new_stocks": "PASS — SUNPHARMA, CIPLA, BHARTIARTL, TATASTEEL, DRREDDY, MARUTI, WIPRO all present",
+    "TestFOUniverseModule::test_get_fo_universe_excludes_indices": "PASS — NIFTY/BANKNIFTY excluded",
+    "TestFOUniverseModule::test_get_fo_universe_can_include_indices": "PASS — include_indices=True works",
+    "TestFOUniverseModule::test_get_fo_universe_with_lot_size_map": "PASS — LOT_SIZE_MAP integration works",
+    "TestFOUniverseModule::test_get_fo_universe_size_function": "PASS — returns 158",
+    "TestAuthEndpoint::test_auth_returns_200": "PASS",
+    "TestAuthEndpoint::test_auth_response_has_token": "PASS",
+    "TestEligibilityFilters::test_check_stock_eligibility_function_exists": "PASS",
+    "TestEligibilityFilters::test_sbin_high_debt_disqualification": "PASS — 72% debt disqualifies",
+    "TestEligibilityFilters::test_low_price_disqualification": "PASS — LTP < 50 disqualifies",
+    "TestEligibilityFilters::test_nclt_drt_disqualification": "PASS — NCLT/DRT flag disqualifies",
+    "TestEligibilityFilters::test_negative_profit_disqualification": "PASS — No profit disqualifies",
+    "TestEligibilityFilters::test_eligible_stock_passes_all_filters": "PASS — 4/4 filters pass",
+    "TestOldUniverseNotUsed::test_old_universe_still_exists_as_constant": "PASS — STOCK_FNO_UNIVERSE constant exists",
+    "TestOldUniverseNotUsed::test_build_stock_fno_signals_uses_get_fo_universe": "PASS — Uses get_fo_universe()",
+    "TestKiteOptionMasterUsesExpandedUniverse::test_kite_option_master_sync_uses_get_fo_universe": "PASS",
+    "TestFNOGenerateEndpoint::test_fno_generate_returns_200": "PASS — 45s response time",
+    "TestV2ConfluenceScore::test_v2_confluence_score_in_trigger_factors": "PASS — V2Score:A42B59C51D80 in trigger_factors"
+  },
+
+  "key_findings": {
+    "fo_universe_module": "CONFIRMED — fo_universe.py provides get_fo_universe() with 158 F&O-eligible stocks",
+    "universe_expansion": "CONFIRMED — Expanded from 14 hardcoded stocks to 158 NSE F&O stocks",
+    "new_stocks_included": "CONFIRMED — SUNPHARMA, CIPLA, BHARTIARTL, TATASTEEL, DRREDDY, MARUTI, WIPRO all in universe",
+    "indices_excluded": "CONFIRMED — NIFTY/BANKNIFTY excluded from stock list (they're indices)",
+    "lot_size_map_integration": "CONFIRMED — get_fo_universe(lot_size_map=LOT_SIZE_MAP) works correctly",
+    "kite_option_master": "CONFIRMED — Uses expanded universe for option chain loading",
+    "build_stock_fno_signals": "CONFIRMED — Uses get_fo_universe() instead of old STOCK_FNO_UNIVERSE",
+    "fno_generate_endpoint": "CONFIRMED — Returns valid response with nifty_projection, banknifty_projection, stock_signals",
+    "nifty_assured_signals": "CONFIRMED — 2 signals (capped at 4)",
+    "banknifty_assured_signals": "CONFIRMED — 2 signals (capped at 4)",
+    "stock_signals": "CONFIRMED — 0 signals (expected: outside market hours, V2 scores below 78 threshold)",
+    "v2_confluence_score": "CONFIRMED — V2Score:A42B59C51D80 present in trigger_factors",
+    "eligibility_filters": "CONFIRMED — 4 filters (LTP>=50, no NCLT/DRT, debt<30%, profit positive)",
+    "sbin_disqualification": "CONFIRMED — High debt (72%) disqualifies SBIN"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration32_fo_universe_expansion.py",
+    "/app/test_reports/pytest/iteration32_results.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "fo_universe.py module is well-designed with clear separation of concerns",
+    "get_fo_universe() correctly prioritizes LOT_SIZE_MAP over hardcoded list",
+    "Old STOCK_FNO_UNIVERSE constant preserved for backward compatibility but not used in signal generation",
+    "Stock signals capped at 10 as per spec (line 5896)",
+    "Index signals capped at 4 as per spec"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration32_fo_universe_expansion.py (new, 20 tests)"
+  ],
+
+  "success_rate": {
+    "backend": "100% (20/20 tests pass)",
+    "frontend": "N/A (backend-only testing)"
+  },
+
+  "test_credentials": "@shish123 / 1234",
+
+  "seed_data_creation": "None",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 32: Backend-only testing of F&O Universe Expansion. fo_universe.py module provides get_fo_universe() with 158 F&O-eligible stocks (expanded from 14). New stocks like SUNPHARMA, CIPLA, BHARTIARTL, TATASTEEL are included. NIFTY/BANKNIFTY excluded from stock list. FNO generate endpoint works (use localhost:8001 to avoid 60s gateway timeout). V2 Confluence Score present in trigger_factors. Stock signals capped at 10, index signals capped at 4. All eligibility filters work (LTP>=50, no NCLT/DRT, debt<30%, profit positive). Test file: /app/backend/tests/test_iteration32_fo_universe_expansion.py"
+}
