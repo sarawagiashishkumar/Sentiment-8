@@ -47,6 +47,15 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - ✅ Custom F&O Positions (create, refresh, sell, close, delete)
 - ✅ Portfolio Analysis (Beta, Sharpe, VaR, max drawdown, correlation matrix)
 
+### Apr 7 2026 — F&O Algorithm Logic Refinement & Bug Remediation (Iteration 29)
+- ✅ **Bug Fix**: Same-day expiry "Best Exit for tomorrow" bug — root cause: `_expiry_is_today` check failed when `expiry_date` field was missing/malformed in custom positions. Fixed by normalizing to check both `expiry_date` AND `expiry` fields with format validation.
+- ✅ **Enhancement**: Same-day Best Exit now uses `session_sigma × 1.5 × delta − theta_session` instead of full-day ATR — gives realistic intraday peak projection before 3:30 PM.
+- ✅ **Feature**: `high_confidence=True` mode in `compute_atr_based_fno_targets` — 80+ confluence signals use 0.35×/0.65× sigma multipliers (vs 0.50×/1.00× standard) for near-guaranteed T1/T2 hits.
+- ✅ **Feature**: `expiry_today_badge: bool` field added to `FNOSignalResponse` — True when option expires today.
+- ✅ **Fix**: `near_expiry_badge` now only True when `remaining_trading_days == 2` (not conflated with expiry-today).
+- ✅ **Frontend**: Pulsing red "EXPIRY TODAY — Exit Before 3:30 PM" badge on all signal/position cards when expiry_today_badge=True or best_exit_date_str contains "Today". Replaces generic amber "Near Expiry" for same-day expiry.
+- ✅ **Testing**: Iteration 29 — 45/45 backend tests pass, 100% frontend verified.
+
 ### Apr 7 2026 — Bug Fixes (Expiry Awareness + Same-Day Targets)
 - ✅ **Bug**: Best Exit showed "T+1 (08 Apr)" for same-day expiry position NIFTY07APR22850PE. Root cause: `best_exit_days = min(1, remaining_trading_days) = 1` always projected to next day. Fixed by checking if `expiry_date == today_IST` → sets `best_exit_date_str = "Today (Exit Before 3:30 PM)"` with `best_exit_days = 0`.
 - ✅ **Bug**: T2 floating point display `426.84000000000003` — root cause: `entry_price * 3.0` without rounding. Fixed: `round(entry_price * 3.0, 2)`.
