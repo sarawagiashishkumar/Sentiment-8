@@ -3,7 +3,7 @@
  * Column order (Master Spec):
  *  1. Script   2. Bias      3. Lot       4. Entry ₹   5. SL
  *  6. T1       7. T2        8. Investment 9. T1%      10. T1 Profit ₹
- * 11. T2%     12. T2 Profit 13. Conf     14. Bias Point
+ * 11. T2%     12. T2 Profit 13. Conf     14. Best Exit ₹  [⭐ if Best Exit ≥ T2 × 1.2]
  */
 import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
@@ -30,9 +30,12 @@ export const buildExportRow = (signal) => {
   const t2Pct = entry > 0 ? Number(((t2 - entry) / entry * 100).toFixed(2)) : 0;
   const t1Profit = Math.round((t1 - entry) * lot);
   const t2Profit = Math.round((t2 - entry) * lot);
-  const biasScore = signal.underlying_bias_score != null
-    ? Number(signal.underlying_bias_score.toFixed(2))
-    : 0;
+
+  // Best Exit: replaces "Bias Point". Apply ⭐ Golden Star when Best Exit ≥ T2 × 1.2
+  const bestExitRaw = Number(signal.best_exit_price || 0);
+  const bestExitLabel = bestExitRaw > 0 && t2 > 0 && bestExitRaw >= t2 * 1.2
+    ? `\u2B50 ${bestExitRaw.toFixed(2)}`   // ⭐ prefix = premium > 20% above T2
+    : bestExitRaw > 0 ? bestExitRaw.toFixed(2) : "-";
 
   // Ordered per Master Spec Col 1-14
   return {
@@ -49,7 +52,7 @@ export const buildExportRow = (signal) => {
     "T2%": t2Pct,
     "T2 Profit \u20B9": t2Profit,
     Conf: conf,
-    "Bias Point": biasScore,
+    "Best Exit \u20B9": bestExitLabel,
   };
 };
 

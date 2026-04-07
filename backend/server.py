@@ -140,9 +140,9 @@ MONTH_MAP = {
 }
 
 LOT_SIZE_MAP = {
-    # Index
-    "NIFTY": 75,
-    "BANKNIFTY": 30,
+    # Index — VERIFIED NSE lot sizes (updated Apr 2026)
+    "NIFTY":       65,   # NSE revised: was 75, now 65 as of Apr 2026
+    "BANKNIFTY":   30,
     "FINNIFTY": 65,
     "MIDCPNIFTY": 120,
     "SENSEX": 20,
@@ -4503,6 +4503,26 @@ async def build_fno_signal(
     _atr_sl_dist = max(entry_price * 0.07, min(_atr_proxy * _delta_proxy * 1.5, entry_price * 0.25))
     stop_loss = max(round(entry_price - _atr_sl_dist, 2), round(entry_price * 0.01, 2))
 
+    # ── Best Budget Entry: Pullback zone to prevent "momentum peak" entries ───
+    # Identifies the floor the premium is likely to retrace to before continuing
+    # in the signal direction. UI alerts the user to WAIT for this price.
+    # Uses session_low support + percentage pullback model.
+    _bbe_pct = 0.12 if entry_price > 100 else (0.15 if entry_price > 50 else 0.20)
+    _bbe_pullback_target = round(entry_price * (1 - _bbe_pct), 2)
+    if option_day_low is not None and option_day_low > 0 and option_day_low < entry_price:
+        # Use day-low support: best entry near session floor (just above it)
+        _bbe_from_low = round(option_day_low * 1.02, 2)
+        best_budget_entry = max(_bbe_pullback_target, _bbe_from_low)
+    else:
+        best_budget_entry = _bbe_pullback_target
+    # Floor: never inside the SL zone (SL + 5% buffer)
+    best_budget_entry = max(best_budget_entry, round(stop_loss * 1.05, 2))
+    # Ceiling: always at least 3% below current entry (it IS a pullback)
+    best_budget_entry = min(best_budget_entry, round(entry_price * 0.97, 2))
+    best_budget_entry = round(best_budget_entry, 2)
+    # Alert when pullback opportunity is meaningful (≥ 3% below current entry price)
+    budget_entry_alert = (entry_price - best_budget_entry) / max(entry_price, 0.01) >= 0.03
+
     # Sanity check: T1 must not exceed an extreme intraday move (6 ATRs × delta)
     # This replaces the old hard percentage cap which was hiding real ATR results
     _max_realistic_session_gain = _atr_proxy * _delta_proxy * 6.0  # 6 ATRs extreme move
@@ -4767,6 +4787,8 @@ async def build_fno_signal(
         best_exit_date_str=best_exit_date_str,
         near_expiry_badge=(remaining_trading_days == 2),  # tomorrow-expiry warning
         expiry_today_badge=_is_expiry_today,              # EXPIRY TODAY pulsing badge
+        best_budget_entry=best_budget_entry,              # Pullback entry advisory
+        budget_entry_alert=budget_entry_alert,            # Show "wait for pullback" UI alert
         trigger_factors=trigger_factors,
         confluence_score=confluence_score,
         signal_quality=signal_quality,

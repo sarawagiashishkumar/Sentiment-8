@@ -219,6 +219,8 @@ class FNOSignalResponse(BaseModel):
     best_exit_date_str: str | None = None
     near_expiry_badge: bool = False   # True when remaining_trading_days == 2 (next-day expiry)
     expiry_today_badge: bool = False  # True when option expires TODAY (same-day expiry)
+    best_budget_entry: float | None = None    # Pullback entry: wait for this price before buying
+    budget_entry_alert: bool = False          # True when meaningful pullback zone ≥ 3% below entry
     trigger_factors: List[str]
     confluence_score: int
     signal_quality: Literal["HIGH", "MEDIUM", "LOW"]

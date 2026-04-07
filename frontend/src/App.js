@@ -1977,6 +1977,12 @@ export default function App() {
                                         ⭐ BEST EXIT: T+{signal.best_exit_days} Trading Days{signal.best_exit_date_str ? ` (${signal.best_exit_date_str})` : ""} @ ₹{formatNumber(signal.best_exit_price)}
                                       </p>
                                     )}
+                                    {signal.budget_entry_alert && signal.best_budget_entry && (
+                                      <div className="mt-1 p-1.5 rounded border border-amber-600/50 bg-amber-950/30" data-testid={`budget-entry-alert-${signal.script?.toLowerCase()}-assured`}>
+                                        <span className="font-bold text-amber-300 text-xs">⏳ Wait for Budget Entry</span>
+                                        <span className="text-amber-100 text-xs ml-1">Pullback to ₹{formatNumber(signal.best_budget_entry)} — do not enter at ₹{formatNumber(signal.entry_price)}</span>
+                                      </div>
+                                    )}
                                     {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
                                       <div className="mt-1 flex flex-wrap gap-2">
                                         {signal.underlying_day_change_pct !== null && (
@@ -2025,6 +2031,12 @@ export default function App() {
                                     ) : null}
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
+                                    {signal.budget_entry_alert && signal.best_budget_entry && (
+                                      <div className="mt-1 p-1.5 rounded border border-amber-600/50 bg-amber-950/30" data-testid={`budget-entry-alert-${signal.script?.toLowerCase()}-watch`}>
+                                        <span className="font-bold text-amber-300 text-xs">⏳ Wait for Budget Entry</span>
+                                        <span className="text-amber-100 text-xs ml-1">Pullback to ₹{formatNumber(signal.best_budget_entry)} — do not enter at ₹{formatNumber(signal.entry_price)}</span>
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -2109,6 +2121,12 @@ export default function App() {
                                 ⭐ BEST EXIT: T+{signal.best_exit_days} Trading Days{signal.best_exit_date_str ? ` (${signal.best_exit_date_str})` : ""} @ ₹{formatNumber(signal.best_exit_price)}
                               </p>
                             )}
+                            {signal.budget_entry_alert && signal.best_budget_entry && (
+                              <div className="mt-1 p-1.5 rounded border border-amber-600/50 bg-amber-950/30" data-testid={`budget-entry-alert-${signal.script?.toLowerCase()}-stock`}>
+                                <span className="font-bold text-amber-300 text-xs">⏳ Wait for Budget Entry</span>
+                                <span className="text-amber-100 text-xs ml-1">Pullback to ₹{formatNumber(signal.best_budget_entry)} — do not enter at ₹{formatNumber(signal.entry_price)}</span>
+                              </div>
+                            )}
                             {(signal.underlying_day_change_pct !== null || signal.underlying_bias_score !== null) && (
                               <div className="mt-1 flex flex-wrap gap-2">
                                 {signal.underlying_day_change_pct !== null && (
@@ -2164,6 +2182,12 @@ export default function App() {
                                 <p className="text-green-400 font-semibold text-sm">
                                   ⭐ BEST EXIT: T+{trade.best_exit_days} Trading Days{trade.best_exit_date_str ? ` (${trade.best_exit_date_str})` : ""} @ ₹{formatNumber(trade.best_exit_price)}
                                 </p>
+                              )}
+                              {trade.budget_entry_alert && trade.best_budget_entry && (
+                                <div className="mt-1 p-1.5 rounded border border-amber-600/50 bg-amber-950/30" data-testid={`budget-entry-alert-${trade.script?.toLowerCase()}-top4`}>
+                                  <span className="font-bold text-amber-300 text-xs">⏳ Wait for Budget Entry</span>
+                                  <span className="text-amber-100 text-xs ml-1">Pullback to ₹{formatNumber(trade.best_budget_entry)} — do not enter at ₹{formatNumber(trade.entry_price)}</span>
+                                </div>
                               )}
                               {(trade.underlying_day_change_pct !== null || trade.underlying_bias_score !== null) && (
                                 <div className="mt-1 flex flex-wrap gap-2">
