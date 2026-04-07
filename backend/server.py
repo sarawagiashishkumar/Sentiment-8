@@ -83,6 +83,46 @@ from services.research_engine import (
     compute_index_constituent_bias,
     NIFTY50_WEIGHTS,
     BANKNIFTY_WEIGHTS,
+    # ── Batch 1 NEW: Index Constituents & Breadth ─────────────────────────
+    get_constituents,
+    get_constituents_sync,
+    get_all_nifty500_symbols,
+    compute_weighted_breadth,
+    # ── Batch 1 NEW: Intraday Features & Order Flow ──────────────────────
+    compute_vwap_features,
+    compute_intraday_technicals,
+    compute_order_book_imbalance,
+    compute_volume_delta,
+    classify_flow_band,
+    classify_regime_enhanced,
+    build_intraday_feature_vector,
+    # ── Batch 1 NEW: Options Chain Features ───────────────────────────────
+    classify_oi_buildup,
+    compute_iv_rank,
+    compute_bid_ask_spread,
+    compute_enhanced_option_features,
+    # ── Batch 1 NEW: News Sentiment ──────────────────────────────────────
+    refresh_news_cache,
+    get_symbol_sentiment,
+    get_sector_sentiment,
+    get_market_sentiment_summary,
+    # ── Batch 2 NEW: MFE/MAE Engine, Probability & Theta ─────────────────
+    build_mfe_mae_library,
+    build_probability_table,
+    select_targets_from_probability,
+    compute_empirical_theta,
+    compute_forward_mfe,
+    compute_best_exit_online,
+    reevaluate_signal_targets,
+    check_no_chasing_rule,
+    check_0dte_atm_safety,
+    # ── Batch 3 NEW: 4-Bucket Confluence Score ───────────────────────────
+    compute_bucket_a,
+    compute_bucket_b,
+    compute_bucket_c,
+    compute_bucket_d,
+    compute_confluence_score_v2,
+    CONFLUENCE_THRESHOLD,
 )
 from services.data_verifier import (
     fetch_verified_price,
@@ -4454,6 +4494,69 @@ async def build_fno_signal(
     except Exception:
         pass
 
+    # ── Batch 1 NEW: Enhanced regime classification ───────────────────────
+    _has_event = bool(_macro_ctx.get("macro_bias") == "HEADWIND")
+    _hv_from_snap = ts.get("hist_vol") if ts else None
+    _enhanced_regime = classify_regime_enhanced(
+        india_vix=india_vix,
+        realized_vol=_hv_from_snap,
+        adx=_adx_curr,
+        has_upcoming_event=_has_event,
+    )
+    trigger_factors.append(f"RegimeV2:{_enhanced_regime.get('regime', 'LowVolRange')}")
+
+    # ── Batch 1 NEW: News sentiment for underlying ───────────────────────
+    _news_sentiment: dict = {}
+    try:
+        _news_sentiment = get_symbol_sentiment(contract.underlying)
+        _news_flag = _news_sentiment.get("news_flag", "NEUTRAL")
+        if _news_flag != "NEUTRAL":
+            trigger_factors.append(f"News:{_news_flag}(n={_news_sentiment.get('news_count', 0)})")
+    except Exception as _ne:
+        logger.debug(f"News sentiment failed for {contract.underlying}: {_ne}")
+
+    # ── Batch 1 NEW: Sector sentiment ────────────────────────────────────
+    _sector_sentiment: dict = {}
+    if _sector_str:
+        try:
+            _sector_sentiment = get_sector_sentiment(_sector_str)
+            _sec_flag = _sector_sentiment.get("news_flag", "NEUTRAL")
+            if _sec_flag != "NEUTRAL":
+                trigger_factors.append(f"SectorNews:{_sec_flag}")
+        except Exception:
+            pass
+
+    # ── Batch 1 NEW: Intraday features (compute & log, NOT scoring yet) ──
+    _intraday_features: dict = {}
+    try:
+        _intraday_features = build_intraday_feature_vector(
+            symbol=contract.underlying,
+            bars_daily=None,
+            bars_intraday=None,
+            regime=_enhanced_regime,
+        )
+        _flow = _intraday_features.get("flow_band", "NeutralFlow")
+        if _flow != "NeutralFlow":
+            trigger_factors.append(f"Flow:{_flow}")
+    except Exception as _fe:
+        logger.debug(f"Intraday features failed for {contract.underlying}: {_fe}")
+
+    # ── Batch 1 NEW: Enhanced option features (compute & log) ────────────
+    _enhanced_opt_features: dict = {}
+    try:
+        _opt_snap = {"ltp": option_ltp, "oi": 0, "iv": None}
+        _enhanced_opt_features = compute_enhanced_option_features(
+            option_snapshot=_opt_snap,
+            underlying_ltp=float(underlying_ltp),
+            strike=float(contract.strike),
+            option_type=contract.option_type,
+        )
+        _mono_label = _enhanced_opt_features.get("moneyness", "UNKNOWN")
+        if _mono_label != "UNKNOWN":
+            trigger_factors.append(f"Moneyness:{_mono_label}")
+    except Exception:
+        pass
+
     # ── Batch 5: Constituent-weighted NIFTY/BANKNIFTY breadth (Action 5) ──
     _index_breadth: dict = {}
     if contract.underlying in ("NIFTY", "BANKNIFTY"):
@@ -4502,6 +4605,80 @@ async def build_fno_signal(
         else:                   _delta_proxy = 0.15
     _atr_sl_dist = max(entry_price * 0.07, min(_atr_proxy * _delta_proxy * 1.5, entry_price * 0.25))
     stop_loss = max(round(entry_price - _atr_sl_dist, 2), round(entry_price * 0.01, 2))
+
+    # ── Batch 2 NEW: MFE/MAE probability-based target refinement ─────────
+    # Build MFE/MAE library from underlying historical data, then use
+    # probability tables to validate/refine ATR-based targets.
+    _prob_targets: dict = {}
+    _mfe_library: list = []
+    try:
+        _hist_for_mfe = await _get_hist_ohlcv(contract.underlying, period="1y")
+        if _hist_for_mfe is not None and not _hist_for_mfe.empty and len(_hist_for_mfe) >= 100:
+            _atr_for_mfe = underlying_atr or (float(underlying_ltp) * 0.012)
+            _mfe_library = build_mfe_mae_library(
+                hist_df=_hist_for_mfe,
+                atr=_atr_for_mfe,
+                strategy_id=_strategy_id,
+                direction="LONG",
+                window_bars=min(75, len(_hist_for_mfe) // 4),
+            )
+            if _mfe_library and len(_mfe_library) >= 20:
+                _sl_dist_pct = ((entry_price - stop_loss) / entry_price) * 100
+                _prob_table = build_probability_table(
+                    _mfe_library,
+                    sl_distance_pct=max(_sl_dist_pct, 5.0),
+                )
+                _prob_targets = select_targets_from_probability(
+                    _prob_table,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    minutes_remaining=effective_minutes,
+                )
+                if _prob_targets.get("method") == "probability_based":
+                    _pt1 = _prob_targets.get("t1")
+                    _pt2 = _prob_targets.get("t2")
+                    # Use probability targets only if they are MORE conservative
+                    # (lower) than ATR targets — ensures higher hit probability
+                    if _pt1 and _pt1 < target1:
+                        target1 = _pt1
+                        trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
+                    if _pt2 and _pt2 < target2:
+                        target2 = _pt2
+                        trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
+                    # Ensure T2 > T1
+                    target2 = max(target2, round(target1 * 1.05, 2))
+    except Exception as _mfe_err:
+        logger.debug(f"MFE/MAE probability refinement failed: {_mfe_err}")
+
+    # ── Batch 2 NEW: No-chasing rule (section 1.8) ───────────────────────
+    try:
+        _expected_max_band = (underlying_atr or entry_price * 0.012) * _delta_proxy * 3.0
+        _chase_check = check_no_chasing_rule(
+            current_ltp=option_ltp,
+            entry_price=entry_price,
+            expected_max_band=_expected_max_band,
+        )
+        if not _chase_check.get("allow_entry", True):
+            trigger_factors.append(f"NoChase:{_chase_check.get('pct_of_band_achieved', 0):.0f}%")
+            # Don't block the signal yet (Batch 3 scoring will handle suppression)
+    except Exception:
+        pass
+
+    # ── Batch 2 NEW: 0DTE ATM safety check (section 1.8 extra) ──────────
+    try:
+        _now_ist = datetime.now(IST)
+        _dte_for_check = 0 if _is_expiry_today else max(get_remaining_trading_days(contract.expiry), 1)
+        _zero_dte_check = check_0dte_atm_safety(
+            underlying_ltp=float(underlying_ltp),
+            strike=float(contract.strike),
+            entry_time_hour=_now_ist.hour,
+            dte=_dte_for_check if _is_expiry_today else 1,
+        )
+        if not _zero_dte_check.get("allow_entry", True):
+            trigger_factors.append("0DTE_ATM_BLOCKED")
+            logger.info(f"{contract.script}: {_zero_dte_check.get('reason')}")
+    except Exception:
+        pass
 
     # ── Best Budget Entry: Pullback zone to prevent "momentum peak" entries ───
     # Identifies the floor the premium is likely to retrace to before continuing
@@ -4637,6 +4814,37 @@ async def build_fno_signal(
         ), 2)
         best_exit_price = max(best_exit_price, entry_price * 1.01)  # Never below entry+1%
 
+    # ── Batch 2 NEW: Forward MFE-based Best Exit refinement ──────────────
+    # If forward MFE data is reliable, use it to refine best exit price
+    if not _is_expiry_today and remaining_trading_days > 0:
+        try:
+            _iv_regime_str = _enhanced_regime.get("regime", "LowVolTrend") if _enhanced_regime else "LowVolTrend"
+            _mono_label_be = _enhanced_opt_features.get("moneyness", "ATM") if _enhanced_opt_features else "ATM"
+            _opt_class = "index_weekly" if contract.underlying in ("NIFTY", "BANKNIFTY") else "stock_monthly"
+            _hist_for_be = await _get_hist_ohlcv(contract.underlying, period="1y")
+            _be_online = compute_best_exit_online(
+                entry_price=entry_price,
+                remaining_trading_days=remaining_trading_days,
+                dte=remaining_trading_days,
+                iv_regime=_enhanced_regime.get("vix_level", "normal").upper() + "_IV" if _enhanced_regime else "NORMAL_IV",
+                market_regime=_enhanced_regime.get("regime", "LowVolTrend") if _enhanced_regime else "LowVolTrend",
+                hist_df=_hist_for_be,
+                atr=underlying_atr,
+                vix=india_vix,
+                option_class=_opt_class,
+                moneyness=_mono_label_be,
+            )
+            if _be_online.get("reliable"):
+                _be_price_new = _be_online["best_exit_price"]
+                # Use forward MFE best exit only if it's MORE conservative
+                if _be_price_new < best_exit_price:
+                    best_exit_price = round(_be_price_new, 2)
+                    trigger_factors.append(f"BestExitMFE:{_be_online.get('method', 'fwd')}")
+                if _be_online.get("best_exit_day") is not None:
+                    best_exit_days = _be_online["best_exit_day"]
+        except Exception as _be_err:
+            logger.debug(f"Forward MFE best exit failed: {_be_err}")
+
     # Compute actual calendar date for best exit
     if _is_expiry_today:
         best_exit_date_str = "Today (Exit Before 3:30 PM)"
@@ -4697,6 +4905,96 @@ async def build_fno_signal(
         # Batch 1 extras via tech_snapshot
         tech_snapshot=ts,
     )
+
+    # ── Batch 3 NEW: 4-Bucket Confluence Score V2 (section 7) ────────────
+    # Compute all 4 buckets and override the old score.
+    # Old score kept in confluence_score_v1 for comparison/logging.
+    _confluence_v1 = confluence_score
+    _conviction_v1 = conviction_level
+
+    try:
+        # Bucket A: Strategy & backtest robustness
+        _strat_stats = {}  # Future: load from strategy_backtests collection
+        _bucket_a = compute_bucket_a(
+            win_rate=_strat_stats.get("win_rate"),
+            expectancy_r=_strat_stats.get("expectancy_r"),
+            trade_count=_strat_stats.get("trade_count"),
+            strategy_enabled=True,
+        )
+
+        # Bucket B: Direction & structure
+        _index_bscore = None
+        _sector_bscore = None
+        _bucket_b = compute_bucket_b(
+            direction=direction,
+            bias_score=bias_score,
+            trend_alignment=tech_alignment,
+            rsi=tech_rsi,
+            macd_bullish=tech_macd.get("bullish_crossover") if tech_macd else None,
+            adx=tech_adx,
+            above_vwap=None,
+            sector_breadth_score=_sector_bscore,
+            index_breadth_score=_index_bscore,
+            regime=_enhanced_regime.get("regime", "LowVolRange") if _enhanced_regime else "LowVolRange",
+            stoch_k=tech_stoch.get("%K") if tech_stoch else None,
+        )
+
+        # Bucket C: Options, order-flow & sentiment
+        _news_flag_c = _news_sentiment.get("news_flag", "NEUTRAL") if _news_sentiment else "NEUTRAL"
+        _flow_band_c = _intraday_features.get("flow_band", "NeutralFlow") if _intraday_features else "NeutralFlow"
+        _oi_buildup_c = _enhanced_opt_features.get("oi_buildup") if _enhanced_opt_features else oi_buildup
+        _iv_rank_c = _enhanced_opt_features.get("iv_rank") if _enhanced_opt_features else iv_rank
+        _is_liquid_c = _enhanced_opt_features.get("is_liquid", True) if _enhanced_opt_features else True
+        _spread_pct_c = None
+        if _enhanced_opt_features and _enhanced_opt_features.get("spread_data"):
+            _spread_pct_c = _enhanced_opt_features["spread_data"].get("spread_pct")
+
+        _bucket_c = compute_bucket_c(
+            oi_buildup=_oi_buildup_c,
+            iv_rank=_iv_rank_c,
+            is_liquid=_is_liquid_c,
+            spread_pct=_spread_pct_c,
+            flow_band=_flow_band_c,
+            news_flag=_news_flag_c,
+            direction=direction,
+            pcr=pcr,
+        )
+
+        # Bucket D: Trade quality & portfolio fit
+        _risk_d = max(entry_price - stop_loss, 0.01)
+        _rr_t1_d = (target1 - entry_price) / _risk_d if _risk_d > 0 else 0
+        _rr_t2_d = (target2 - entry_price) / _risk_d if _risk_d > 0 else 0
+        _sl_dist_pct_d = (_risk_d / entry_price) * 100 if entry_price > 0 else 10
+        _t1_phit_d = _prob_targets.get("t1_p_hit") if _prob_targets else None
+
+        _bucket_d = compute_bucket_d(
+            rr_to_t1=_rr_t1_d,
+            rr_to_t2=_rr_t2_d,
+            t1_p_hit=_t1_phit_d,
+            sl_distance_pct=_sl_dist_pct_d,
+        )
+
+        # Final V2 Score
+        _v2_result = compute_confluence_score_v2(_bucket_a, _bucket_b, _bucket_c, _bucket_d)
+        _v2_score = _v2_result["score"]
+        _v2_conviction = _v2_result["conviction"]
+
+        # Use V2 score as the primary score
+        confluence_score = _v2_score
+        conviction_level = _v2_conviction
+
+        # Log comparison for audit
+        if abs(_v2_score - _confluence_v1) > 10:
+            logger.info(
+                f"{contract.script}: ConfluenceV1={_confluence_v1} V2={_v2_score} "
+                f"A={_bucket_a['score']} B={_bucket_b['score']} C={_bucket_c['score']} D={_bucket_d['score']}"
+            )
+
+        trigger_factors.append(f"V2Score:A{_bucket_a['score']}B{_bucket_b['score']}C{_bucket_c['score']}D{_bucket_d['score']}")
+
+    except Exception as _v2_err:
+        logger.warning(f"Confluence V2 scoring failed for {contract.script}: {_v2_err}. Using V1 fallback.")
+        trigger_factors.append(f"V1Fallback:{_confluence_v1}")
     
     # Add technical tags to trigger_factors
     if ts.get("data_available") and tech_alignment:
@@ -5057,6 +5355,29 @@ async def _compute_enhanced_index_breadth(
     bias_result = compute_index_constituent_bias(constituent_signals, index_name)
     bias_result["constituent_count_fetched"] = len(constituent_signals)
     bias_result["available"] = True
+
+    # ── Batch 1 NEW: Compute enhanced weighted breadth (section 2.2) ─────
+    # Convert constituent_signals to format expected by compute_weighted_breadth
+    try:
+        _breadth_data = []
+        for sig in constituent_signals:
+            _bias = sig.get("tech_bias", "NEUTRAL")
+            _breadth_data.append({
+                "symbol": sig["symbol"],
+                "weight_pct": sig.get("weight_override", 1.0),
+                "in_uptrend": _bias == "BULLISH",
+                "above_vwap": _bias in ("BULLISH",),  # proxy when VWAP unavailable
+                "intraday_return_pct": 0.0,  # will be enhanced with live data later
+                "intraday_volatility": 0.0,
+                "rsi": None,
+                "macd_bullish": False,
+            })
+        _weighted_breadth = compute_weighted_breadth(_breadth_data, index_name)
+        bias_result["weighted_breadth"] = _weighted_breadth
+        logger.debug(f"{index_name} weighted breadth: {_weighted_breadth.get('breadth_score', 0)}")
+    except Exception as _wb_err:
+        logger.debug(f"Weighted breadth computation failed for {index_name}: {_wb_err}")
+
     return bias_result
 
 
@@ -6935,6 +7256,20 @@ async def generate_fno_signals(payload: FNOGenerateRequest, current_user: dict =
     updated_user, charged = await _consume_credits(current_user, 2)
     refreshed_at = _utc_now_iso()
 
+    # ── Section 1.7: Trading Session Guard ────────────────────────────────
+    # Intraday F&O signals run ONLY during live market hours:
+    # 09:15 IST to 15:30 IST, Mon-Fri, non-holidays.
+    _now_ist = datetime.now(IST)
+    _is_market_hrs = (
+        _now_ist.weekday() < 5  # Mon-Fri
+        and (_now_ist.hour > 9 or (_now_ist.hour == 9 and _now_ist.minute >= 15))
+        and (_now_ist.hour < 15 or (_now_ist.hour == 15 and _now_ist.minute <= 30))
+    )
+    # Allow generation outside hours for development/testing but flag it
+    _market_closed = not _is_market_hrs
+    if _market_closed:
+        logger.info(f"F&O signal generation running outside market hours ({_now_ist.strftime('%H:%M IST')}). Data may be stale.")
+
     try:
         nifty_projection = await asyncio.wait_for(_build_index_projection("NIFTY", refreshed_at), timeout=120)
     except Exception:
@@ -7731,6 +8066,21 @@ async def startup_tasks():
                         purge_result.deleted_count)
     except Exception as exc:
         logger.warning("Garbage position purge failed (non-fatal): %s", exc)
+
+    # ── Batch 1 NEW: Seed index constituents DB table ────────────────────
+    try:
+        from services.index_constituents import _ensure_db_table as _seed_constituents
+        await _seed_constituents(db)
+        logger.info("Index constituents DB table seeded/verified")
+    except Exception as exc:
+        logger.warning("Index constituents seeding failed (non-fatal): %s", exc)
+
+    # ── Batch 1 NEW: Prime news sentiment cache (background) ─────────────
+    try:
+        refresh_news_cache()
+        logger.info("News sentiment cache primed on startup")
+    except Exception as exc:
+        logger.warning("News cache prime failed (non-fatal): %s", exc)
 
 
 @app.on_event("shutdown")

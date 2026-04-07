@@ -412,33 +412,49 @@ def check_stock_eligibility(
     fundamental: dict | None,
 ) -> dict[str, Any]:
     """
-    Apply stock selection filters per Master Spec section 2.
+    Apply stock selection filters per Master Spec section 1.5.
     Returns dict: {eligible: bool, flags: list[str], pass_count: int}
+
+    Mandatory filters:
+    1. Spot price (equity) >= Rs 50
+    2. NOT flagged as NCLT or DRT
+    3. Total debt < 30% of market cap
+    4. Net profit positive in at least 1 of last 3 reported quarters
     """
     flags: list[str] = []
     eligible = True
     f = fundamental or {}
 
+    # Filter 1: LTP >= 50
     if ltp is None or ltp < 50:
-        flags.append(f"Price ₹{ltp or 0:.1f} < ₹50 minimum")
+        flags.append(f"Price Rs{ltp or 0:.1f} < Rs50 minimum")
         eligible = False
 
+    # Filter 2: NCLT/DRT check
+    nclt_flag = f.get("nclt_drt", False)
+    if nclt_flag:
+        flags.append("Under NCLT/DRT proceedings — excluded")
+        eligible = False
+
+    # Filter 3: Debt < 30% of market cap
     total_debt_ratio = f.get("total_debt_to_market_cap")
     if total_debt_ratio is not None:
         if total_debt_ratio >= 0.30:
-            flags.append(f"Total debt {total_debt_ratio*100:.0f}% of mktcap ≥ 30% limit")
+            flags.append(f"Total debt {total_debt_ratio*100:.0f}% of mktcap >= 30% limit")
             eligible = False
     else:
         de = f.get("debt_to_equity")
         if de is not None and de > 200:
             flags.append(f"Very high D/E {de:.0f}% — potential debt concern")
 
+    # Filter 4: Recent profit positive
     recent_profit_positive = f.get("recent_profit_positive")
     if recent_profit_positive is False:
         flags.append("Net loss in all 3 recent quarters — no profitable quarter found")
         eligible = False
 
     pass_count = (1 if (ltp is not None and ltp >= 50) else 0) + \
+                 (1 if not nclt_flag else 0) + \
                  (1 if total_debt_ratio is None or total_debt_ratio < 0.30 else 0) + \
                  (1 if recent_profit_positive is not False else 0)
 
@@ -446,7 +462,7 @@ def check_stock_eligibility(
         "eligible": eligible,
         "flags": flags,
         "pass_count": pass_count,
-        "max_filters": 3,
+        "max_filters": 4,
     }
 
 

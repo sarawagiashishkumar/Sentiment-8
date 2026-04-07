@@ -99,6 +99,71 @@ from services.strategy_library import (
     compute_index_constituent_bias,
 )
 
+# ── Batch 1 NEW: Index Constituents & Breadth (Section 2) ─────────────────────
+from services.index_constituents import (
+    get_constituents,
+    get_constituents_sync,
+    get_all_nifty500_symbols,
+    update_constituents,
+    compute_weighted_breadth,
+)
+
+# ── Batch 1 NEW: Intraday Features & Order Flow (Section 3) ──────────────────
+from services.intraday_features import (
+    compute_multi_timeframe_emas,
+    compute_vwap_features,
+    compute_intraday_technicals,
+    compute_order_book_imbalance,
+    compute_volume_delta,
+    classify_flow_band,
+    classify_regime_enhanced,
+    build_intraday_feature_vector,
+)
+
+# ── Batch 1 NEW: Options Chain Features (Section 3.2) ────────────────────────
+from services.options_features import (
+    classify_oi_buildup,
+    compute_iv_rank,
+    compute_bid_ask_spread,
+    compute_depth_score,
+    compute_enhanced_option_features,
+)
+
+# ── Batch 1 NEW: News Sentiment (Section 4) ──────────────────────────────────
+from services.news_sentiment import (
+    refresh_news_cache,
+    get_symbol_sentiment,
+    get_sector_sentiment,
+    get_market_sentiment_summary,
+)
+
+# ── Batch 2 NEW: MFE/MAE Engine, Probability Models, Theta Curves ────────────
+from services.mfe_mae_engine import (
+    STRATEGY_PROFILES,
+    DTE_BANDS,
+    compute_mfe_mae_from_ohlcv,
+    build_mfe_mae_library,
+    build_probability_table,
+    select_targets_from_probability,
+    compute_empirical_theta,
+    compute_forward_mfe,
+    compute_best_exit_online,
+    reevaluate_signal_targets,
+    check_no_chasing_rule,
+    check_0dte_atm_safety,
+)
+
+# ── Batch 3 NEW: 4-Bucket Confluence Score (Section 7) ───────────────────────
+from services.confluence_score_v2 import (
+    compute_bucket_a,
+    compute_bucket_b,
+    compute_bucket_c,
+    compute_bucket_d,
+    compute_confluence_score_v2,
+    CONFLUENCE_THRESHOLD,
+    BUCKET_WEIGHTS,
+)
+
 __all__ = [
     # Core
     "HORIZON_TRADING_DAYS",
@@ -134,4 +199,28 @@ __all__ = [
     "get_strategy_by_id", "get_eligible_strategies", "select_strategy_for_signal",
     "update_backtest_stats", "check_strategy_eligible", "transition_signal_state",
     "compute_index_constituent_bias",
+    # NEW: Index Constituents & Breadth
+    "get_constituents", "get_constituents_sync", "get_all_nifty500_symbols",
+    "update_constituents", "compute_weighted_breadth",
+    # NEW: Intraday Features & Order Flow
+    "compute_multi_timeframe_emas", "compute_vwap_features",
+    "compute_intraday_technicals", "compute_order_book_imbalance",
+    "compute_volume_delta", "classify_flow_band", "classify_regime_enhanced",
+    "build_intraday_feature_vector",
+    # NEW: Options Chain Features
+    "classify_oi_buildup", "compute_iv_rank", "compute_bid_ask_spread",
+    "compute_depth_score", "compute_enhanced_option_features",
+    # NEW: News Sentiment
+    "refresh_news_cache", "get_symbol_sentiment", "get_sector_sentiment",
+    "get_market_sentiment_summary",
+    # NEW: MFE/MAE Engine (Batch 2)
+    "STRATEGY_PROFILES", "DTE_BANDS",
+    "compute_mfe_mae_from_ohlcv", "build_mfe_mae_library",
+    "build_probability_table", "select_targets_from_probability",
+    "compute_empirical_theta", "compute_forward_mfe",
+    "compute_best_exit_online", "reevaluate_signal_targets",
+    "check_no_chasing_rule", "check_0dte_atm_safety",
+    # NEW: Confluence Score V2 (Batch 3)
+    "compute_bucket_a", "compute_bucket_b", "compute_bucket_c", "compute_bucket_d",
+    "compute_confluence_score_v2", "CONFLUENCE_THRESHOLD", "BUCKET_WEIGHTS",
 ]
