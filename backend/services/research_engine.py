@@ -187,6 +187,12 @@ from services.backtest_engine import (
     compute_backtest_stats,
     simulate_trades_for_strategy,
     make_config_key,
+    get_ohlcv_from_kite,
+    get_ohlcv_from_csv_seed,
+    fetch_12m_ohlcv,
+    list_csv_seeds,
+    save_csv_seed,
+    delete_csv_seed,
 )
 
 # ── Step 4 NEW: Position Sizing Calculator ────────────────────────────────────
@@ -262,6 +268,8 @@ __all__ = [
     # NEW: Backtest Engine (Step 3)
     "run_backtest_batch", "fetch_strategy_backtest", "is_strategy_enabled",
     "compute_backtest_stats", "simulate_trades_for_strategy", "make_config_key",
+    "get_ohlcv_from_kite", "get_ohlcv_from_csv_seed", "fetch_12m_ohlcv",
+    "list_csv_seeds", "save_csv_seed", "delete_csv_seed",
     # NEW: Position Sizing (Step 4)
     "compute_position_size", "annotate_signal_affordability",
 ]

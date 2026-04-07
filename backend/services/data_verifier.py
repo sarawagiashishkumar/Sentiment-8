@@ -1,6 +1,10 @@
 """
 Dual-Source Data Verification System for Indian Equities & F&O.
 
+PROD RULE: All OHLCV and historical data for Indian markets must come from
+Kite Connect or verified exchange APIs. Do not use yfinance or unofficial
+sources in production paths. yfinance calls are guarded by USE_YFINANCE env var.
+
 Architecture:
   PRIMARY   → Kite Connect API (live, authenticated, authoritative)
   FALLBACK  → yfinance NSE (free, unauthenticated, cross-verification)
@@ -20,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -97,8 +102,11 @@ def _kite_quote_sync(
 def _yfinance_ltp_sync(symbol: str) -> float | None:
     """
     Synchronous yfinance LTP for NSE equity.
-    symbol: bare NSE symbol like "RELIANCE" or "NIFTY" (index).
+    GUARDED: Only runs if USE_YFINANCE=True (disabled in production).
     """
+    _use_yf = os.environ.get("USE_YFINANCE", "false").lower() in ("1", "true", "yes")
+    if not _use_yf:
+        return None
     try:
         import yfinance as yf
 

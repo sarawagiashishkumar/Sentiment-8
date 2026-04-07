@@ -132,6 +132,9 @@ from services.research_engine import (
     run_backtest_batch,
     fetch_strategy_backtest,
     is_strategy_enabled as is_backtest_enabled,
+    list_csv_seeds,
+    save_csv_seed,
+    delete_csv_seed,
     # ── Step 4 NEW: Position Sizing Calculator ────────────────────────────
     compute_position_size,
     annotate_signal_affordability,
@@ -378,6 +381,9 @@ KITE_API_KEY = os.environ.get("KITE_API_KEY")
 KITE_API_SECRET = os.environ.get("KITE_API_SECRET")
 KITE_REDIRECT_URL = os.environ.get("KITE_REDIRECT_URL")
 KITE_READ_ONLY_MODE = True
+
+# ── Global data-source config: yfinance DISABLED in production ────────────
+USE_YFINANCE: bool = os.environ.get("USE_YFINANCE", "false").lower() in ("1", "true", "yes")
 KITE_ALLOWED_DATA_ENDPOINTS = [
     "/quote/ltp",
     "/instruments",
@@ -2754,8 +2760,8 @@ async def _get_india_vix() -> float | None:
         except Exception:
             pass
 
-    # ── FALLBACK: yfinance ─────────────────────────────────────────────────
-    if vix is None:
+    # ── FALLBACK: yfinance (only if USE_YFINANCE=True, disabled by default) ──
+    if vix is None and USE_YFINANCE:
         def _fetch_vix_yf() -> float | None:
             try:
                 import yfinance as yf
@@ -3449,11 +3455,13 @@ async def _get_fundamental_data(symbol: str) -> dict:
     except Exception:
         pass
 
-    # Fetch from yfinance
-    try:
-        data = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_fundamentals, symbol), timeout=15.0)
-    except Exception:
-        data = {}
+    # Fetch from yfinance (only if USE_YFINANCE=True; fundamental data has no Kite equivalent)
+    data = {}
+    if USE_YFINANCE:
+        try:
+            data = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_fundamentals, symbol), timeout=15.0)
+        except Exception:
+            data = {}
 
     result = {
         "symbol": symbol,
@@ -3563,10 +3571,13 @@ async def _get_hist_ohlcv(symbol: str, period: str = "1y"):
     # Primary: Kite historical API (Kite-first data policy, per Master Spec)
     raw = await _fetch_kite_hist_ohlcv_for_equity(symbol, period)
     if not raw or not raw.get("records"):
-        # Fallback: yfinance (only when Kite data is unavailable)
-        try:
-            raw = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_hist_ohlcv, symbol, period), timeout=20.0)
-        except Exception:
+        # Fallback: yfinance (only if USE_YFINANCE=True, disabled by default in production)
+        if USE_YFINANCE:
+            try:
+                raw = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_hist_ohlcv, symbol, period), timeout=20.0)
+            except Exception:
+                raw = None
+        else:
             raw = None
 
     if not raw or not raw.get("records"):
@@ -5536,13 +5547,13 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         india_vix = await _get_india_vix()
 
         # ── Fetch index historical OHLCV for tech snapshot ───────────────────
-        idx_symbol = "^NSEI" if index_name == "NIFTY" else "^NSEBANK"
         index_tech_snap: dict = {}
         try:
-            # For NIFTY/BANKNIFTY, use yfinance with special ticker
+            # _get_hist_ohlcv uses Kite-first (yfinance guarded by USE_YFINANCE)
             hist_index = await _get_hist_ohlcv(index_name.replace("^", ""), period="6mo")
-            if hist_index is None or hist_index.empty:
-                # Try alternate symbol
+            if (hist_index is None or hist_index.empty) and USE_YFINANCE:
+                # Alternate yfinance path (only if USE_YFINANCE=True)
+                idx_symbol = "^NSEI" if index_name == "NIFTY" else "^NSEBANK"
                 import yfinance as yf
                 import pandas as pd
                 def _fetch_index_hist():
@@ -7885,12 +7896,55 @@ async def trigger_backtest_batch(current_user: dict = Depends(get_owner_user)):
 
 
 @api_router.get("/fno/strategy-backtests")
-async def list_strategy_backtests(current_user: dict = Depends(get_current_user)):
+async def list_strategy_backtests_endpoint(current_user: dict = Depends(get_current_user)):
     """List all strategy backtest records with their enable/disable status."""
     rows = await db.strategy_backtests.find({}, {"_id": 0}).to_list(500)
     for r in rows:
         r["enabled"] = is_backtest_enabled(r)
     return {"backtests": rows, "count": len(rows)}
+
+
+@api_router.get("/admin/csv-seeds")
+async def list_csv_seeds_endpoint(current_user: dict = Depends(get_owner_user)):
+    """List all verified CSV seed files for OHLCV data (admin only)."""
+    seeds = list_csv_seeds()
+    return {
+        "seeds": seeds,
+        "count": len(seeds),
+        "seed_dir": str(os.environ.get("OHLCV_CSV_SEED_DIR", "/app/data/ohlcv_seeds")),
+        "guide": (
+            "Upload CSV files with columns: date,open,high,low,close,volume. "
+            "Files are named {SYMBOL}.csv (e.g., NIFTY.csv, RELIANCE.csv). "
+            "These are used ONLY when Kite Connect is unavailable."
+        ),
+    }
+
+
+@api_router.post("/admin/csv-seeds/{symbol}")
+async def upload_csv_seed(
+    symbol: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_owner_user),
+):
+    """Upload a verified CSV seed file for a symbol (admin only)."""
+    content = await file.read()
+    text = content.decode("utf-8", errors="replace")
+    result = save_csv_seed(symbol, text)
+    if result.get("error"):
+        raise HTTPException(400, detail=result["error"])
+    return result
+
+
+@api_router.delete("/admin/csv-seeds/{symbol}")
+async def delete_csv_seed_endpoint(
+    symbol: str,
+    current_user: dict = Depends(get_owner_user),
+):
+    """Delete a CSV seed file for a symbol (admin only)."""
+    result = delete_csv_seed(symbol)
+    if result.get("error"):
+        raise HTTPException(404, detail=result["error"])
+    return result
 
 
 @api_router.post("/fno/position-sizing")

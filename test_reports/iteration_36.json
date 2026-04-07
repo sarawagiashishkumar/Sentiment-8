@@ -1,0 +1,100 @@
+{
+  "summary": "Iteration 36: HOTFIX Testing - Remove yfinance from production code paths. All 21 backend tests pass. Frontend CSV Seed Management card verified. Key changes: (1) USE_YFINANCE defaults to False in backtest_engine.py and server.py, (2) backtest_engine.py completely rewritten to use Kite → CSV seed → skip (zero yfinance), (3) All yfinance calls in server.py, data_verifier.py, sector_momentum.py wrapped in 'if USE_YFINANCE:' guards, (4) New admin CSV seed management endpoints and frontend card working correctly.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestBacktestEngineUseYfinanceFlag::test_use_yfinance_defaults_to_false": "PASS",
+    "TestGetOhlcvFromKite::test_kite_returns_none_without_api_key": "PASS",
+    "TestGetOhlcvFromCsvSeed::test_csv_seed_returns_none_when_file_not_exists": "PASS",
+    "TestGetOhlcvFromCsvSeed::test_csv_seed_reads_valid_file": "PASS",
+    "TestFetch12mOhlcv::test_fetch_12m_ohlcv_returns_none_without_data_sources": "PASS",
+    "TestCsvSeedManagement::test_list_csv_seeds_returns_list": "PASS",
+    "TestCsvSeedManagement::test_save_csv_seed_validates_headers": "PASS",
+    "TestCsvSeedManagement::test_save_and_delete_csv_seed": "PASS",
+    "TestServerUseYfinanceFlag::test_server_use_yfinance_defaults_to_false": "PASS",
+    "TestDataVerifierYfinanceGuard::test_yfinance_ltp_sync_returns_none_when_disabled": "PASS",
+    "TestSectorMomentumYfinanceGuard::test_fetch_sector_data_sync_returns_none_when_disabled": "PASS",
+    "TestCsvSeedApiEndpoints::test_get_csv_seeds_endpoint": "PASS",
+    "TestCsvSeedApiEndpoints::test_post_csv_seed_endpoint": "PASS",
+    "TestCsvSeedApiEndpoints::test_delete_csv_seed_endpoint": "PASS",
+    "TestCsvSeedApiEndpoints::test_post_csv_seed_invalid_headers": "PASS",
+    "TestBacktestBatchEndpoint::test_backtest_batch_returns_data_source_field": "PASS",
+    "TestBacktestBatchEndpoint::test_backtest_batch_skips_when_kite_unavailable": "PASS",
+    "TestNoYfinanceInProductionPaths::test_backtest_engine_no_yfinance_import": "PASS",
+    "TestNoRegressionExistingEndpoints::test_auth_endpoint_works": "PASS",
+    "TestNoRegressionExistingEndpoints::test_status_endpoint_works": "PASS",
+    "TestNoRegressionExistingEndpoints::test_sector_momentum_endpoint_works": "PASS"
+  },
+
+  "frontend_test_results": {
+    "login_page_loads": "PASS",
+    "admin_login_works": "PASS",
+    "csv_seed_card_found": "PASS",
+    "csv_seed_guide_text_correct": "PASS",
+    "csv_seed_upload_form_found": "PASS",
+    "csv_seed_symbol_input_found": "PASS",
+    "csv_seed_file_input_found": "PASS",
+    "csv_seed_upload_button_found": "PASS",
+    "csv_seed_refresh_button_found": "PASS",
+    "csv_seed_empty_message_correct": "PASS"
+  },
+
+  "key_findings": {
+    "USE_YFINANCE_backtest_engine": "CONFIRMED — defaults to False, no yfinance imports at module level",
+    "USE_YFINANCE_server": "CONFIRMED — defaults to False at line 386",
+    "get_ohlcv_from_kite": "CONFIRMED — returns None when KITE_API_KEY is missing (logs 'Kite auth not available')",
+    "get_ohlcv_from_csv_seed": "CONFIRMED — returns None when no CSV file exists, reads valid CSV correctly",
+    "fetch_12m_ohlcv": "CONFIRMED — tries Kite first then CSV seed then returns None (never yfinance)",
+    "data_verifier_yfinance_guard": "CONFIRMED — _yfinance_ltp_sync returns None when USE_YFINANCE=False",
+    "sector_momentum_yfinance_guard": "CONFIRMED — _fetch_sector_data_sync returns None when USE_YFINANCE=False",
+    "csv_seed_api_endpoints": "CONFIRMED — GET/POST/DELETE /api/admin/csv-seeds work correctly",
+    "csv_seed_validation": "CONFIRMED — POST rejects CSV with missing columns (date,open,high,low,close required)",
+    "backtest_batch_data_source": "CONFIRMED — returns data_source='kite_connect + csv_seed'",
+    "frontend_csv_seed_card": "CONFIRMED — Admin panel has CSV Seed Management card with upload form, table listing, delete buttons"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration36_yfinance_hotfix.py",
+    "/app/test_reports/pytest/iteration36_results.xml",
+    "/app/test_reports/it36_admin_csv_seed_card.jpeg"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "backtest_engine.py correctly uses Kite → CSV seed → skip pattern with zero yfinance imports",
+    "USE_YFINANCE flag correctly defaults to False in all modules (backtest_engine.py, server.py, data_verifier.py, sector_momentum.py)",
+    "CSV seed management functions (list_csv_seeds, save_csv_seed, delete_csv_seed, get_ohlcv_from_csv_seed) work correctly",
+    "CSV seed validation correctly requires date,open,high,low,close columns",
+    "Frontend CSV Seed Management card has all required elements: guide text, symbol input, file input, upload button, refresh button, table/empty message"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration36_yfinance_hotfix.py (new, 21 tests)"
+  ],
+
+  "success_rate": {
+    "backend": "100% (21/21 tests pass)",
+    "frontend": "100% (10/10 UI elements verified)"
+  },
+
+  "test_credentials": "@shish123 / 1234",
+
+  "seed_data_creation": "Test CSV seeds created and deleted during testing (TEST_ITERATION36, TEST_SAVE_DELETE_36, TEST_API_UPLOAD_36, TEST_API_DELETE_36)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 36: HOTFIX testing complete. yfinance removed from all production code paths. USE_YFINANCE defaults to False. Kite Connect is the ONLY production OHLCV source. CSV seed mechanism added as offline verified fallback. Admin CSV seed management panel added to frontend at currentPage='admin'. CSV_SEED_DIR is /app/data/ohlcv_seeds/. Test file: /app/backend/tests/test_iteration36_yfinance_hotfix.py"
+}

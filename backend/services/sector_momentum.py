@@ -111,7 +111,14 @@ def _compute_hist_vol(closes: pd.Series, window: int = 21) -> float | None:
 
 
 def _fetch_sector_data_sync(symbols: list[str]) -> pd.DataFrame | None:
-    """Synchronously download OHLCV data for a list of symbols via yfinance."""
+    """Synchronously download OHLCV data for a list of symbols.
+    GUARDED: Only uses yfinance if USE_YFINANCE=True (disabled in production).
+    """
+    import os as _os
+    _use_yf = _os.environ.get("USE_YFINANCE", "false").lower() in ("1", "true", "yes")
+    if not _use_yf:
+        logger.debug("Sector data fetch skipped: USE_YFINANCE=False")
+        return None
     try:
         import yfinance as yf
         tickers = [f"{s}.NS" for s in symbols]
