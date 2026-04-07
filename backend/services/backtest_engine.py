@@ -92,7 +92,7 @@ def get_ohlcv_from_kite(
     INDEX_TOKENS = {"NIFTY": 256265, "NIFTY50": 256265, "BANKNIFTY": 260105}
     if symbol.upper() in INDEX_TOKENS:
         instrument_token = INDEX_TOKENS[symbol.upper()]
-    elif db_sync_client:
+    elif db_sync_client is not None:
         instrument_token = _kite_instrument_token_sync(symbol, db_sync_client)
 
     if instrument_token is None:
@@ -492,15 +492,16 @@ async def run_backtest_batch(db, strategy_library: dict[str, dict]) -> dict[str,
     api_key = os.environ.get("KITE_API_KEY")
     access_token = os.environ.get("KITE_ACCESS_TOKEN")
 
-    # Get async Kite access token if available via DB session
+    # Get Kite access token from DB session (system_meta.kite_session)
     if not access_token:
         try:
-            session_doc = await db.kite_sessions.find_one(
-                {"status": "active"}, {"_id": 0, "access_token": 1},
-                sort=[("created_at", -1)],
+            session_doc = await db.system_meta.find_one(
+                {"key": "kite_session"}, {"_id": 0, "access_token": 1, "api_key": 1},
             )
             if session_doc:
                 access_token = session_doc.get("access_token")
+                if not api_key:
+                    api_key = session_doc.get("api_key")
         except Exception:
             pass
 
