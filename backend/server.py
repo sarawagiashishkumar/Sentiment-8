@@ -1467,7 +1467,7 @@ async def _fetch_kite_hist_ohlcv_for_equity(symbol: str, period: str = "1y") -> 
     """
     Fetch daily historical OHLCV from Kite for NSE equity instruments (Kite-first policy).
     Requires valid Kite access token + instrument token in kite_equity_master.
-    Returns {'records': [...]} in same format as _fetch_yfinance_hist_ohlcv, or None.
+    Returns {'records': [...]} with open/high/low/close/volume dicts, or None.
     """
     access_token = await _get_kite_access_token()
     if not access_token or not KITE_API_KEY:
@@ -2697,7 +2697,7 @@ from deps import get_current_user, get_admin_user, get_owner_user
 # ─── India VIX ────────────────────────────────────────────────────────────────
 
 async def _get_india_vix() -> float | None:
-    """Fetch India VIX — Kite first, yfinance fallback — with 5-minute cache."""
+    """Fetch India VIX — Kite Connect only, with 5-minute cache."""
     now_ts = datetime.now(timezone.utc).timestamp()
     cached = INDIA_VIX_CACHE.get("value")
     cached_ts = INDIA_VIX_CACHE.get("ts", 0.0)
@@ -2706,7 +2706,7 @@ async def _get_india_vix() -> float | None:
 
     vix = None
 
-    # ── PRIMARY: Kite quote for India VIX ──────────────────────────────────
+    # ── PRIMARY (and sole source): Kite quote for India VIX ───────────────
     access_token = await _get_kite_access_token()
     if access_token and KITE_API_KEY:
         def _fetch_vix_kite() -> float | None:
@@ -2741,28 +2741,7 @@ async def _get_india_vix() -> float | None:
         except Exception:
             pass
 
-    # ── FALLBACK: yfinance (only if USE_YFINANCE=True, disabled by default) ──
-    if vix is None and USE_YFINANCE:
-        def _fetch_vix_yf() -> float | None:
-            try:
-                import yfinance as yf
-                ticker = yf.Ticker("^NSEINDVIX")
-                hist = ticker.history(period="1d")
-                if hist is not None and not hist.empty:
-                    return float(hist["Close"].iloc[-1])
-                info = ticker.info or {}
-                val = info.get("regularMarketPrice") or info.get("previousClose")
-                return float(val) if val else None
-            except Exception as exc:
-                logger.warning("India VIX yfinance fallback failed: %s", exc)
-                return None
-
-        try:
-            vix = await asyncio.wait_for(asyncio.to_thread(_fetch_vix_yf), timeout=8.0)
-            if vix:
-                logger.debug(f"India VIX from yfinance fallback: {vix:.1f}")
-        except Exception:
-            vix = None
+    # No third-party fallback — Kite is the sole VIX source
 
     if vix is not None:
         INDIA_VIX_CACHE["value"] = vix
@@ -3490,31 +3469,6 @@ async def _get_fundamental_data(symbol: str) -> dict:
     return result
 
 
-def _fetch_yfinance_hist_ohlcv(symbol: str, period: str = "1y") -> dict | None:
-    """Fetch historical OHLCV from yfinance and return as serializable dict."""
-    try:
-        import yfinance as yf
-        ticker = yf.Ticker(f"{symbol}.NS")
-        hist = ticker.history(period=period, auto_adjust=True)
-        if hist is None or hist.empty:
-            return None
-        # Return as JSON-serializable records
-        records = []
-        for ts, row in hist.iterrows():
-            records.append({
-                "date": str(ts.date()),
-                "open": float(row.get("Open", 0)),
-                "high": float(row.get("High", 0)),
-                "low": float(row.get("Low", 0)),
-                "close": float(row.get("Close", 0)),
-                "volume": int(row.get("Volume", 0)),
-            })
-        return {"symbol": symbol, "records": records, "count": len(records)}
-    except Exception as exc:
-        logger.warning("yfinance hist OHLCV failed for %s: %s", symbol, exc)
-        return None
-
-
 async def _get_hist_ohlcv(symbol: str, period: str = "1y"):
     """
     Get historical OHLCV as pandas DataFrame with 6h in-memory cache and 12h MongoDB cache.
@@ -3549,17 +3503,11 @@ async def _get_hist_ohlcv(symbol: str, period: str = "1y"):
     except Exception:
         pass
 
-    # Primary: Kite historical API (Kite-first data policy, per Master Spec)
+    # Primary (and sole source): Kite historical API
     raw = await _fetch_kite_hist_ohlcv_for_equity(symbol, period)
     if not raw or not raw.get("records"):
-        # Fallback: yfinance (only if USE_YFINANCE=True, disabled by default in production)
-        if USE_YFINANCE:
-            try:
-                raw = await asyncio.wait_for(asyncio.to_thread(_fetch_yfinance_hist_ohlcv, symbol, period), timeout=20.0)
-            except Exception:
-                raw = None
-        else:
-            raw = None
+        # No third-party fallback — Kite is the sole historical data source
+        raw = None
 
     if not raw or not raw.get("records"):
         return None
@@ -5530,19 +5478,8 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         # ── Fetch index historical OHLCV for tech snapshot ───────────────────
         index_tech_snap: dict = {}
         try:
-            # _get_hist_ohlcv uses Kite-first (yfinance guarded by USE_YFINANCE)
+            # Kite is the sole historical data source
             hist_index = await _get_hist_ohlcv(index_name.replace("^", ""), period="6mo")
-            if (hist_index is None or hist_index.empty) and USE_YFINANCE:
-                # Alternate yfinance path (only if USE_YFINANCE=True)
-                idx_symbol = "^NSEI" if index_name == "NIFTY" else "^NSEBANK"
-                import yfinance as yf
-                import pandas as pd
-                def _fetch_index_hist():
-                    t = yf.Ticker(idx_symbol)
-                    return t.history(period="6mo", auto_adjust=True)
-                hist_df_raw = await asyncio.to_thread(_fetch_index_hist)
-                if hist_df_raw is not None and not hist_df_raw.empty:
-                    hist_index = hist_df_raw
             if hist_index is not None and not hist_index.empty:
                 index_tech_snap = compute_full_technical_snapshot(index_name, hist_index, ltp=stock.ltp)
         except Exception as exc:
@@ -5994,8 +5931,8 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
     universe = await _get_multibagger_universe()
 
     semaphore = asyncio.Semaphore(18)
-    fundamental_semaphore = asyncio.Semaphore(5)  # limit concurrent yfinance calls
-    hist_semaphore = asyncio.Semaphore(3)  # limit concurrent yfinance historical calls
+    fundamental_semaphore = asyncio.Semaphore(5)  # limit concurrent fundamental data calls
+    hist_semaphore = asyncio.Semaphore(3)  # limit concurrent historical data calls
 
     async def _fetch_one(symbol: str) -> dict | None:
         async with semaphore:
@@ -7042,7 +6979,7 @@ async def get_sector_momentum(
 
     # Compute fresh
     try:
-        result = await compute_sector_momentum_dashboard()
+        result = await compute_sector_momentum_dashboard(db=db)
     except Exception as exc:
         logger.error("Sector momentum computation failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Sector momentum computation failed: {exc}")

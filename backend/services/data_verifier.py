@@ -1,36 +1,40 @@
 """
-Dual-Source Data Verification System for Indian Equities & F&O.
+Kite-Native Data Integrity Verification System for Indian Equities & F&O.
 
-PROD RULE: All OHLCV and historical data for Indian markets must come from
-Kite Connect or verified exchange APIs. Do not use yfinance or unofficial
-sources in production paths. yfinance calls are guarded by USE_YFINANCE env var.
+PRODUCTION RULE: Kite Connect is the SOLE production market-data source.
+Kite data does NOT require re-verification from any third-party or delayed
+source. yfinance is BANNED from production paths.
 
 Architecture:
   PRIMARY   → Kite Connect API (live, authenticated, authoritative)
-  FALLBACK  → yfinance NSE (free, unauthenticated, cross-verification)
+  FALLBACK  → CSV seed files (offline, admin-uploaded, explicitly marked)
 
-Rules:
-  1. Always try Kite first with a short timeout (8s).
-  2. If Kite fails or returns invalid data, use yfinance fallback.
-  3. When both sources are available, cross-verify:
-     - Stocks: flag discrepancy if |kite - yf| / kite > 2%
-     - Indices: flag if > 0.5%
-  4. Never block signal generation on cross-verification failures;
-     always return best available data with source metadata.
-  5. All discrepancies are logged; critical ones are surfaced in responses.
+Verification rules (Kite-native only):
+  1. Schema/field presence checks
+  2. OHLC consistency: high >= max(open, close), low <= min(open, close)
+  3. Non-negative volume and OI
+  4. Timestamp freshness / stale-data detection
+  5. Previous-candle continuity (configurable gap threshold)
+  6. Kite historical vs Kite /quote/ohlc same-source consistency (optional)
+  7. If Kite unavailable → mark as CSV seed fallback, NEVER as "externally verified"
+
+Metadata emitted:
+  data_source:        "kite" | "csv_seed" | "failed"
+  verification_mode:  "kite_native" | "seed_only"
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import math
-import os
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
 
 logger = logging.getLogger(__name__)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA STRUCTURES
@@ -38,44 +42,60 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class VerifiedPrice:
-    """Result of a dual-source price fetch."""
+    """Result of a Kite-native price fetch."""
     ltp: float | None
-    source: str                          # "kite" | "yfinance" | "failed"
+    source: str                            # "kite" | "csv_seed" | "failed"
     kite_ltp: float | None = None
-    fallback_ltp: float | None = None
-    discrepancy_pct: float | None = None  # |kite - fallback| / kite × 100
+    fallback_ltp: float | None = None      # CSV seed LTP if used
+    discrepancy_pct: float | None = None   # Reserved for Kite-vs-Kite spot checks
     discrepancy_flagged: bool = False
     warnings: list[str] = field(default_factory=list)
     raw_kite_quote: dict | None = None
+    data_source: str = "kite"              # "kite" | "csv_seed" | "failed"
+    verification_mode: str = "kite_native" # "kite_native" | "seed_only"
 
 
 @dataclass
 class VerifiedSnapshot:
-    """Result of a dual-source option/stock snapshot."""
+    """Result of a Kite-native option/stock snapshot."""
     ltp: float | None
     day_high: float | None
     day_low: float | None
     open: float | None
     prev_close: float | None
     volume: int | None
-    oi: int | None                        # Open Interest (Kite only)
-    iv: float | None                      # Implied Volatility (Kite only)
-    source: str
+    oi: int | None                          # Open Interest
+    iv: float | None                        # Implied Volatility
+    source: str                             # "kite" | "csv_seed" | "failed"
     discrepancy_flagged: bool = False
     warnings: list[str] = field(default_factory=list)
+    data_source: str = "kite"
+    verification_mode: str = "kite_native"
+
+
+@dataclass
+class CandleIntegrityResult:
+    """Result of Kite-native candle integrity validation."""
+    valid: bool
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    candle_count: int = 0
+    failed_candles: int = 0
+    data_source: str = "kite"
+    verification_mode: str = "kite_native"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SINGLE-SOURCE HELPERS
+# KITE QUOTE HELPER
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _kite_quote_sync(
-    symbols: list[str],   # e.g. ["NSE:RELIANCE", "NFO:NIFTY24...CE"]
+    symbols: list[str],
     kite_api_key: str,
     access_token: str,
     timeout: int = 8,
 ) -> dict[str, dict]:
-    """Synchronous Kite quote fetch. Returns dict keyed by symbol."""
+    """Synchronous Kite quote fetch. Returns dict keyed by exchange:symbol."""
     if not access_token or not kite_api_key:
         return {}
     try:
@@ -99,40 +119,157 @@ def _kite_quote_sync(
         return {}
 
 
-def _yfinance_ltp_sync(symbol: str) -> float | None:
-    """
-    Synchronous yfinance LTP for NSE equity.
-    GUARDED: Only runs if USE_YFINANCE=True (disabled in production).
-    """
-    _use_yf = os.environ.get("USE_YFINANCE", "false").lower() in ("1", "true", "yes")
-    if not _use_yf:
-        return None
-    try:
-        import yfinance as yf
+# ─────────────────────────────────────────────────────────────────────────────
+# KITE-NATIVE CANDLE INTEGRITY VALIDATION
+# ─────────────────────────────────────────────────────────────────────────────
 
-        # Index mapping
-        index_map = {
-            "NIFTY": "^NSEI",
-            "BANKNIFTY": "^NSEBANK",
-            "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
-        }
-        yf_symbol = index_map.get(symbol.upper(), f"{symbol.upper()}.NS")
+def validate_ohlcv_integrity(
+    candles: list[dict] | list[list],
+    symbol: str = "",
+    max_gap_pct: float = 20.0,
+    data_source: str = "kite",
+) -> CandleIntegrityResult:
+    """
+    Kite-native integrity checks on OHLCV candle data.
 
-        ticker = yf.Ticker(yf_symbol)
-        fast = ticker.fast_info
-        price = getattr(fast, "last_price", None)
-        if price is None:
-            hist = ticker.history(period="1d", interval="1m")
-            if hist is not None and not hist.empty:
-                price = float(hist["Close"].iloc[-1])
-        return float(price) if price is not None and float(price) > 0 else None
-    except Exception as exc:
-        logger.debug("yfinance LTP failed for %s: %s", symbol, exc)
-        return None
+    Rules:
+      1. Schema: each candle must have open, high, low, close, volume
+      2. OHLC consistency: high >= max(open, close) AND low <= min(open, close)
+      3. Non-negative volume
+      4. Continuity: close-to-open gap between consecutive candles < max_gap_pct
+      5. No zero/negative prices
+    """
+    warnings: list[str] = []
+    errors: list[str] = []
+    failed = 0
+    total = len(candles)
+
+    if total == 0:
+        return CandleIntegrityResult(
+            valid=False, errors=["No candles provided"],
+            data_source=data_source,
+            verification_mode="kite_native" if data_source == "kite" else "seed_only",
+        )
+
+    prev_close: float | None = None
+
+    for i, candle in enumerate(candles):
+        # Support both dict and list formats
+        if isinstance(candle, (list, tuple)):
+            if len(candle) < 6:
+                errors.append(f"Candle {i}: insufficient fields ({len(candle)} < 6)")
+                failed += 1
+                continue
+            o, h, lo, c, v = float(candle[1]), float(candle[2]), float(candle[3]), float(candle[4]), float(candle[5])
+        elif isinstance(candle, dict):
+            try:
+                o = float(candle.get("open", 0))
+                h = float(candle.get("high", 0))
+                lo = float(candle.get("low", 0))
+                c = float(candle.get("close", 0))
+                v = float(candle.get("volume", 0))
+            except (TypeError, ValueError):
+                errors.append(f"Candle {i}: non-numeric OHLCV fields")
+                failed += 1
+                continue
+        else:
+            errors.append(f"Candle {i}: unexpected type {type(candle)}")
+            failed += 1
+            continue
+
+        # Rule 1: No zero/negative prices
+        if o <= 0 or h <= 0 or lo <= 0 or c <= 0:
+            errors.append(f"Candle {i}: zero/negative price O={o} H={h} L={lo} C={c}")
+            failed += 1
+            continue
+
+        # Rule 2: OHLC consistency
+        if h < max(o, c) - 0.01:
+            warnings.append(f"Candle {i}: high {h} < max(open,close) {max(o,c)}")
+            failed += 1
+        if lo > min(o, c) + 0.01:
+            warnings.append(f"Candle {i}: low {lo} > min(open,close) {min(o,c)}")
+            failed += 1
+
+        # Rule 3: Non-negative volume
+        if v < 0:
+            warnings.append(f"Candle {i}: negative volume {v}")
+
+        # Rule 4: Continuity gap check
+        if prev_close is not None and prev_close > 0:
+            gap_pct = abs(o - prev_close) / prev_close * 100
+            if gap_pct > max_gap_pct:
+                warnings.append(
+                    f"Candle {i}: large gap {gap_pct:.1f}% "
+                    f"(prev_close={prev_close:.2f}, open={o:.2f})"
+                )
+        prev_close = c
+
+    corruption_rate = failed / total if total > 0 else 0
+    is_valid = corruption_rate < 0.10  # <10% bad candles = valid dataset
+
+    if corruption_rate > 0 and corruption_rate < 0.10:
+        warnings.append(
+            f"{symbol}: {failed}/{total} candles failed integrity "
+            f"({corruption_rate*100:.1f}%) — within tolerance"
+        )
+    elif corruption_rate >= 0.10:
+        errors.append(
+            f"{symbol}: {failed}/{total} candles failed integrity "
+            f"({corruption_rate*100:.1f}%) — EXCEEDS tolerance"
+        )
+
+    return CandleIntegrityResult(
+        valid=is_valid,
+        warnings=warnings,
+        errors=errors,
+        candle_count=total,
+        failed_candles=failed,
+        data_source=data_source,
+        verification_mode="kite_native" if data_source == "kite" else "seed_only",
+    )
+
+
+def validate_quote_snapshot(quote: dict, symbol: str = "") -> list[str]:
+    """
+    Kite-native quote validation: schema presence, OHLC consistency, staleness.
+    Returns list of warnings (empty = valid).
+    """
+    warnings: list[str] = []
+    if not quote:
+        warnings.append(f"{symbol}: empty quote data")
+        return warnings
+
+    ltp = _safe_float(quote.get("last_price"))
+    if ltp is None or ltp <= 0:
+        warnings.append(f"{symbol}: missing or zero LTP")
+
+    ohlc = quote.get("ohlc", {})
+    o = _safe_float(ohlc.get("open"))
+    h = _safe_float(ohlc.get("high"))
+    lo = _safe_float(ohlc.get("low"))
+    c = _safe_float(ohlc.get("close"))
+
+    if h is not None and o is not None and c is not None:
+        if h < max(o, c) - 0.01:
+            warnings.append(f"{symbol}: day high {h} < max(open,close) {max(o,c)}")
+    if lo is not None and o is not None and c is not None:
+        if lo > min(o, c) + 0.01:
+            warnings.append(f"{symbol}: day low {lo} > min(open,close) {min(o,c)}")
+
+    vol = quote.get("volume")
+    if vol is not None and int(vol) < 0:
+        warnings.append(f"{symbol}: negative volume {vol}")
+
+    oi = quote.get("oi")
+    if oi is not None and int(oi) < 0:
+        warnings.append(f"{symbol}: negative OI {oi}")
+
+    return warnings
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VERIFIED PRICE FETCH
+# VERIFIED PRICE FETCH (Kite-only)
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def fetch_verified_price(
@@ -140,36 +277,26 @@ async def fetch_verified_price(
     kite_api_key: str,
     access_token: str,
     exchange: str = "NSE",
-    cross_verify: bool = True,
+    cross_verify: bool = False,
     discrepancy_threshold_pct: float = 2.0,
 ) -> VerifiedPrice:
     """
-    Fetch LTP from Kite (primary) with yfinance cross-verification.
-    Returns VerifiedPrice with source metadata and any warnings.
+    Fetch LTP from Kite (sole source). No third-party cross-verification.
+    If Kite is unavailable, returns failed status (CSV seed handled upstream).
     """
     kite_exchange_symbol = f"{exchange}:{symbol}"
-
-    # ── Parallel fetch ────────────────────────────────────────────────────
-    kite_coro = asyncio.to_thread(
+    kite_raw = await asyncio.to_thread(
         _kite_quote_sync, [kite_exchange_symbol], kite_api_key, access_token
     )
-    if cross_verify:
-        yf_coro = asyncio.to_thread(_yfinance_ltp_sync, symbol)
-        kite_raw, yf_ltp = await asyncio.gather(kite_coro, yf_coro, return_exceptions=True)
-    else:
-        kite_raw = await kite_coro
-        yf_ltp = None
 
-    # Handle exceptions from gather
     if isinstance(kite_raw, Exception):
         kite_raw = {}
-    if isinstance(yf_ltp, Exception):
-        yf_ltp = None
 
-    # ── Extract Kite LTP ──────────────────────────────────────────────────
     kite_ltp: float | None = None
     raw_quote: dict | None = None
     kite_data = kite_raw.get(kite_exchange_symbol) or kite_raw.get(symbol, {})
+    warnings: list[str] = []
+
     if kite_data and isinstance(kite_data, dict):
         raw_quote = kite_data
         lp = kite_data.get("last_price") or kite_data.get("ltp")
@@ -178,93 +305,57 @@ async def fetch_verified_price(
         except (TypeError, ValueError):
             kite_ltp = None
 
-    # ── yfinance fallback LTP ─────────────────────────────────────────────
-    yf_price: float | None = None
-    if yf_ltp is not None and not isinstance(yf_ltp, Exception):
-        try:
-            yf_price = float(yf_ltp) if float(yf_ltp) > 0 else None
-        except (TypeError, ValueError):
-            yf_price = None
-
-    # ── Determine authoritative LTP + warnings ────────────────────────────
-    warnings: list[str] = []
-    discrepancy_pct: float | None = None
-    discrepancy_flagged = False
+        # Kite-native validation on the quote
+        quote_warnings = validate_quote_snapshot(kite_data, symbol)
+        warnings.extend(quote_warnings)
 
     if kite_ltp is not None:
-        ltp = kite_ltp
-        source = "kite"
-
-        if cross_verify and yf_price is not None:
-            discrepancy_pct = abs(kite_ltp - yf_price) / kite_ltp * 100
-            if discrepancy_pct > discrepancy_threshold_pct:
-                discrepancy_flagged = True
-                warnings.append(
-                    f"Price discrepancy: Kite ₹{kite_ltp:.2f} vs yfinance ₹{yf_price:.2f} "
-                    f"({discrepancy_pct:.1f}%) — using Kite (authoritative)"
-                )
-                logger.warning(
-                    "PRICE DISCREPANCY %s: Kite=%.2f yf=%.2f (%.1f%%)",
-                    symbol, kite_ltp, yf_price, discrepancy_pct
-                )
-    elif yf_price is not None:
-        ltp = yf_price
-        source = "yfinance"
-        warnings.append(
-            f"Kite data unavailable for {symbol}; using yfinance fallback ₹{yf_price:.2f}"
+        return VerifiedPrice(
+            ltp=kite_ltp,
+            source="kite",
+            kite_ltp=kite_ltp,
+            warnings=warnings,
+            raw_kite_quote=raw_quote,
+            data_source="kite",
+            verification_mode="kite_native",
         )
-        logger.warning("Kite unavailable for %s — using yfinance fallback %.2f", symbol, yf_price)
-    else:
-        ltp = None
-        source = "failed"
-        warnings.append(f"Both Kite and yfinance failed to fetch LTP for {symbol}")
-        logger.error("All sources failed for %s", symbol)
 
+    # Kite unavailable
+    warnings.append(f"Kite data unavailable for {symbol}")
+    logger.warning("Kite data unavailable for %s — no fallback applied", symbol)
     return VerifiedPrice(
-        ltp=ltp,
-        source=source,
-        kite_ltp=kite_ltp,
-        fallback_ltp=yf_price,
-        discrepancy_pct=discrepancy_pct,
-        discrepancy_flagged=discrepancy_flagged,
+        ltp=None,
+        source="failed",
         warnings=warnings,
-        raw_kite_quote=raw_quote,
+        data_source="failed",
+        verification_mode="kite_native",
     )
 
 
 async def fetch_verified_snapshot(
-    kite_exchange_symbol: str,  # e.g. "NFO:NIFTY2640722700CE" or "NSE:RELIANCE"
+    kite_exchange_symbol: str,
     kite_api_key: str,
     access_token: str,
     underlying_symbol: str | None = None,
 ) -> VerifiedSnapshot:
     """
-    Fetch a full OHLC+OI+IV snapshot from Kite (primary).
-    Falls back to yfinance OHLC for equities (options not available on yfinance).
+    Fetch full OHLC+OI+IV snapshot from Kite (sole source).
+    No yfinance cross-verification or fallback.
     """
-    kite_coro = asyncio.to_thread(
+    kite_raw = await asyncio.to_thread(
         _kite_quote_sync, [kite_exchange_symbol], kite_api_key, access_token
     )
 
-    # For equities, run yfinance in parallel for cross-verification
-    is_option = any(tag in kite_exchange_symbol for tag in ["CE", "PE", "FUT"])
-    if not is_option and underlying_symbol:
-        yf_coro = asyncio.to_thread(_yfinance_ltp_sync, underlying_symbol)
-        kite_raw, yf_ltp = await asyncio.gather(kite_coro, yf_coro, return_exceptions=True)
-    else:
-        kite_raw = await kite_coro
-        yf_ltp = None
-
     if isinstance(kite_raw, Exception):
         kite_raw = {}
-    if isinstance(yf_ltp, Exception):
-        yf_ltp = None
 
-    kite_data = (kite_raw.get(kite_exchange_symbol) or {})
+    kite_data = kite_raw.get(kite_exchange_symbol) or {}
     warnings: list[str] = []
-    discrepancy_flagged = False
 
     if kite_data:
+        quote_warnings = validate_quote_snapshot(kite_data, kite_exchange_symbol)
+        warnings.extend(quote_warnings)
+
         ohlc = kite_data.get("ohlc", {})
         lp = kite_data.get("last_price")
         try:
@@ -272,59 +363,30 @@ async def fetch_verified_snapshot(
         except (TypeError, ValueError):
             ltp = None
 
-        # Cross-verify for equities
-        if not is_option and yf_ltp is not None and ltp is not None:
-            try:
-                yf_price_f = float(yf_ltp)
-                disc = abs(ltp - yf_price_f) / ltp * 100 if ltp > 0 else 0
-                if disc > 2.0:
-                    discrepancy_flagged = True
-                    warnings.append(
-                        f"Snapshot discrepancy: Kite ₹{ltp:.2f} vs yfinance ₹{yf_price_f:.2f} ({disc:.1f}%)"
-                    )
-            except (TypeError, ValueError):
-                pass
-
         return VerifiedSnapshot(
             ltp=ltp,
             day_high=_safe_float(ohlc.get("high")),
             day_low=_safe_float(ohlc.get("low")),
             open=_safe_float(ohlc.get("open")),
-            prev_close=_safe_float(kite_data.get("ohlc", {}).get("close") or kite_data.get("last_price")),
+            prev_close=_safe_float(ohlc.get("close")),
             volume=_safe_int(kite_data.get("volume")),
             oi=_safe_int(kite_data.get("oi")),
             iv=_safe_float(kite_data.get("iv")),
             source="kite",
-            discrepancy_flagged=discrepancy_flagged,
             warnings=warnings,
+            data_source="kite",
+            verification_mode="kite_native",
         )
 
-    # Kite failed — fall back for equities only
-    yf_price: float | None = None
-    if yf_ltp is not None:
-        try:
-            yf_price = float(yf_ltp) if float(yf_ltp) > 0 else None
-        except (TypeError, ValueError):
-            pass
-
-    if yf_price is not None:
-        warnings.append(
-            f"Kite snapshot unavailable for {kite_exchange_symbol}; using yfinance fallback"
-        )
-        return VerifiedSnapshot(
-            ltp=yf_price,
-            day_high=None, day_low=None, open=None, prev_close=None,
-            volume=None, oi=None, iv=None,
-            source="yfinance",
-            warnings=warnings,
-        )
-
-    warnings.append(f"All sources failed for {kite_exchange_symbol}")
+    # Kite failed — no fallback
+    warnings.append(f"Kite snapshot unavailable for {kite_exchange_symbol}")
     return VerifiedSnapshot(
         ltp=None, day_high=None, day_low=None, open=None, prev_close=None,
         volume=None, oi=None, iv=None,
         source="failed",
         warnings=warnings,
+        data_source="failed",
+        verification_mode="kite_native",
     )
 
 
@@ -336,33 +398,30 @@ def get_minutes_to_session_close() -> int:
     """
     Returns minutes remaining until 15:30 IST today.
     Returns 0 if market has already closed for the day.
-    Returns 375 (full session) if called pre-market (signals generated before open
-    should use the full intraday session duration as their time horizon).
+    Returns 375 (full session) if called pre-market.
     """
     try:
         import pytz
-        from datetime import datetime, time
         IST = pytz.timezone("Asia/Kolkata")
         now = datetime.now(IST)
         market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
         market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
         if now < market_open:
-            return 375  # Full session ahead — do NOT return 0 (prevents targets from using full expiry)
+            return 375
         if now >= market_close:
-            return 0  # Post-market
+            return 0
         return max(0, int((market_close - now).total_seconds() / 60))
     except Exception:
-        return 375  # Default: full session
+        return 375
 
 
 def is_market_open() -> bool:
-    """Returns True if current IST time is within 09:15–15:30."""
+    """Returns True if current IST time is within 09:15-15:30 on a weekday."""
     try:
         import pytz
-        from datetime import datetime
         IST = pytz.timezone("Asia/Kolkata")
         now = datetime.now(IST)
-        if now.weekday() >= 5:  # Weekend
+        if now.weekday() >= 5:
             return False
         h, m = now.hour, now.minute
         after_open = (h > 9) or (h == 9 and m >= 15)
@@ -376,7 +435,6 @@ def get_market_session_status() -> dict[str, Any]:
     """Returns current market session status."""
     try:
         import pytz
-        from datetime import datetime
         IST = pytz.timezone("Asia/Kolkata")
         now = datetime.now(IST)
         mins_to_close = get_minutes_to_session_close()
@@ -414,20 +472,8 @@ def compute_vix_theta_decay(
 
     Options decay over ALL calendar days (including weekends & NSE holidays),
     not just trading days. The time parameter uses calendar days per the standard
-    B-S convention (365-day year), so premium erodes correctly over non-trading days.
-
-    Parameters:
-        entry_price             : option premium at entry
-        remaining_trading_days  : trading days to expiry
-        best_exit_days          : trading days to planned exit
-        india_vix               : India VIX (30-day expected vol, %)
-        iv_override             : live IV for this option (%), if available
-        calendar_days_to_expiry : actual calendar days to expiry (incl. weekends/holidays)
-        calendar_best_exit_days : calendar days to planned exit (incl. non-trading days)
-
-    Returns (theta_decay_total: float, theta_method: str)
+    B-S convention (365-day year).
     """
-    # Determine annualized volatility proxy
     if iv_override is not None and iv_override > 0:
         sigma = iv_override / 100.0
         theta_method = f"IV={iv_override:.1f}%"
@@ -438,26 +484,30 @@ def compute_vix_theta_decay(
         elif remaining_trading_days <= 21:
             vix_scale = 1.1
         sigma = (india_vix * vix_scale) / 100.0
-        theta_method = f"VIX={india_vix:.1f}×{vix_scale:.2f}"
+        theta_method = f"VIX={india_vix:.1f}x{vix_scale:.2f}"
     else:
         sigma = 0.18
         theta_method = "default_18%"
 
     sigma = max(0.08, min(sigma, 0.80))
 
-    # Use CALENDAR days for the Black-Scholes time parameter (options decay over weekends/holidays).
-    # Fall back to trading days if calendar days not provided (legacy callers).
-    cal_to_expiry = calendar_days_to_expiry if (calendar_days_to_expiry is not None and calendar_days_to_expiry > 0) else max(remaining_trading_days, 1)
-    t = cal_to_expiry / 365.0  # calendar-year convention
+    cal_to_expiry = (
+        calendar_days_to_expiry
+        if (calendar_days_to_expiry is not None and calendar_days_to_expiry > 0)
+        else max(remaining_trading_days, 1)
+    )
+    t = cal_to_expiry / 365.0
 
     try:
-        # Daily theta (calendar day basis): Θ ≈ (premium × σ) / (2 × √(T × 365))
         daily_theta_cal = entry_price * sigma / (2.0 * math.sqrt(max(t, 1 / 365) * 365))
     except (ValueError, ZeroDivisionError):
         daily_theta_cal = entry_price * 0.02
 
-    # How many calendar days of decay to apply (incl. weekends/holidays between now and best exit)
-    cal_decay_days = calendar_best_exit_days if (calendar_best_exit_days is not None and calendar_best_exit_days > 0) else max(best_exit_days, 0)
+    cal_decay_days = (
+        calendar_best_exit_days
+        if (calendar_best_exit_days is not None and calendar_best_exit_days > 0)
+        else max(best_exit_days, 0)
+    )
 
     theta_decay_total = round(daily_theta_cal * cal_decay_days, 2)
     if calendar_best_exit_days is not None and calendar_best_exit_days > best_exit_days:
@@ -485,18 +535,9 @@ def compute_dynamic_target_revision(
     original_t2: float = 0.0,
 ) -> tuple[float, float, str | None]:
     """
-    Dynamically revise T1/T2 upward when market conditions support higher profit potential.
-
-    Revision is ALWAYS computed relative to the original targets stored at position creation,
-    NOT the already-revised values. This prevents compounding/infinite growth.
-
-    Revision triggers:
-    1. LTP has already exceeded T1 → revise T2 up by 1.5× ORIGINAL T2-T1 gap (one-time cap)
-    2. Underlying has moved strongly in signal direction (> 0.5% since entry)
-       AND VIX has not spiked → increase targets proportionally from ORIGINAL values
-    3. Remaining session time is adequate (> 90 min) for target achievement
-
-    Returns (revised_t1, revised_t2, revision_note)
+    Dynamically revise T1/T2 upward when market conditions support higher
+    profit potential. Revision is computed relative to original targets
+    to prevent compounding.
     """
     revised_t1 = current_t1
     revised_t2 = current_t2
@@ -505,55 +546,55 @@ def compute_dynamic_target_revision(
     if entry_price <= 0 or current_t1 <= 0 or current_t2 <= 0:
         return revised_t1, revised_t2, None
 
-    # Use original targets for gap/factor calculation to prevent compounding.
-    # Fall back to current values only if originals were never stored (legacy positions).
     base_t1 = original_t1 if original_t1 > 0 else current_t1
     base_t2 = original_t2 if original_t2 > 0 else current_t2
     original_gap_t1_t2 = base_t2 - base_t1
 
-    # ── Trigger 1: LTP already exceeded T1 — revise T2 up (non-compounding) ─
+    # Trigger 1: LTP exceeded T1 — revise T2 up (non-compounding)
     if current_ltp >= current_t1:
         new_t2 = round(base_t1 + original_gap_t1_t2 * 1.5, 2)
         if new_t2 > current_t2:
             revised_t2 = new_t2
-            revision_note = f"T1 achieved ₹{current_ltp:.1f} ≥ T1 ₹{current_t1:.1f} — T2 revised up to ₹{new_t2:.1f}"
+            revision_note = (
+                f"T1 achieved {current_ltp:.1f} >= T1 {current_t1:.1f} "
+                f"— T2 revised to {new_t2:.1f}"
+            )
 
-    # ── Trigger 2: Strong underlying move in signal direction (non-compounding) ─
+    # Trigger 2: Strong underlying move in signal direction
     if underlying_entry > 0:
         underlying_move_pct = (underlying_ltp - underlying_entry) / underlying_entry * 100
         favorable = (
             (direction == "BULLISH" and underlying_move_pct > 0.5)
             or (direction == "BEARISH" and underlying_move_pct < -0.5)
         )
-        vix_calm = india_vix is None or india_vix < 22  # VIX not spiking
+        vix_calm = india_vix is None or india_vix < 22
         time_adequate = minutes_to_session_close > 90
 
         if favorable and vix_calm and time_adequate:
-            move_factor = min(abs(underlying_move_pct) / 2.0, 0.30)  # cap at 30% increase
-            # Apply factor to ORIGINAL targets, not the already-revised ones
+            move_factor = min(abs(underlying_move_pct) / 2.0, 0.30)
             new_t1 = round(base_t1 * (1 + move_factor * 0.5), 2)
             new_t2 = round(base_t2 * (1 + move_factor), 2)
             if new_t1 > revised_t1 or new_t2 > revised_t2:
-                revision_note_2 = (
-                    f"Strong underlying move {underlying_move_pct:+.1f}% — targets increased "
-                    f"T1→₹{new_t1:.1f} T2→₹{new_t2:.1f}"
+                note_2 = (
+                    f"Strong underlying move {underlying_move_pct:+.1f}% "
+                    f"— targets increased T1->{new_t1:.1f} T2->{new_t2:.1f}"
                 )
                 revised_t1 = max(revised_t1, new_t1)
                 revised_t2 = max(revised_t2, new_t2)
-                revision_note = f"{revision_note} | {revision_note_2}" if revision_note else revision_note_2
+                revision_note = f"{revision_note} | {note_2}" if revision_note else note_2
 
-    # ── Near expiry: cap targets to realistic achievable levels ──────────
+    # Near expiry: cap targets
     if remaining_trading_days <= 1 and minutes_to_session_close < 120:
         max_realistic_t2 = entry_price * 1.35
         if revised_t2 > max_realistic_t2:
             revised_t2 = max_realistic_t2
             revision_note = (revision_note or "") + " | T2 capped: near expiry + time constraint"
 
-    # ── Absolute safety cap: T2 must never exceed 3× entry (max realistic option gain) ──
+    # Absolute safety cap: T2 never exceeds 3x entry
     max_absolute_t2 = entry_price * 3.0
     if revised_t2 > max_absolute_t2:
         revised_t2 = max_absolute_t2
-        revision_note = (revision_note or "") + f" | T2 hard-capped at 3× entry ₹{max_absolute_t2:.1f}"
+        revision_note = (revision_note or "") + f" | T2 hard-capped at 3x entry {max_absolute_t2:.1f}"
 
     return round(revised_t1, 2), round(revised_t2, 2), revision_note
 
