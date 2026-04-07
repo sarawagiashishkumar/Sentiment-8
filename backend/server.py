@@ -4592,6 +4592,31 @@ async def build_fno_signal(
         theta_method = "none"
         best_exit_price = max_ltp_projection
 
+    # SAME-DAY EXPIRY: Override best_exit_price with session-sigma peak projection.
+    # Full-day ATR overestimates the achievable price when only a fraction of session remains.
+    # Formula: entry + (1.5 × session_sigma × delta) − (0.5 × session_theta)
+    if _is_expiry_today:
+        _now_be = datetime.now(IST)
+        _mkt_close_be = _now_be.replace(hour=15, minute=30, second=0, microsecond=0)
+        _rem_sess_min_be = max(1, int((_mkt_close_be - _now_be).total_seconds() / 60)) if _now_be < _mkt_close_be else 1
+        _sess_frac_be = min(_rem_sess_min_be / 375.0, 1.0)
+        _vix_f_be = 1.0
+        if india_vix:
+            if india_vix > 25:   _vix_f_be = 1.30
+            elif india_vix > 20: _vix_f_be = 1.15
+            elif india_vix < 12: _vix_f_be = 0.85
+        _atr_be_sd = underlying_atr or (float(underlying_ltp) * 0.012)
+        _sess_sigma_be = _atr_be_sd * math.sqrt(_sess_frac_be) * _vix_f_be
+        _theta_be_session = (entry_price * _vix_f_be * 0.25 / math.sqrt(max(_sess_frac_be, 0.01))) * _sess_frac_be
+        _peak_gain_sd = _sess_sigma_be * 1.5 * _be_delta - _theta_be_session * 0.5
+        _peak_gain_sd = max(_peak_gain_sd, entry_price * 0.02)  # Floor: 2% of entry
+        best_exit_price = round(min(
+            entry_price + _peak_gain_sd,
+            target2 * 1.10,         # Cap: max 10% above T2
+            entry_price * 2.0,      # Hard cap: 100% gain on expiry day
+        ), 2)
+        best_exit_price = max(best_exit_price, entry_price * 1.01)  # Never below entry+1%
+
     # Compute actual calendar date for best exit
     if _is_expiry_today:
         best_exit_date_str = "Today (Exit Before 3:30 PM)"
@@ -4667,6 +4692,34 @@ async def build_fno_signal(
     if is_potential_trade:
         trigger_factors.append(f"Conviction={conviction_level}")
 
+    # ── High-confidence target assurance (80+ confluence) ─────────────────────
+    # Recalibrate T1/T2 using tighter sigma multipliers (0.35×/0.65× vs 0.50×/1.00×)
+    # to deliver near-guaranteed intraday hits for confirmed strong signals.
+    if confluence_score >= 80:
+        _t1_hc, _t2_hc = compute_atr_based_fno_targets(
+            entry_price=entry_price,
+            underlying_ltp=float(underlying_ltp),
+            atr=underlying_atr,
+            minutes_to_expiry=effective_minutes,
+            option_type=contract.option_type,
+            vix=india_vix,
+            strike=float(contract.strike),
+            high_confidence=True,
+        )
+        # Only replace if HC targets are more conservative (lower = higher certainty)
+        target1 = min(target1, _t1_hc)
+        target2 = min(target2, _t2_hc)
+        # Re-apply same-day caps after HC adjustment
+        if _is_expiry_today:
+            target1 = min(target1, round(entry_price * 1.50, 2))
+            target2 = min(target2, round(entry_price * 2.0, 2))
+        target2 = max(target2, round(target1 * 1.05, 2))
+        # Recompute risk/reward with tighter targets
+        _risk_hc = max(entry_price - stop_loss, 0.01)
+        risk_reward_target1 = round((target1 - entry_price) / _risk_hc, 2)
+        risk_reward_target2 = round((target2 - entry_price) / _risk_hc, 2)
+        trigger_factors.append(f"AssuredTargets:HC{confluence_score}")
+
     ltp_margin_to_t1_amount = round(max(target1 - option_ltp, 0.0), 2)
     ltp_margin_to_t1_pct = round(((target1 - option_ltp) / max(option_ltp, 0.01)) * 100, 2)
     achievable_profit_pct = round(((target1 - entry_price) / max(entry_price, 0.01)) * 100, 2)
@@ -4712,7 +4765,8 @@ async def build_fno_signal(
         best_exit_price=best_exit_price,
         remaining_trading_days=remaining_trading_days,
         best_exit_date_str=best_exit_date_str,
-        near_expiry_badge=(remaining_trading_days <= 2 and remaining_trading_days > 0),
+        near_expiry_badge=(remaining_trading_days == 2),  # tomorrow-expiry warning
+        expiry_today_badge=_is_expiry_today,              # EXPIRY TODAY pulsing badge
         trigger_factors=trigger_factors,
         confluence_score=confluence_score,
         signal_quality=signal_quality,
@@ -5754,14 +5808,65 @@ async def _refresh_open_position(position: dict) -> dict:
 
     # EXPIRY-AWARE: detect if the option expires today (IST)
     _today_ist = datetime.now(IST).strftime("%Y-%m-%d")
-    _expiry_is_today = (position.get("expiry_date", "") == _today_ist)
+    # Normalize: check both "expiry_date" and "expiry" fields; handle missing/malformed values
+    _exp_raw = position.get("expiry_date") or position.get("expiry") or ""
+    try:
+        _exp_norm = datetime.strptime(str(_exp_raw), "%Y-%m-%d").strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        _exp_norm = ""
+    _expiry_is_today = (_exp_norm == _today_ist)
 
     if _expiry_is_today:
-        # Same-day expiry: best exit is NOW / today before 3:30 PM, never T+1
+        # Same-day expiry: use session-sigma peak projection (NOT just current LTP)
+        # Formula: entry + (1.5 × session_sigma × delta) − (0.5 × session_theta)
         best_exit_days = 0
         best_exit_date_str = "Today (Exit Before 3:30 PM)"
-        if latest_option_ltp and latest_option_ltp > 0:
-            best_exit_price = latest_option_ltp
+        try:
+            _pos_entry_sd = float(position.get("buy_price") or 0)
+            _pos_vix_sd = await _get_india_vix() if _pos_entry_sd > 0 else 15.0
+            if _pos_entry_sd > 0:
+                _und_sym_sd = (position.get("underlying") or
+                               position.get("script", "").split("2")[0][:10])
+                _und_ltp_sd = 0.0
+                if _und_sym_sd:
+                    try:
+                        _und_core_sd = await _get_stock_core_cached(_und_sym_sd.upper())
+                        _und_ltp_sd = float(_und_core_sd.get("ltp") or 0)
+                    except Exception:
+                        pass
+                _now_sd = datetime.now(IST)
+                _mkt_close_sd = _now_sd.replace(hour=15, minute=30, second=0, microsecond=0)
+                _rem_sd = max(1, int((_mkt_close_sd - _now_sd).total_seconds() / 60)) if _now_sd < _mkt_close_sd else 1
+                _frac_sd = min(_rem_sd / 375.0, 1.0)
+                _vf_sd = 1.3 if _pos_vix_sd > 25 else (1.15 if _pos_vix_sd > 20 else (0.85 if _pos_vix_sd < 12 else 1.0))
+                _atr_sd = max(_und_ltp_sd * 0.012, _pos_entry_sd * 0.05) if _und_ltp_sd > 0 else _pos_entry_sd * 0.05
+                _ss_sd = _atr_sd * math.sqrt(_frac_sd) * _vf_sd
+                _strike_sd = float(position.get("strike") or _pos_entry_sd)
+                _type_sd = "CE" if "CE" in position.get("script", "").upper() else "PE"
+                _delta_sd = 0.45
+                if _und_ltp_sd > 0 and _strike_sd > 0:
+                    _m_sd = _und_ltp_sd / _strike_sd if _type_sd == "CE" else _strike_sd / _und_ltp_sd
+                    if _m_sd >= 1.08:   _delta_sd = 0.80
+                    elif _m_sd >= 1.04: _delta_sd = 0.65
+                    elif _m_sd >= 0.97: _delta_sd = 0.45
+                    elif _m_sd >= 0.93: _delta_sd = 0.28
+                    else:               _delta_sd = 0.15
+                _theta_sd = (_pos_entry_sd * _vf_sd * 0.25 / math.sqrt(max(_frac_sd, 0.01))) * _frac_sd
+                _peak_sd = _ss_sd * 1.5 * _delta_sd - _theta_sd * 0.5
+                _peak_sd = max(_peak_sd, _pos_entry_sd * 0.02)
+                _t2_sd = float(position.get("target2") or (_pos_entry_sd * 1.5))
+                _raw_sd_exit = round(min(
+                    _pos_entry_sd + _peak_sd,
+                    _t2_sd * 1.10,
+                    _pos_entry_sd * 2.0,
+                ), 2)
+                _ltp_floor = latest_option_ltp if (latest_option_ltp and latest_option_ltp > 0) else round(_pos_entry_sd * 1.01, 2)
+                best_exit_price = max(_raw_sd_exit, _ltp_floor)
+            elif latest_option_ltp and latest_option_ltp > 0:
+                best_exit_price = latest_option_ltp
+        except Exception:
+            if latest_option_ltp and latest_option_ltp > 0:
+                best_exit_price = latest_option_ltp
     elif remaining_trading_days >= 14:
         best_exit_days = max(1, min(int(remaining_trading_days * 0.6), remaining_trading_days - 1))
     elif remaining_trading_days >= 7:

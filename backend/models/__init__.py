@@ -217,7 +217,8 @@ class FNOSignalResponse(BaseModel):
     best_exit_price: float | None = None
     remaining_trading_days: int = 0
     best_exit_date_str: str | None = None
-    near_expiry_badge: bool = False  # True when remaining_trading_days ≤ 2
+    near_expiry_badge: bool = False   # True when remaining_trading_days == 2 (next-day expiry)
+    expiry_today_badge: bool = False  # True when option expires TODAY (same-day expiry)
     trigger_factors: List[str]
     confluence_score: int
     signal_quality: Literal["HIGH", "MEDIUM", "LOW"]

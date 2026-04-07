@@ -1764,11 +1764,15 @@ export default function App() {
                           {/* BEST EXIT for custom positions */}
                           {exitPrice && position.status !== "SOLD" ? (
                             <div className="mt-2">
-                              {position.remaining_trading_days <= 2 && position.remaining_trading_days > 0 && (
+                              {position.best_exit_date_str?.includes("Today") || position.remaining_trading_days === 0 ? (
+                                <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-red-600/30 text-red-300 border border-red-500/70 mb-1 animate-pulse" data-testid={`expiry-today-badge-${position.id}`}>
+                                  EXPIRY TODAY — Exit Before 3:30 PM
+                                </span>
+                              ) : position.remaining_trading_days <= 2 && position.remaining_trading_days > 0 ? (
                                 <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
                                   ⚠ Near Expiry ({position.remaining_trading_days} trading days left)
                                 </span>
-                              )}
+                              ) : null}
                               <p className="text-sm font-semibold text-green-400" data-testid={`custom-position-best-exit-${position.id}`}>
                                 ⭐ BEST EXIT: T+{position.best_exit_days ?? "?"} Trading Days{position.best_exit_date_str ? ` (${position.best_exit_date_str})` : ""} @ ₹{formatNumber(exitPrice)}
                               </p>
@@ -1957,11 +1961,15 @@ export default function App() {
                                     </div>
                                     {renderLiveInfoBox(signal, `assured-${pane.index_name.toLowerCase()}-${idx}`)}
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}{signal.remaining_trading_days > 0 ? ` · ${signal.remaining_trading_days} trading days left` : ""}</p>
-                                    {signal.remaining_trading_days <= 2 && signal.remaining_trading_days > 0 && (
+                                    {signal.expiry_today_badge ? (
+                                      <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-red-600/30 text-red-300 border border-red-500/70 mb-1 animate-pulse">
+                                        EXPIRY TODAY — Exit Before 3:30 PM
+                                      </span>
+                                    ) : signal.near_expiry_badge ? (
                                       <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
                                         ⚠ Near Expiry
                                       </span>
-                                    )}
+                                    ) : null}
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
                                     {signal.best_exit_price && (
@@ -2006,11 +2014,15 @@ export default function App() {
                                     </div>
                                     {renderLiveInfoBox(signal, `watch-${pane.index_name.toLowerCase()}-${idx}`)}
                                     <p>Expiry: {formatExpiryDate(signal.expiry)}{signal.remaining_trading_days > 0 ? ` · ${signal.remaining_trading_days} trading days left` : ""}</p>
-                                    {signal.remaining_trading_days <= 2 && signal.remaining_trading_days > 0 && (
+                                    {signal.expiry_today_badge ? (
+                                      <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-red-600/30 text-red-300 border border-red-500/70 mb-1 animate-pulse">
+                                        EXPIRY TODAY — Exit Before 3:30 PM
+                                      </span>
+                                    ) : signal.near_expiry_badge ? (
                                       <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
                                         ⚠ Near Expiry
                                       </span>
-                                    )}
+                                    ) : null}
                                     <p>Entry/SL/T1/T2: ₹{formatNumber(signal.entry_price)} / ₹{formatNumber(signal.stop_loss)} / ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
                                     <p>Confluence: {signal.confluence_score >= 80 ? "⭐ " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
                                   </div>
@@ -2079,11 +2091,15 @@ export default function App() {
                             </div>
                             {renderLiveInfoBox(signal, `stock-${idx}`)}
                             <p data-testid={`stock-fno-signal-expiry-${signal.script.toLowerCase()}`}>Expiry: {formatExpiryDate(signal.expiry)}{signal.remaining_trading_days > 0 ? ` · ${signal.remaining_trading_days} trading days left` : ""} (monthly stock contract)</p>
-                            {signal.remaining_trading_days <= 2 && signal.remaining_trading_days > 0 && (
+                            {signal.expiry_today_badge ? (
+                              <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-red-600/30 text-red-300 border border-red-500/70 mb-1 animate-pulse">
+                                EXPIRY TODAY — Exit Before 3:30 PM
+                              </span>
+                            ) : signal.near_expiry_badge ? (
                               <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
                                 ⚠ Near Expiry
                               </span>
-                            )}
+                            ) : null}
                             <p>Entry: ₹{formatNumber(signal.entry_price)}</p>
                             <p>SL: ₹{formatNumber(signal.stop_loss)}</p>
                             <p>T1/T2: ₹{formatNumber(signal.target1)} / ₹{formatNumber(signal.target2)}</p>
@@ -2135,11 +2151,15 @@ export default function App() {
                               <p>SL: ₹{formatNumber(trade.stop_loss)}</p>
                               <p>T1/T2: ₹{formatNumber(trade.target1)} / ₹{formatNumber(trade.target2)}</p>
                               <p>Confidence: {trade.confluence_score >= 80 ? "⭐ " : ""}{trade.confluence_score} | {trade.direction}</p>
-                              {trade.remaining_trading_days <= 2 && trade.remaining_trading_days > 0 && (
+                              {trade.expiry_today_badge ? (
+                                <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-red-600/30 text-red-300 border border-red-500/70 mb-1 animate-pulse">
+                                  EXPIRY TODAY — Exit Before 3:30 PM
+                                </span>
+                              ) : trade.near_expiry_badge ? (
                                 <span className="inline-block rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 mb-1">
                                   ⚠ Near Expiry ({trade.remaining_trading_days} days)
                                 </span>
-                              )}
+                              ) : null}
                               {trade.best_exit_price && (
                                 <p className="text-green-400 font-semibold text-sm">
                                   ⭐ BEST EXIT: T+{trade.best_exit_days} Trading Days{trade.best_exit_date_str ? ` (${trade.best_exit_date_str})` : ""} @ ₹{formatNumber(trade.best_exit_price)}

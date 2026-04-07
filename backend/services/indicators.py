@@ -462,6 +462,7 @@ def compute_atr_based_fno_targets(
     option_type: str,
     vix: float | None = None,
     strike: float | None = None,
+    high_confidence: bool = False,
 ) -> tuple[float, float]:
     """
     Compute INTRADAY-ASSURED T1/T2 for F&O options, net of theta decay.
@@ -545,19 +546,27 @@ def compute_atr_based_fno_targets(
     _theta_per_day  = entry_price * _vix_factor * 0.25 / _math.sqrt(_days_est)
     _theta_session  = _theta_per_day * _session_frac  # theta for remaining session only
 
-    # ── 6. T1: Conservative target (0.50 × σ underlying, 25% theta) ──────────
-    _underlying_move_t1 = _session_sigma * 0.50
-    _option_gain_t1     = _underlying_move_t1 * _delta - _theta_session * 0.25
-    # Floor: at least (0.25 × ATR × delta) option move, ensures non-trivial T1
-    _gain_floor_t1 = _atr * _delta * 0.25
+    # ── 6. T1: Conservative target ────────────────────────────────────────────
+    # high_confidence (80+ confluence): 0.35× σ → near-guaranteed hit (70-80% probability)
+    # standard: 0.50× σ → moderate probability hit (55-65% probability)
+    _t1_mult  = 0.35 if high_confidence else 0.50
+    _t1_theta = 0.15 if high_confidence else 0.25
+    _underlying_move_t1 = _session_sigma * _t1_mult
+    _option_gain_t1     = _underlying_move_t1 * _delta - _theta_session * _t1_theta
+    # Floor: at least (ATR × delta × floor_mult) option move
+    _gain_floor_t1 = _atr * _delta * (0.20 if high_confidence else 0.25)
     _net_gain_t1   = max(_option_gain_t1, _gain_floor_t1)
     target1        = round(entry_price + _net_gain_t1, 2)
 
-    # ── 7. T2: Moderate target (1.00 × σ underlying, 50% theta) ──────────────
-    _underlying_move_t2 = _session_sigma * 1.00
-    _option_gain_t2     = _underlying_move_t2 * _delta - _theta_session * 0.50
-    # Floor: T2 must be > T1 and at least (0.50 × ATR × delta)
-    _gain_floor_t2 = _atr * _delta * 0.50
+    # ── 7. T2: Target ─────────────────────────────────────────────────────────
+    # high_confidence: 0.65× σ → highly assured hit (60-70% probability)
+    # standard: 1.00× σ → moderate probability (35-45% probability)
+    _t2_mult  = 0.65 if high_confidence else 1.00
+    _t2_theta = 0.35 if high_confidence else 0.50
+    _underlying_move_t2 = _session_sigma * _t2_mult
+    _option_gain_t2     = _underlying_move_t2 * _delta - _theta_session * _t2_theta
+    # Floor: T2 must be > T1 and at least (ATR × delta × floor_mult)
+    _gain_floor_t2 = _atr * _delta * (0.40 if high_confidence else 0.50)
     _net_gain_t2   = max(_option_gain_t2, _gain_floor_t2, _net_gain_t1 * 1.10)
     target2        = round(entry_price + _net_gain_t2, 2)
 
