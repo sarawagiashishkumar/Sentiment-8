@@ -128,6 +128,13 @@ from services.research_engine import (
     get_fo_universe_from_db,
     # ── Batch 4 NEW: Position Monitoring & Alerts ────────────────────────
     generate_position_alerts as generate_monitoring_alerts,
+    # ── Step 3 NEW: Strategy Backtest Engine ──────────────────────────────
+    run_backtest_batch,
+    fetch_strategy_backtest,
+    is_strategy_enabled as is_backtest_enabled,
+    # ── Step 4 NEW: Position Sizing Calculator ────────────────────────────
+    compute_position_size,
+    annotate_signal_affordability,
 )
 from services.data_verifier import (
     fetch_verified_price,
@@ -4963,12 +4970,29 @@ async def build_fno_signal(
 
     try:
         # Bucket A: Strategy & backtest robustness
-        _strat_stats = {}  # Future: load from strategy_backtests collection
+        # Step 3: Read from strategy_backtests collection (feature flag: USE_BACKTEST_DB)
+        _use_backtest_db = os.environ.get("USE_BACKTEST_DB", "0") == "1"
+        _strat_stats = {}
+        _bucket_a_strategy_enabled = True
+        if _use_backtest_db:
+            try:
+                _matched_strategy_id = _strategy_id if _strategy_id else None
+                _underlying_for_bt = underlying.replace(" ", "")
+                if _matched_strategy_id and _underlying_for_bt:
+                    _bt_doc = await fetch_strategy_backtest(db, _matched_strategy_id, _underlying_for_bt)
+                    if _bt_doc:
+                        _strat_stats = _bt_doc
+                        _bucket_a_strategy_enabled = is_backtest_enabled(_bt_doc)
+                    else:
+                        # No backtest record → treat as DISABLED
+                        _bucket_a_strategy_enabled = False
+            except Exception as _bt_err:
+                logger.debug("Backtest fetch failed for Bucket A: %s", _bt_err)
         _bucket_a = compute_bucket_a(
             win_rate=_strat_stats.get("win_rate"),
-            expectancy_r=_strat_stats.get("expectancy_r"),
+            expectancy_r=_strat_stats.get("expectancy_R") or _strat_stats.get("expectancy_r"),
             trade_count=_strat_stats.get("trade_count"),
-            strategy_enabled=True,
+            strategy_enabled=_bucket_a_strategy_enabled,
         )
 
         # Bucket B: Direction & structure
@@ -5091,7 +5115,7 @@ async def build_fno_signal(
     ltp_margin_to_t1_pct = round(((target1 - option_ltp) / max(option_ltp, 0.01)) * 100, 2)
     achievable_profit_pct = round(((target1 - entry_price) / max(entry_price, 0.01)) * 100, 2)
 
-    return FNOSignalResponse(
+    _sig_resp = FNOSignalResponse(
         script=contract.script,
         underlying=contract.underlying,
         expiry=contract.expiry,
@@ -5150,6 +5174,23 @@ async def build_fno_signal(
         oi_buildup=oi_buildup,
         gex=gex,
     )
+
+    # ── Step 4: Position Sizing Annotation (additive, does not block signals) ──
+    try:
+        _user_budget = float(os.environ.get("DEFAULT_USER_BUDGET", "500000"))
+        _sizing = compute_position_size(
+            user_budget=_user_budget,
+            option_premium=option_ltp,
+            lot_size=contract.lot_size,
+            sl_price=stop_loss,
+            entry_price=best_budget_entry or entry_price,
+        )
+        _sig_resp.not_affordable = _sizing["not_affordable"]
+        _sig_resp.sizing_info = _sizing
+    except Exception:
+        pass  # sizing is optional annotation, never blocks signal
+
+    return _sig_resp
 
 
 async def _get_nearest_expiry(underlying: str, prefer_monthly: bool = False) -> str:
@@ -7829,6 +7870,49 @@ async def get_position_alerts(current_user: dict = Depends(get_current_user)):
     )
 
     return {"alerts": all_events, "count": len(all_events)}
+
+
+@api_router.post("/fno/backtest-batch")
+async def trigger_backtest_batch(current_user: dict = Depends(get_owner_user)):
+    """
+    Run strategy backtests for all strategy × instrument combinations.
+    Upserts results into strategy_backtests collection.
+    Owner-only endpoint.
+    """
+    from services.strategy_library import STRATEGY_LIBRARY
+    result = await run_backtest_batch(db, STRATEGY_LIBRARY)
+    return result
+
+
+@api_router.get("/fno/strategy-backtests")
+async def list_strategy_backtests(current_user: dict = Depends(get_current_user)):
+    """List all strategy backtest records with their enable/disable status."""
+    rows = await db.strategy_backtests.find({}, {"_id": 0}).to_list(500)
+    for r in rows:
+        r["enabled"] = is_backtest_enabled(r)
+    return {"backtests": rows, "count": len(rows)}
+
+
+@api_router.post("/fno/position-sizing")
+async def calculate_position_sizing(
+    user_budget: float = 100000,
+    option_premium: float = 100,
+    lot_size: int = 50,
+    sl_price: float | None = None,
+    entry_price: float | None = None,
+    max_risk_pct: float = 2.0,
+    current_user: dict = Depends(get_current_user),
+):
+    """Calculate position sizing for a given trade setup."""
+    result = compute_position_size(
+        user_budget=user_budget,
+        option_premium=option_premium,
+        lot_size=lot_size,
+        sl_price=sl_price,
+        entry_price=entry_price,
+        max_risk_per_trade_pct=max_risk_pct,
+    )
+    return result
 
 
 @api_router.post("/portfolio/analyze", response_model=PortfolioAnalyzeResponse)

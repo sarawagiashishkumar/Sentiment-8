@@ -179,6 +179,22 @@ from services.position_monitor import (
     generate_position_alerts,
 )
 
+# ── Step 3 NEW: Strategy Backtest Engine ──────────────────────────────────────
+from services.backtest_engine import (
+    run_backtest_batch,
+    fetch_strategy_backtest,
+    is_strategy_enabled,
+    compute_backtest_stats,
+    simulate_trades_for_strategy,
+    make_config_key,
+)
+
+# ── Step 4 NEW: Position Sizing Calculator ────────────────────────────────────
+from services.position_sizing import (
+    compute_position_size,
+    annotate_signal_affordability,
+)
+
 __all__ = [
     # Core
     "HORIZON_TRADING_DAYS",
@@ -243,4 +259,9 @@ __all__ = [
     "get_fo_universe", "get_fo_universe_from_db", "get_fo_universe_size",
     # NEW: Position Monitoring & Alerts (Batch 4)
     "recompute_position_features", "generate_position_alerts",
+    # NEW: Backtest Engine (Step 3)
+    "run_backtest_batch", "fetch_strategy_backtest", "is_strategy_enabled",
+    "compute_backtest_stats", "simulate_trades_for_strategy", "make_config_key",
+    # NEW: Position Sizing (Step 4)
+    "compute_position_size", "annotate_signal_affordability",
 ]

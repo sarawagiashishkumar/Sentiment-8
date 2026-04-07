@@ -216,6 +216,44 @@ def check_regime_shift(
     }
 
 
+def build_urgent_exit_reason(
+    loss_pct: float,
+    minutes_remaining: int,
+    flow_band: str = "NeutralFlow",
+    p_recovery: float | None = None,
+) -> str:
+    """
+    Build neutral, risk-focused reason text for URGENT_EXIT events.
+
+    Rules:
+    - NEVER use imperative verbs: "exit", "sell", "close", "book profit".
+    - Only describes: state (loss %, time), risk level, and a pointer to
+      the details dict for suggested risk-control price.
+    """
+    risk_level = "High" if loss_pct < -20 or (p_recovery is not None and p_recovery < 0.10) else "Elevated"
+
+    # Describe flow direction neutrally (avoid raw band labels with imperative words)
+    if "Sell" in flow_band or "sell" in flow_band:
+        flow_desc = "adverse (bearish pressure)"
+    elif "Buy" in flow_band or "buy" in flow_band:
+        flow_desc = "adverse (bullish pressure)"
+    else:
+        flow_desc = "neutral"
+
+    parts: list[str] = [
+        f"Loss {loss_pct:.1f}% with {minutes_remaining}min remaining.",
+    ]
+    if p_recovery is not None:
+        parts.append(f"Recovery probability {p_recovery:.0%}; order-flow {flow_desc}.")
+    else:
+        parts.append(f"Significant drawdown near session end; order-flow {flow_desc}.")
+
+    parts.append(
+        f"{risk_level} downside risk flagged; see suggested risk-control price in details."
+    )
+    return " ".join(parts)
+
+
 def check_urgent_exit(
     position: dict,
     current_ltp: float | None,
@@ -276,9 +314,9 @@ def check_urgent_exit(
     if not (low_recovery and flow_reversed):
         return None
 
-    # Compute recommended exit price (next 1-2 min MFE)
+    # Estimate expected best achievable price in the next 60 seconds
+    # (MFE + microstructure-based, NOT a guaranteed level)
     if optimal_exit_price is None:
-        # Bid-ask spread based estimation
         if current_ltp < 15:
             exit_adj = 0.20
         elif current_ltp < 50:
@@ -298,15 +336,17 @@ def check_urgent_exit(
         "current_ltp": current_ltp,
         "entry_price": entry_price,
         "unrealized_pnl_pct": round(pnl_pct, 1),
-        "recommended_exit_price": optimal_exit_price,
+        "expected_best_price_next_60s": optimal_exit_price,
         "minutes_remaining": minutes_remaining,
         "flow_band": flow_band,
         "p_recovery": round(p_recovery, 3) if p_recovery is not None else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "reason": f"Loss {pnl_pct:.1f}% with {minutes_remaining}min remaining. "
-                  f"Flow reversed to {flow_band}. "
-                  + (f"Recovery probability only {p_recovery:.0%}. " if p_recovery is not None else "Deep loss near close. ")
-                  + f"Recommended exit near Rs{optimal_exit_price:.1f}",
+        "reason": build_urgent_exit_reason(
+            loss_pct=pnl_pct,
+            minutes_remaining=minutes_remaining,
+            flow_band=flow_band,
+            p_recovery=p_recovery,
+        ),
         "severity": "CRITICAL",
     }
 

@@ -1,0 +1,101 @@
+{
+  "summary": "Iteration 35: Backend-only testing of Sections 2-4 (URGENT_EXIT wording fix, strategy_backtests, position sizing). All 32 tests pass. Key features verified: (1) URGENT_EXIT reason text does NOT contain imperative verbs (exit, sell, close position, book profit), (2) check_urgent_exit returns expected_best_price_next_60s (not recommended_exit_price), (3) generate_position_alerts still generates all 3 alert types, (4) backtest_engine.py compute_backtest_stats/is_strategy_enabled work correctly, (5) strategy_backtests collection has 61 documents, (6) Bucket A wiring with USE_BACKTEST_DB feature flag, (7) position_sizing.py compute_position_size returns all required fields, (8) POST /api/fno/position-sizing endpoint works, (9) FNOSignalResponse has not_affordable and sizing_info fields.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestUrgentExitWordingFix::test_build_urgent_exit_reason_no_imperative_verbs": "PASS",
+    "TestUrgentExitWordingFix::test_check_urgent_exit_returns_expected_best_price_next_60s": "PASS",
+    "TestUrgentExitWordingFix::test_check_urgent_exit_reason_no_imperative_verbs": "PASS",
+    "TestGeneratePositionAlertsAllTypes::test_generate_position_alerts_returns_all_types": "PASS",
+    "TestBacktestEngineComputeStats::test_compute_backtest_stats_correct_fields": "PASS",
+    "TestBacktestEngineComputeStats::test_compute_backtest_stats_empty_trades": "PASS",
+    "TestBacktestEngineIsStrategyEnabled::test_is_strategy_enabled_all_thresholds_met": "PASS",
+    "TestBacktestEngineIsStrategyEnabled::test_is_strategy_enabled_trade_count_below_threshold": "PASS",
+    "TestBacktestEngineIsStrategyEnabled::test_is_strategy_enabled_win_rate_below_threshold": "PASS",
+    "TestBacktestEngineIsStrategyEnabled::test_is_strategy_enabled_expectancy_below_threshold": "PASS",
+    "TestBacktestEngineIsStrategyEnabled::test_is_strategy_enabled_empty_stats": "PASS",
+    "TestBacktestEngineSimulators::test_simulate_trades_for_each_strategy_type": "PASS",
+    "TestBacktestBatchEndpoint::test_backtest_batch_endpoint_exists": "PASS",
+    "TestStrategyBacktestsEndpoint::test_strategy_backtests_endpoint_returns_list": "PASS",
+    "TestStrategyBacktestsEndpoint::test_strategy_backtests_has_enabled_field": "PASS",
+    "TestBucketABacktestWiring::test_bucket_a_fallback_mode_default": "PASS",
+    "TestBucketABacktestWiring::test_bucket_a_disabled_strategy_returns_zero": "PASS",
+    "TestBucketABacktestWiring::test_bucket_a_insufficient_trade_count_returns_zero": "PASS",
+    "TestPositionSizingCompute::test_compute_position_size_returns_all_fields": "PASS",
+    "TestPositionSizingCompute::test_position_sizing_zero_budget_not_affordable": "PASS",
+    "TestPositionSizingCompute::test_position_sizing_tiny_budget_not_affordable": "PASS",
+    "TestPositionSizingCompute::test_position_sizing_large_budget_reasonable_lots": "PASS",
+    "TestPositionSizingEndpoint::test_position_sizing_endpoint_works": "PASS",
+    "TestPositionSizingEndpoint::test_position_sizing_endpoint_default_params": "PASS",
+    "TestFNOSignalResponseModel::test_fno_signal_response_has_not_affordable_field": "PASS",
+    "TestFNOSignalResponseModel::test_fno_signal_response_has_sizing_info_field": "PASS",
+    "TestFNOSignalResponseModel::test_fno_signal_response_defaults": "PASS",
+    "TestNoRegressionExistingEndpoints::test_auth_endpoint_still_works": "PASS",
+    "TestNoRegressionExistingEndpoints::test_custom_positions_endpoint_still_works": "PASS",
+    "TestStrategyBacktestsCollection::test_strategy_backtests_collection_populated": "PASS",
+    "TestStrategyBacktestsCollection::test_strategy_backtests_document_structure": "PASS",
+    "TestAnnotateSignalAffordability::test_annotate_signal_affordability_adds_fields": "PASS"
+  },
+
+  "key_findings": {
+    "urgent_exit_wording": "CONFIRMED — build_urgent_exit_reason() does NOT use imperative verbs (exit, sell, close position, book profit). Uses neutral risk-focused language.",
+    "expected_best_price_next_60s": "CONFIRMED — check_urgent_exit returns 'expected_best_price_next_60s' key, NOT 'recommended_exit_price'",
+    "generate_position_alerts": "CONFIRMED — Still generates all 3 alert types (NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT)",
+    "compute_backtest_stats": "CONFIRMED — Returns trade_count, win_rate, expectancy_R, max_drawdown_R correctly",
+    "is_strategy_enabled": "CONFIRMED — Returns True ONLY when trade_count>=100 AND win_rate>=0.75 AND expectancy_R>=0.40",
+    "simulate_trades_for_strategy": "CONFIRMED — Runs for all 12 strategy types without errors",
+    "backtest_batch_endpoint": "CONFIRMED — POST /api/fno/backtest-batch returns {updated, skipped, errors, details}",
+    "strategy_backtests_endpoint": "CONFIRMED — GET /api/fno/strategy-backtests returns {backtests, count} with enabled field",
+    "strategy_backtests_collection": "CONFIRMED — 61 documents in collection, all with enabled=false (expected due to strict thresholds)",
+    "bucket_a_wiring": "CONFIRMED — USE_BACKTEST_DB=0 (default) uses fallback, USE_BACKTEST_DB=1 uses strict DB gating",
+    "position_sizing": "CONFIRMED — compute_position_size returns all 8 required fields",
+    "position_sizing_edge_cases": "CONFIRMED — Zero/tiny budget returns not_affordable=True",
+    "position_sizing_endpoint": "CONFIRMED — POST /api/fno/position-sizing works with query params",
+    "fno_signal_response_model": "CONFIRMED — Has not_affordable (default False) and sizing_info (default None) fields"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration35_sections2_4.py",
+    "/app/test_reports/pytest/iteration35_results.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "build_urgent_exit_reason() correctly avoids imperative verbs and uses neutral risk-focused language",
+    "check_urgent_exit correctly uses 'expected_best_price_next_60s' instead of old 'recommended_exit_price'",
+    "is_strategy_enabled has strict thresholds (trade_count>=100, win_rate>=0.75, expectancy_R>=0.40) - all 61 backtests show enabled=false which is expected for daily-bar proxies",
+    "Bucket A wiring correctly handles USE_BACKTEST_DB feature flag with fallback mode",
+    "Position sizing endpoint uses query params (not JSON body) as documented",
+    "FNOSignalResponse model correctly has additive fields (not_affordable, sizing_info) without breaking existing schema"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration35_sections2_4.py (new, 32 tests)"
+  ],
+
+  "success_rate": {
+    "backend": "100% (32/32 tests pass)",
+    "frontend": "N/A (backend-only testing)"
+  },
+
+  "test_credentials": "@shish123 / 1234",
+
+  "seed_data_creation": "None (strategy_backtests collection already has 61 documents from previous batch run)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 35: Backend-only testing of Sections 2-4. All 32 tests pass. Key features: (1) URGENT_EXIT wording fix - no imperative verbs, uses expected_best_price_next_60s, (2) strategy_backtests collection with 61 documents (all enabled=false due to strict thresholds), (3) position sizing calculator with not_affordable annotation. USE_BACKTEST_DB defaults to '0' (fallback mode). Test file: /app/backend/tests/test_iteration35_sections2_4.py"
+}

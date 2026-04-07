@@ -235,6 +235,9 @@ class FNOSignalResponse(BaseModel):
     iv_rank: float | None = None       # IV percentile within current chain (0-100 proxy)
     oi_buildup: str | None = None      # LONG_BUILDUP | SHORT_BUILDUP | SHORT_COVERING | LONG_UNWINDING | NEUTRAL
     gex: float | None = None           # Net gamma exposure (scaled, CE-minus-PE)
+    # Step 4: Position sizing annotation (additive, does NOT block signals)
+    not_affordable: bool = False
+    sizing_info: dict | None = None
 
 
 class NonDirectionalStrategy(BaseModel):
