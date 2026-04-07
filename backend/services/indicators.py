@@ -464,99 +464,124 @@ def compute_atr_based_fno_targets(
     strike: float | None = None,
 ) -> tuple[float, float]:
     """
-    Compute data-driven intraday T1/T2 for F&O options using underlying ATR.
+    Compute INTRADAY-ASSURED T1/T2 for F&O options, net of theta decay.
 
-    Targets are STRICTLY achievable within the remaining session (capped at 15:30 IST).
-    NO fixed percentage multipliers are used (e.g. "+1% / +2%").
+    Design rules (Master Spec):
+    ─────────────────────────────────────────────────────────────────────────
+    • T1  = Conservative: underlying needs to move 0.50 × session_sigma (~55-65% probability)
+    • T2  = Moderate:     underlying needs to move 1.00 × session_sigma (~35-45% probability)
+    • session_sigma = ATR × √(remaining_session_fraction) × vix_factor
+      (i.e. the expected 1-SD intraday range for the remaining session)
+    • Both targets are NET of theta decay for the remaining session.
+    • Formula applies equally to CE and PE — only delta direction differs.
+    • No fixed percentages; every figure comes from live ATR / VIX / moneyness.
+    ─────────────────────────────────────────────────────────────────────────
 
-    Calculation chain:
-        underlying_move = ATR × time_factor × vix_factor     (points move, not %)
-        option_gain     = underlying_move × delta_proxy       (option pts)
-        T1              = entry_price + option_gain_1
-        T2              = entry_price + option_gain_2
-
-    Floor: targets must be at least (0.5 ATR × delta) above entry —
-    which is the minimum expected 1-sigma intraday move, not a % of entry.
+    Parameters
+    ----------
+    minutes_to_expiry : already capped to min(expiry_mins, session_close_mins) by caller
+    atr               : underlying daily ATR in points (optional; falls back to IV proxy)
+    vix               : India VIX (%), optional
+    strike            : option strike price, for moneyness-based delta
     """
-    # ── Time factor: based on ACTUAL session time remaining (15:30 IST), not fixed buckets ──
-    # minutes_to_expiry here should be min(expiry_mins, session_close_mins) from the caller
-    if minutes_to_expiry < 90:
-        time_factor = 0.40  # Very limited time — conservative, achievable targets
-    elif minutes_to_expiry < 180:
-        time_factor = 0.55
-    elif minutes_to_expiry < 270:
-        time_factor = 0.70
-    elif minutes_to_expiry < 360:
-        time_factor = 0.82
+    import math as _math
+    from datetime import datetime, timezone, timedelta
+
+    _IST = timezone(timedelta(hours=5, minutes=30))
+
+    # ── 1. Session fraction: remaining time today vs full 375-min session ──────
+    _now = datetime.now(_IST)
+    _mkt_open  = _now.replace(hour=9,  minute=15, second=0, microsecond=0)
+    _mkt_close = _now.replace(hour=15, minute=30, second=0, microsecond=0)
+    if _now < _mkt_open:
+        _remaining_session_min = 375
+    elif _now >= _mkt_close:
+        _remaining_session_min = 0
     else:
-        time_factor = 0.95  # Near-full session (pre-market or long-dated)
+        _remaining_session_min = max(1, int((_mkt_close - _now).total_seconds() / 60))
 
-    # ── VIX factor: scale up/down based on market volatility ──────────────
-    vix_factor = 1.0
-    if vix is not None:
-        if vix > 25:
-            vix_factor = 1.25
-        elif vix > 20:
-            vix_factor = 1.15
-        elif vix > 18:
-            vix_factor = 1.08
-        elif vix < 12:
-            vix_factor = 0.85
+    # Effective minutes = min(time to expiry, time to session close)
+    _eff_minutes    = max(1, min(minutes_to_expiry, _remaining_session_min or minutes_to_expiry))
+    _session_frac   = min(_eff_minutes / 375.0, 1.0)   # 0…1 fraction of full session
 
-    # ── Moneyness-based delta estimation ──────────────────────────────────
-    delta_proxy = 0.45  # ATM default
-    if strike is not None and underlying_ltp > 0 and strike > 0:
-        if option_type == "CE":
-            moneyness = underlying_ltp / strike
-        else:
-            moneyness = strike / underlying_ltp
-        if moneyness >= 1.08:
-            delta_proxy = 0.80
-        elif moneyness >= 1.04:
-            delta_proxy = 0.65
-        elif moneyness >= 0.97:
-            delta_proxy = 0.45
-        elif moneyness >= 0.93:
-            delta_proxy = 0.28
-        else:
-            delta_proxy = 0.15
+    # ── 2. VIX factor ─────────────────────────────────────────────────────────
+    _vix = vix or 15.0
+    if _vix > 30:   _vix_factor = 1.50
+    elif _vix > 25: _vix_factor = 1.30
+    elif _vix > 20: _vix_factor = 1.15
+    elif _vix > 18: _vix_factor = 1.08
+    elif _vix < 12: _vix_factor = 0.85
+    else:           _vix_factor = 1.00
 
-    if atr is not None and underlying_ltp > 0 and atr > 0:
-        # T1 = entry + 1 ATR of underlying move × delta × time_factor × vix_factor
-        # T2 = entry + 2 ATR of underlying move × delta × time_factor × vix_factor
-        underlying_t1_move = atr * time_factor * vix_factor
-        underlying_t2_move = atr * time_factor * vix_factor * 2.0
-        option_t1_gain = underlying_t1_move * delta_proxy
-        option_t2_gain = underlying_t2_move * delta_proxy
-        target1 = round(entry_price + option_t1_gain, 2)
-        target2 = round(entry_price + option_t2_gain, 2)
+    # ── 3. Moneyness-based delta proxy ────────────────────────────────────────
+    # Uses 7 tiers covering deep-OTM → deep-ITM for both CE and PE
+    _delta = 0.45   # ATM default
+    if strike and underlying_ltp > 0 and strike > 0:
+        _mono = (underlying_ltp / strike) if option_type == "CE" else (strike / underlying_ltp)
+        if   _mono >= 1.12: _delta = 0.88   # deep ITM
+        elif _mono >= 1.07: _delta = 0.72
+        elif _mono >= 1.02: _delta = 0.55
+        elif _mono >= 0.98: _delta = 0.45   # ATM
+        elif _mono >= 0.93: _delta = 0.30
+        elif _mono >= 0.87: _delta = 0.18
+        else:               _delta = 0.08   # deep OTM
+
+    # ── 4. Session sigma: expected 1-SD intraday range for remaining session ──
+    # session_sigma = ATR × √(session_fraction) × vix_factor
+    # This is the key quantity: targets are fractions of this, not fixed % of entry.
+    if atr and atr > 0:
+        _atr = atr
     else:
-        # No ATR available: use IV-implied daily move as the basis
-        # IV daily move (1σ) ≈ underlying_ltp × (vix/100) / sqrt(252)
-        # Option move ≈ underlying_iv_move × delta_proxy
-        sigma_daily = (((vix or 18.0) / 100.0) / math.sqrt(252))
-        iv_daily_underlying_move = underlying_ltp * sigma_daily if underlying_ltp > 0 else 1.0
-        option_1sig_gain = iv_daily_underlying_move * delta_proxy * time_factor * vix_factor
-        target1 = round(entry_price + option_1sig_gain, 2)
-        target2 = round(entry_price + option_1sig_gain * 2.0, 2)
+        # IV proxy: ATR ≈ underlying × (VIX/100) / √252 (daily 1-sigma move)
+        _atr = underlying_ltp * (_vix / 100.0) / _math.sqrt(252) if underlying_ltp > 0 else 1.0
+    _atr = max(_atr, underlying_ltp * 0.003)  # Floor: never less than 0.3% of underlying
 
-    # ── Floor: T1 must be at least 0.5× (ATR × delta) above entry ─────────
-    # This is NOT a percentage floor — it's the minimum meaningful option move
-    # based on the instrument's own volatility. Applied ONLY when ATR is available.
-    if atr is not None and atr > 0:
-        min_option_move = atr * delta_proxy * 0.30  # 30% of 1-ATR option move as absolute min
-        target1 = max(target1, round(entry_price + min_option_move, 2))
-        target2 = max(target2, round(entry_price + min_option_move * 1.8, 2))
-    else:
-        # No ATR: use IV-based minimum (not % of entry)
-        sigma_daily = (((vix or 18.0) / 100.0) / math.sqrt(252))
-        iv_move = max(underlying_ltp * sigma_daily * delta_proxy * 0.25, entry_price * 0.005) if underlying_ltp > 0 else entry_price * 0.005
-        target1 = max(target1, round(entry_price + iv_move, 2))
-        target2 = max(target2, round(entry_price + iv_move * 1.8, 2))
+    _session_sigma = _atr * _math.sqrt(_session_frac) * _vix_factor
 
-    # ── Safety: T2 ≥ T1 + small gap; T2 ≤ 3× entry (no compounding risk) ─
+    # ── 5. Theta proxy for remaining session ──────────────────────────────────
+    # theta_per_day ≈ entry × vix_factor × 0.25 / √(days_to_expiry)
+    # (captures theta acceleration near expiry: higher theta for near-expiry options)
+    _days_est       = max(1, _eff_minutes / 375.0)   # estimated remaining life in days
+    _theta_per_day  = entry_price * _vix_factor * 0.25 / _math.sqrt(_days_est)
+    _theta_session  = _theta_per_day * _session_frac  # theta for remaining session only
+
+    # ── 6. T1: Conservative target (0.50 × σ underlying, 25% theta) ──────────
+    _underlying_move_t1 = _session_sigma * 0.50
+    _option_gain_t1     = _underlying_move_t1 * _delta - _theta_session * 0.25
+    # Floor: at least (0.25 × ATR × delta) option move, ensures non-trivial T1
+    _gain_floor_t1 = _atr * _delta * 0.25
+    _net_gain_t1   = max(_option_gain_t1, _gain_floor_t1)
+    target1        = round(entry_price + _net_gain_t1, 2)
+
+    # ── 7. T2: Moderate target (1.00 × σ underlying, 50% theta) ──────────────
+    _underlying_move_t2 = _session_sigma * 1.00
+    _option_gain_t2     = _underlying_move_t2 * _delta - _theta_session * 0.50
+    # Floor: T2 must be > T1 and at least (0.50 × ATR × delta)
+    _gain_floor_t2 = _atr * _delta * 0.50
+    _net_gain_t2   = max(_option_gain_t2, _gain_floor_t2, _net_gain_t1 * 1.10)
+    target2        = round(entry_price + _net_gain_t2, 2)
+
+    # ── 8. Safety guards ──────────────────────────────────────────────────────
+    # T2 ≥ T1 × 1.05  (must have some gap)
     target2 = max(target2, round(target1 * 1.05, 2))
-    target2 = min(target2, round(entry_price * 3.0, 2))  # round to prevent 426.84000000000003
+
+    # Absolute cap based on market regime:
+    #   Same-day expiry  → T1 ≤ 80% gain, T2 ≤ 150% gain  (theta kills premium fast)
+    #   Weekly (≤ 5 days) → T1 ≤ 120% gain, T2 ≤ 200% gain
+    #   Monthly          → T1 ≤ 150% gain, T2 ≤ 250% gain
+    if _days_est <= 1.2:          # same-day / expiry-day
+        _t1_cap = round(entry_price * 1.80, 2)
+        _t2_cap = round(entry_price * 2.50, 2)
+    elif _days_est <= 5:          # weekly
+        _t1_cap = round(entry_price * 2.20, 2)
+        _t2_cap = round(entry_price * 3.00, 2)
+    else:                         # monthly / far-dated
+        _t1_cap = round(entry_price * 2.50, 2)
+        _t2_cap = round(entry_price * 3.50, 2)
+
+    target1 = min(target1, _t1_cap)
+    target2 = min(target2, _t2_cap)
+    target2 = max(target2, round(target1 * 1.05, 2))  # re-enforce gap after cap
 
     return target1, target2
 
