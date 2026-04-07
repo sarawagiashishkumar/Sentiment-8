@@ -52,7 +52,7 @@ def recompute_position_features(
     """
     now = datetime.now(timezone.utc).isoformat()
     entry = float(position.get("buy_price", 0))
-    direction = "LONG" if "CE" in str(position.get("script", "")).upper() else "SHORT"
+    direction = "LONG" if str(position.get("script", "")).upper().endswith("CE") else "SHORT"
 
     features = {
         "monitoring_updated_at": now,
@@ -107,7 +107,7 @@ def check_news_impact(
     if not news_sentiment:
         return None
 
-    direction = "LONG" if "CE" in str(position.get("script", "")).upper() else "SHORT"
+    direction = "LONG" if str(position.get("script", "")).upper().endswith("CE") else "SHORT"
     current_flag = news_sentiment.get("news_flag", "NEUTRAL")
     avg_sentiment = news_sentiment.get("avg_sentiment", 0.0)
     news_count = news_sentiment.get("news_count", 0)
@@ -193,7 +193,7 @@ def check_regime_shift(
     if not is_material and p_hit_drop < REGIME_SHIFT_P_HIT_DROP_THRESHOLD:
         return None
 
-    direction = "LONG" if "CE" in str(position.get("script", "")).upper() else "SHORT"
+    direction = "LONG" if str(position.get("script", "")).upper().endswith("CE") else "SHORT"
 
     return {
         "type": "REGIME_SHIFT",
@@ -240,7 +240,7 @@ def check_urgent_exit(
     if current_ltp is None or entry_price <= 0:
         return None
 
-    direction = "LONG" if "CE" in str(position.get("script", "")).upper() else "SHORT"
+    direction = "LONG" if str(position.get("script", "")).upper().endswith("CE") else "SHORT"
 
     # Check if underwater
     pnl_pct = ((current_ltp - entry_price) / entry_price) * 100

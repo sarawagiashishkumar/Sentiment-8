@@ -9,12 +9,14 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 3. **Mandatory Filtering**: Equity LTP >= 50. Not NCLT/DRT. Debt < 30% mcap. Profit positive 1/3 quarters.
 4. **Time/Expiry**: 09:15-15:30 IST strict. Intraday targets mathematically assured.
 5. **Entry Strategy**: Pullback Entry ("Best Budget Entry").
-6. **No-Loss Guarantee**: V2 Confluence Score >= 78 threshold.
+6. **Confluence Score V2**: 4-Bucket system (A: Strategy, B: Direction, C: Options/Flow, D: Trade Quality). Threshold >= 78.
+7. **Dynamic Targets**: Probability-based T1/T2 using MFE/MAE + Theta decay.
+8. **Alerts & Monitoring**: Real-time monitoring of sticky positions with NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT events.
 
 ## Architecture
 ```
 /app/backend/
-  server.py               (~8100 lines)
+  server.py               (~8300 lines)
   services/
     indicators.py          — ATR, RSI, MACD, eligibility (4 filters incl NCLT)
     research_engine.py     — Re-exports all service modules
@@ -32,7 +34,8 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
     mfe_mae_engine.py      — MFE/MAE library, probability tables, theta, best exit
     confluence_score_v2.py — 4-bucket scoring (A+B+C+D), threshold=78
     fo_universe.py         — Full NSE F&O universe (158 stocks)
-  models/__init__.py       — Pydantic models
+    position_monitor.py    — Batch 4: NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT alerts
+  models/__init__.py       — Pydantic models (incl MonitoringEvent)
 ```
 
 ## Completed Work
@@ -47,23 +50,32 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - Batch 3: 4-Bucket Confluence Score V2
 
 ### Mini-Batch: F&O Universe (2026-04-07)
-- Expanded from 14 hardcoded → 158 NSE F&O stocks
+- Expanded from 14 hardcoded to 158 NSE F&O stocks
 
 ### Step 1: Kite Connect Primary (2026-04-07)
 - India VIX: Kite-first, yfinance fallback
 - MFE/MAE enabled for ALL underlyings (NIFTY/BANKNIFTY included)
-- Tests: Iteration 33 — 27/27 pass (100%)
+
+### Step 2: Batch 4 — Sticky Card Monitoring & Alerts (2026-04-07)
+- position_monitor.py: NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT alert generators
+- MonitoringEvent model with type, symbol, direction, severity, reason, details
+- monitoring_events field added to CustomPositionResponse (additive, defaults empty)
+- Wired into _refresh_open_position: recomputes regime, news, flow, probabilities per refresh
+- Stores previous_regime, previous_news_flag, original_p_hit baselines for shift detection
+- GET /api/fno/position-alerts: Aggregated alerts across OPEN positions, sorted by severity
+- Direction detection bug fixed (endsWith instead of contains for CE/PE)
+- Tests: Iteration 34 — 33/33 pass (100%)
 
 ## Testing Status
 - Iteration 31: 39/40 (Batches 1-3)
 - Iteration 32: 20/20 (Universe)
 - Iteration 33: 27/27 (Kite-first + MFE for indices)
+- Iteration 34: 33/33 (Batch 4 - Monitoring & Alerts)
 
 ## Prioritized Backlog
 
-### P0 — In Progress
-- **Step 2 (Batch 4)**: Sticky card monitoring & alerts (NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT)
-- **Step 3**: Strategy backtest data for Bucket A
+### P0 — Next Up
+- **Step 3**: Strategy backtest data for Bucket A (replace mock defaults with real DB stats)
 - **Step 4**: Position sizing calculator + Budget entry trigger
 
 ### P1
@@ -71,3 +83,6 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - Streaming response for /fno/generate
 - 52-week IV data for IV Rank
 - Dynamic NIFTY 500 constituency parsing
+
+### P2
+- App.js componentization
