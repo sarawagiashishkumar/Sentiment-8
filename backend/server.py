@@ -386,8 +386,8 @@ KITE_API_SECRET = os.environ.get("KITE_API_SECRET")
 KITE_REDIRECT_URL = os.environ.get("KITE_REDIRECT_URL")
 KITE_READ_ONLY_MODE = True
 
-# ── Global data-source config: yfinance DISABLED in production ────────────
-USE_YFINANCE: bool = os.environ.get("USE_YFINANCE", "false").lower() in ("1", "true", "yes")
+# ── Global data-source config: imported from canonical data_policy module ───
+from services.data_policy import KITE_IS_SOURCE_OF_TRUTH, USE_YFINANCE  # noqa: F401
 KITE_ALLOWED_DATA_ENDPOINTS = [
     "/quote/ltp",
     "/instruments",
@@ -3124,6 +3124,10 @@ def _compute_beneish_m_score_from_data(fin: object, bs: object) -> float | None:
         return None
 
 
+# DISABLED — yfinance only. No Kite equivalent for fundamental scoring.
+# USE_YFINANCE must remain false in production.
+# Piotroski/Beneish scores are decorative/offline-research only.
+# This function must NEVER influence live signals, validation, or backtests.
 def _fetch_yfinance_fundamentals(symbol: str) -> dict:
     """Synchronous yfinance fetch (run in async thread)."""
     try:

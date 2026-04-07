@@ -12,6 +12,8 @@ import logging
 import math
 from typing import Any, Literal
 
+from services.data_policy import KITE_IS_SOURCE_OF_TRUTH  # noqa: F401 — policy anchor
+
 logger = logging.getLogger(__name__)
 
 # OI buildup classification labels

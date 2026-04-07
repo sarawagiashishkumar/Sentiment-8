@@ -26,8 +26,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# ── Global config: yfinance is DISABLED in production ──────────────────────
-USE_YFINANCE: bool = os.environ.get("USE_YFINANCE", "false").lower() in ("1", "true", "yes")
+# ── Global config: data policy (Kite-first, yfinance DISABLED) ──────────────
+from services.data_policy import KITE_IS_SOURCE_OF_TRUTH, USE_YFINANCE  # noqa: F401 — policy anchor
 
 # Directory for manually verified CSV seed files
 CSV_SEED_DIR = Path(os.environ.get("OHLCV_CSV_SEED_DIR", "/app/data/ohlcv_seeds"))

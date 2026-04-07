@@ -15,6 +15,8 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
+from services.data_policy import KITE_IS_SOURCE_OF_TRUTH  # noqa: F401 — policy anchor
+
 logger = logging.getLogger(__name__)
 
 
