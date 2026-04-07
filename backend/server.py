@@ -2701,31 +2701,72 @@ async def get_owner_user(current_user: dict = Depends(get_current_user)) -> dict
 # ─── India VIX ────────────────────────────────────────────────────────────────
 
 async def _get_india_vix() -> float | None:
-    """Fetch India VIX via yfinance with 5-minute cache."""
+    """Fetch India VIX — Kite first, yfinance fallback — with 5-minute cache."""
     now_ts = datetime.now(timezone.utc).timestamp()
     cached = INDIA_VIX_CACHE.get("value")
     cached_ts = INDIA_VIX_CACHE.get("ts", 0.0)
     if cached is not None and (now_ts - cached_ts) < INDIA_VIX_CACHE_TTL_SECONDS:
         return float(cached)
 
-    def _fetch_vix() -> float | None:
-        try:
-            import yfinance as yf
-            ticker = yf.Ticker("^NSEINDVIX")
-            hist = ticker.history(period="1d")
-            if hist is not None and not hist.empty:
-                return float(hist["Close"].iloc[-1])
-            info = ticker.info or {}
-            val = info.get("regularMarketPrice") or info.get("previousClose")
-            return float(val) if val else None
-        except Exception as exc:
-            logger.warning("India VIX fetch failed: %s", exc)
-            return None
+    vix = None
 
-    try:
-        vix = await asyncio.wait_for(asyncio.to_thread(_fetch_vix), timeout=8.0)
-    except Exception:
-        vix = None
+    # ── PRIMARY: Kite quote for India VIX ──────────────────────────────────
+    access_token = await _get_kite_access_token()
+    if access_token and KITE_API_KEY:
+        def _fetch_vix_kite() -> float | None:
+            try:
+                # India VIX instrument token on NSE is 264969 (standard)
+                vix_tokens = ["NSE:INDIA VIX", "NSE:INDIAVIX"]
+                for sym in vix_tokens:
+                    resp = requests.get(
+                        "https://api.kite.trade/quote/ltp",
+                        params={"i": sym},
+                        headers={
+                            "X-Kite-Version": "3",
+                            "Authorization": f"token {KITE_API_KEY}:{access_token}",
+                        },
+                        timeout=8,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json().get("data", {})
+                        for key, val in data.items():
+                            ltp = val.get("last_price")
+                            if ltp and float(ltp) > 0:
+                                return float(ltp)
+                return None
+            except Exception as exc:
+                logger.debug("Kite VIX fetch failed: %s", exc)
+                return None
+
+        try:
+            vix = await asyncio.wait_for(asyncio.to_thread(_fetch_vix_kite), timeout=8.0)
+            if vix:
+                logger.debug(f"India VIX from Kite: {vix:.1f}")
+        except Exception:
+            pass
+
+    # ── FALLBACK: yfinance ─────────────────────────────────────────────────
+    if vix is None:
+        def _fetch_vix_yf() -> float | None:
+            try:
+                import yfinance as yf
+                ticker = yf.Ticker("^NSEINDVIX")
+                hist = ticker.history(period="1d")
+                if hist is not None and not hist.empty:
+                    return float(hist["Close"].iloc[-1])
+                info = ticker.info or {}
+                val = info.get("regularMarketPrice") or info.get("previousClose")
+                return float(val) if val else None
+            except Exception as exc:
+                logger.warning("India VIX yfinance fallback failed: %s", exc)
+                return None
+
+        try:
+            vix = await asyncio.wait_for(asyncio.to_thread(_fetch_vix_yf), timeout=8.0)
+            if vix:
+                logger.debug(f"India VIX from yfinance fallback: {vix:.1f}")
+        except Exception:
+            vix = None
 
     if vix is not None:
         INDIA_VIX_CACHE["value"] = vix
@@ -4616,47 +4657,45 @@ async def build_fno_signal(
     _prob_targets: dict = {}
     _mfe_library: list = []
     _hist_for_mfe = None
-    # Skip MFE/MAE for indices (yfinance unreliable for $BANKNIFTY.NS/$NIFTY.NS)
-    _skip_mfe = contract.underlying in ("NIFTY", "BANKNIFTY")
-    if not _skip_mfe:
-        try:
-            _hist_for_mfe = await _get_hist_ohlcv(contract.underlying, period="1y")
-            if _hist_for_mfe is not None and not _hist_for_mfe.empty and len(_hist_for_mfe) >= 100:
-                _atr_for_mfe = underlying_atr or (float(underlying_ltp) * 0.012)
-                _mfe_library = build_mfe_mae_library(
-                    hist_df=_hist_for_mfe,
-                    atr=_atr_for_mfe,
-                    strategy_id=_strategy_id,
-                    direction="LONG",
-                    window_bars=min(75, len(_hist_for_mfe) // 4),
+    # With Kite as primary, MFE/MAE is available for ALL underlyings including indices
+    try:
+        _hist_for_mfe = await _get_hist_ohlcv(contract.underlying, period="1y")
+        if _hist_for_mfe is not None and not _hist_for_mfe.empty and len(_hist_for_mfe) >= 100:
+            _atr_for_mfe = underlying_atr or (float(underlying_ltp) * 0.012)
+            _mfe_library = build_mfe_mae_library(
+                hist_df=_hist_for_mfe,
+                atr=_atr_for_mfe,
+                strategy_id=_strategy_id,
+                direction="LONG",
+                window_bars=min(75, len(_hist_for_mfe) // 4),
+            )
+            if _mfe_library and len(_mfe_library) >= 20:
+                _sl_dist_pct = ((entry_price - stop_loss) / entry_price) * 100
+                _prob_table = build_probability_table(
+                    _mfe_library,
+                    sl_distance_pct=max(_sl_dist_pct, 5.0),
                 )
-                if _mfe_library and len(_mfe_library) >= 20:
-                    _sl_dist_pct = ((entry_price - stop_loss) / entry_price) * 100
-                    _prob_table = build_probability_table(
-                        _mfe_library,
-                        sl_distance_pct=max(_sl_dist_pct, 5.0),
-                    )
-                    _prob_targets = select_targets_from_probability(
-                        _prob_table,
-                        entry_price=entry_price,
-                        stop_loss=stop_loss,
-                        minutes_remaining=effective_minutes,
-                    )
-                    if _prob_targets.get("method") == "probability_based":
-                        _pt1 = _prob_targets.get("t1")
-                        _pt2 = _prob_targets.get("t2")
-                        # Use probability targets only if they are MORE conservative
-                        # (lower) than ATR targets — ensures higher hit probability
-                        if _pt1 and _pt1 < target1:
-                            target1 = _pt1
-                            trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
-                        if _pt2 and _pt2 < target2:
-                            target2 = _pt2
-                            trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
-                        # Ensure T2 > T1
-                        target2 = max(target2, round(target1 * 1.05, 2))
-        except Exception as _mfe_err:
-            logger.debug(f"MFE/MAE probability refinement failed: {_mfe_err}")
+                _prob_targets = select_targets_from_probability(
+                    _prob_table,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    minutes_remaining=effective_minutes,
+                )
+                if _prob_targets.get("method") == "probability_based":
+                    _pt1 = _prob_targets.get("t1")
+                    _pt2 = _prob_targets.get("t2")
+                    # Use probability targets only if they are MORE conservative
+                    # (lower) than ATR targets — ensures higher hit probability
+                    if _pt1 and _pt1 < target1:
+                        target1 = _pt1
+                        trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
+                    if _pt2 and _pt2 < target2:
+                        target2 = _pt2
+                        trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
+                    # Ensure T2 > T1
+                    target2 = max(target2, round(target1 * 1.05, 2))
+    except Exception as _mfe_err:
+        logger.debug(f"MFE/MAE probability refinement failed: {_mfe_err}")
 
     # ── Batch 2 NEW: No-chasing rule (section 1.8) ───────────────────────
     try:
@@ -4824,7 +4863,7 @@ async def build_fno_signal(
 
     # ── Batch 2 NEW: Forward MFE-based Best Exit refinement ──────────────
     # If forward MFE data is reliable, use it to refine best exit price
-    if not _is_expiry_today and remaining_trading_days > 0 and not _skip_mfe:
+    if not _is_expiry_today and remaining_trading_days > 0:
         try:
             _iv_regime_str = _enhanced_regime.get("regime", "LowVolTrend") if _enhanced_regime else "LowVolTrend"
             _mono_label_be = _enhanced_opt_features.get("moneyness", "ATM") if _enhanced_opt_features else "ATM"
