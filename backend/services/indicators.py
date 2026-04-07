@@ -556,7 +556,7 @@ def compute_atr_based_fno_targets(
 
     # ── Safety: T2 ≥ T1 + small gap; T2 ≤ 3× entry (no compounding risk) ─
     target2 = max(target2, round(target1 * 1.05, 2))
-    target2 = min(target2, entry_price * 3.0)
+    target2 = min(target2, round(entry_price * 3.0, 2))  # round to prevent 426.84000000000003
 
     return target1, target2
 

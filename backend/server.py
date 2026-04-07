@@ -4519,6 +4519,18 @@ async def build_fno_signal(
                 detail="Insufficient time to expiry for this upside. No projections shown.",
             )
 
+    # SAME-DAY EXPIRY CAP: when option expires today, cap T2 at 2× entry (100% gain max).
+    # On expiry day, achieving 3× entry requires a 2–3 ATR underlying move which is
+    # statistically improbable in a single session. This keeps targets realistic.
+    _today_ist = datetime.now(IST).strftime("%Y-%m-%d")
+    _is_expiry_today = (contract.expiry == _today_ist) if contract.expiry else False
+    if _is_expiry_today:
+        _same_day_t2_cap = round(entry_price * 2.0, 2)   # Hard cap: 100% gain on expiry day
+        _same_day_t1_cap = round(entry_price * 1.50, 2)  # T1 cap: 50% gain on expiry day
+        target1 = min(target1, _same_day_t1_cap)
+        target2 = min(target2, _same_day_t2_cap)
+        target2 = max(target2, round(target1 * 1.05, 2))  # Ensure T2 > T1
+
     risk = max(entry_price - stop_loss, 0.01)
     risk_reward_target1 = round((target1 - entry_price) / risk, 2)
     risk_reward_target2 = round((target2 - entry_price) / risk, 2)
@@ -4581,8 +4593,12 @@ async def build_fno_signal(
         best_exit_price = max_ltp_projection
 
     # Compute actual calendar date for best exit
-    best_exit_date_obj = get_nth_trading_day_from_today(best_exit_days) if best_exit_days and best_exit_days > 0 else None
-    best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y") if best_exit_date_obj else None
+    if _is_expiry_today:
+        best_exit_date_str = "Today (Exit Before 3:30 PM)"
+    elif best_exit_date_obj := (get_nth_trading_day_from_today(best_exit_days) if best_exit_days and best_exit_days > 0 else None):
+        best_exit_date_str = best_exit_date_obj.strftime("%d %b %Y")
+    else:
+        best_exit_date_str = None
 
     # Add theta method to trigger_factors for signal transparency
     if theta_method and theta_method != "none":
@@ -5735,7 +5751,18 @@ async def _refresh_open_position(position: dict) -> dict:
 
     # Compute best_exit_days based on actual remaining trading days
     remaining_trading_days = get_remaining_trading_days(position["expiry_date"])
-    if remaining_trading_days >= 14:
+
+    # EXPIRY-AWARE: detect if the option expires today (IST)
+    _today_ist = datetime.now(IST).strftime("%Y-%m-%d")
+    _expiry_is_today = (position.get("expiry_date", "") == _today_ist)
+
+    if _expiry_is_today:
+        # Same-day expiry: best exit is NOW / today before 3:30 PM, never T+1
+        best_exit_days = 0
+        best_exit_date_str = "Today (Exit Before 3:30 PM)"
+        if latest_option_ltp and latest_option_ltp > 0:
+            best_exit_price = latest_option_ltp
+    elif remaining_trading_days >= 14:
         best_exit_days = max(1, min(int(remaining_trading_days * 0.6), remaining_trading_days - 1))
     elif remaining_trading_days >= 7:
         best_exit_days = max(1, min(int(remaining_trading_days * 0.7), remaining_trading_days - 1))

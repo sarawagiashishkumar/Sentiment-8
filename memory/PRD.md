@@ -47,7 +47,10 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - ✅ Custom F&O Positions (create, refresh, sell, close, delete)
 - ✅ Portfolio Analysis (Beta, Sharpe, VaR, max drawdown, correlation matrix)
 
-### Apr 2026 — Current Session (Iteration 28)
+### Apr 7 2026 — Bug Fixes (Expiry Awareness + Same-Day Targets)
+- ✅ **Bug**: Best Exit showed "T+1 (08 Apr)" for same-day expiry position NIFTY07APR22850PE. Root cause: `best_exit_days = min(1, remaining_trading_days) = 1` always projected to next day. Fixed by checking if `expiry_date == today_IST` → sets `best_exit_date_str = "Today (Exit Before 3:30 PM)"` with `best_exit_days = 0`.
+- ✅ **Bug**: T2 floating point display `426.84000000000003` — root cause: `entry_price * 3.0` without rounding. Fixed: `round(entry_price * 3.0, 2)`.
+- ✅ **Enhancement**: Same-day expiry T1/T2 capped: T1 ≤ 50% gain, T2 ≤ 100% gain (was 150%/200% from full-day ATR which is unrealistic for intraday). Applies to both custom positions and signal generation.
 - ✅ **P0 Bug Fix**: Custom F&O `best_exit_price` was showing BELOW current LTP (formula subtracted theta from current LTP instead of ATR-projected max). Fixed both the main path and the LIVE_LTP_UNAVAILABLE early-return path.
 - ✅ **P0 Feature**: `compute_option_chain_analytics()` — pure Python computation of Max Pain, PCR, IV Rank, GEX, OI Buildup from live Kite OI/IV/Gamma data
 - ✅ **P0 Feature**: `FNOSignalResponse` extended with `max_pain`, `iv_rank`, `oi_buildup`, `gex` fields
