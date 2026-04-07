@@ -81,6 +81,7 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - Iteration 35: 32/32 (Sections 2-4)
 - Iteration 36: 21/21 backend + 10/10 frontend (yfinance HOTFIX)
 - Iteration 37: 23/23 backend + 13/13 frontend (Route Extraction Regression)
+- Iteration 38: 36/36 backend (Kite-Only Data Integrity Hardening)
 
 ## Prioritized Backlog
 
@@ -97,4 +98,11 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - `routes/fno.py` — DONE (11 endpoints + 3 backward-compat)
 - `routes/admin.py` — DONE (22 endpoints)
 - `deps.py` — DONE (shared auth dependencies)
-- server.py reduced from ~8450 → ~7277 lines
+- server.py reduced from ~8450 to ~7240 lines
+
+## Kite-Only Data Integrity (2026-04-08)
+- `data_verifier.py` — REWRITTEN: Kite-native validation only
+- `sector_momentum.py` — REWRITTEN: Kite historical data only, 15 NSE sectors
+- VIX, hist OHLCV, index data: yfinance fallbacks REMOVED
+- Dead code `_fetch_yfinance_hist_ohlcv` REMOVED
+- Only remaining yfinance: `_fetch_yfinance_fundamentals` (gated USE_YFINANCE=false)
