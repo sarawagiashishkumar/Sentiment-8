@@ -47,6 +47,15 @@ Build a minimalist full-stack web app for stock analysis using FastAPI, React, a
 - ✅ Custom F&O Positions (create, refresh, sell, close, delete)
 - ✅ Portfolio Analysis (Beta, Sharpe, VaR, max drawdown, correlation matrix)
 
+### Apr 7 2026 — Pullback Entry Engine & Export Enhancements (Iteration 30)
+- ✅ **Best Budget Entry**: Added `best_budget_entry` field to `FNOSignalResponse` — pullback zone = max(entry × (1-pullback%), day_low × 1.02), floored at SL × 1.05, capped at entry × 0.97. Prevents "momentum peak" entries like NIFTY23050PE failure.
+- ✅ **budget_entry_alert**: UI advisory flag shown when pullback ≥ 3% below entry — 48% risk reduction for NIFTY23050PE scenario.
+- ✅ **Lot Size Fix**: NIFTY lot size corrected 75 → 65 in `LOT_SIZE_MAP` per NSE Apr 2026 update.
+- ✅ **Export Column**: "Bias Point" replaced with "Best Exit ₹" in all export formats (CSV/XLS/PDF/Word).
+- ✅ **Golden Star Rule**: `⭐ {price}` prefix in exports when `best_exit_price ≥ T2 × 1.2`.
+- ✅ **UI Advisory**: Amber "⏳ Wait for Budget Entry" box shown on all signal cards (assured/watch/stock/top4) when budget_entry_alert=True.
+- ✅ **Testing**: Iteration 30 — 39/39 backend tests pass, 6 advisory cards verified live.
+
 ### Apr 7 2026 — F&O Algorithm Logic Refinement & Bug Remediation (Iteration 29)
 - ✅ **Bug Fix**: Same-day expiry "Best Exit for tomorrow" bug — root cause: `_expiry_is_today` check failed when `expiry_date` field was missing/malformed in custom positions. Fixed by normalizing to check both `expiry_date` AND `expiry` fields with format validation.
 - ✅ **Enhancement**: Same-day Best Exit now uses `session_sigma × 1.5 × delta − theta_session` instead of full-day ATR — gives realistic intraday peak projection before 3:30 PM.
