@@ -83,12 +83,12 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - Iteration 37: 23/23 backend + 13/13 frontend (Route Extraction Regression)
 - Iteration 38: 36/36 backend (Kite-Only Data Integrity Hardening)
 - Iteration 39: 26/26 backend (Global Kite Supremacy Rule / data_policy.py)
+- Iteration 40: 19/21 backend + frontend 100% (Route Extraction Batch 2 — 2 timeouts on slow ops, not bugs)
 
 ## Prioritized Backlog
 
 ### P1
-- Extract remaining routes: market_data.py, portfolio.py, multibagger.py
-- Streaming response for /fno/generate (prevent 504 gateway timeouts)
+- StreamingResponse for /fno/generate + /multibagger/candidates (prevent 504 gateway timeouts)
 - 52-week IV data for IV Rank
 
 ### P2
@@ -98,8 +98,11 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 ## Route Extraction Status (2026-04-08)
 - `routes/fno.py` — DONE (11 endpoints + 3 backward-compat)
 - `routes/admin.py` — DONE (22 endpoints)
+- `routes/market_data.py` — DONE (10 endpoints: script-master, sector-momentum, kite/*)
+- `routes/portfolio.py` — DONE (2 endpoints: analyze, analyze-upload)
+- `routes/multibagger.py` — DONE (3 endpoints: generate, candidates, custom-search)
 - `deps.py` — DONE (shared auth dependencies)
-- server.py reduced from ~8450 to ~7240 lines
+- server.py reduced from ~8450 to ~6876 lines (1,574 lines extracted)
 
 ## Kite-Only Data Integrity (2026-04-08)
 - `data_verifier.py` — REWRITTEN: Kite-native validation only
