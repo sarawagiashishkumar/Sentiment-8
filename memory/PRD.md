@@ -80,14 +80,21 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - Iteration 34: 33/33 (Batch 4 Monitoring)
 - Iteration 35: 32/32 (Sections 2-4)
 - Iteration 36: 21/21 backend + 10/10 frontend (yfinance HOTFIX)
+- Iteration 37: 23/23 backend + 13/13 frontend (Route Extraction Regression)
 
 ## Prioritized Backlog
 
 ### P1
-- server.py refactoring → routes/ modules (~8500 lines)
-- Streaming response for /fno/generate
+- Extract remaining routes: market_data.py, portfolio.py, multibagger.py
+- Streaming response for /fno/generate (prevent 504 gateway timeouts)
 - 52-week IV data for IV Rank
 
 ### P2
 - App.js componentization (~3000 lines)
 - Budget Entry Trigger Alert
+
+## Route Extraction Status (2026-04-08)
+- `routes/fno.py` — DONE (11 endpoints + 3 backward-compat)
+- `routes/admin.py` — DONE (22 endpoints)
+- `deps.py` — DONE (shared auth dependencies)
+- server.py reduced from ~8450 → ~7277 lines
