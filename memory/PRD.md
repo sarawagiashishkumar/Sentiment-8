@@ -82,6 +82,7 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - Iteration 36: 21/21 backend + 10/10 frontend (yfinance HOTFIX)
 - Iteration 37: 23/23 backend + 13/13 frontend (Route Extraction Regression)
 - Iteration 38: 36/36 backend (Kite-Only Data Integrity Hardening)
+- Iteration 39: 26/26 backend (Global Kite Supremacy Rule / data_policy.py)
 
 ## Prioritized Backlog
 
@@ -106,3 +107,8 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: 
 - VIX, hist OHLCV, index data: yfinance fallbacks REMOVED
 - Dead code `_fetch_yfinance_hist_ohlcv` REMOVED
 - Only remaining yfinance: `_fetch_yfinance_fundamentals` (gated USE_YFINANCE=false)
+
+## Global Data Policy (2026-04-08)
+- `services/data_policy.py` — KITE_IS_SOURCE_OF_TRUTH=True, USE_YFINANCE=False
+- Imported in: data_verifier, sector_momentum, backtest_engine, intraday_features, options_features, server.py
+- `_fetch_yfinance_fundamentals` marked with disabled-stub comment block
