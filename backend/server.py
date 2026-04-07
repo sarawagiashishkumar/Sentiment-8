@@ -1992,10 +1992,12 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
 
         _altman = _fund.get("altman_z_zone") if _fund else None
         _roic_spread = _fund.get("roic_wacc_spread") if _fund else None
-        if _altman == "DISTRESS" and "Exit or avoid" not in " ".join(comments):
-            comments.append(f"Altman Z-Score in DISTRESS zone — review solvency risk")
+        comments_list = comments.split("; ") if comments else []
+        if _altman == "DISTRESS" and "Exit or avoid" not in comments:
+            comments_list.append("Altman Z-Score in DISTRESS zone — review solvency risk")
         if _roic_spread is not None and _roic_spread < -3:
-            comments.append(f"ROIC < WACC by {abs(_roic_spread):.1f}% — value destructive")
+            comments_list.append(f"ROIC < WACC by {abs(_roic_spread):.1f}% — value destructive")
+        comments = "; ".join(comments_list) if comments_list else comments
 
         analyses.append(
             PortfolioStockAnalysis(
@@ -6697,41 +6699,8 @@ async def auth_me(current_user: dict = Depends(get_current_user)):
     )
 
 
-@api_router.get("/script-master/lookup")
-async def script_master_lookup(q: str = Query(default="")):
-    query = q.strip()
-    if not query:
-        return {"query": query, "matches": []}
 
-    await _sync_script_master_daily()
-    resolved = await _resolve_symbol_input(query)
-    row = await db.script_master.find_one(
-        {"canonical_symbol": resolved},
-        {"_id": 0, "canonical_symbol": 1, "display_name": 1, "aliases": 1},
-    )
-    if not row:
-        return {"query": query, "matches": []}
-    return {
-        "query": query,
-        "matches": [
-            {
-                "symbol": row.get("canonical_symbol"),
-                "display_name": row.get("display_name"),
-                "aliases": row.get("aliases", []),
-            }
-        ],
-    }
-
-
-@api_router.post("/script-master/refresh")
-async def script_master_refresh(owner_user: dict = Depends(get_owner_user)):
-    _ = owner_user
-    global SCRIPT_MASTER_LAST_SYNC_DATE
-    SCRIPT_MASTER_LAST_SYNC_DATE = None
-    await _sync_script_master_daily(force=True)
-    return {"refreshed": True, "date": datetime.now(IST).date().isoformat()}
-
-
+# ── Endpoints extracted to routes/ ── (removed 36 lines) ──
 
 # ── Endpoints extracted to routes/ ── (removed 476 lines) ──
 
@@ -6751,79 +6720,13 @@ async def get_strategy_library(current_user: dict = Depends(get_current_user)):
 
 # ── Endpoints extracted to routes/ ── (removed 192 lines) ──
 
-@api_router.post("/multibagger/generate", response_model=MultibaggerGenerateResponse)
-async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
-    updated_user, charged = await _consume_credits(current_user, 2.0)
-    refreshed_at = _utc_now_iso()
-    candidates = await _build_multibagger_candidates(refreshed_at)
-    potential_count = len([row for row in candidates if row.is_potential_multibagger])
-    return MultibaggerGenerateResponse(
-        cost_charged=charged,
-        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
-        analysis_refreshed_at=refreshed_at,
-        candidates=candidates,
-        potential_count=potential_count,
-    )
 
-
+# ── Endpoints extracted to routes/ ── (removed 16 lines) ──
 
 # ── Endpoints extracted to routes/ ── (removed 463 lines) ──
 
-@api_router.post("/portfolio/analyze", response_model=PortfolioAnalyzeResponse)
-async def analyze_portfolio_manual(
-    payload: PortfolioAnalyzeRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    normalized = [item.model_dump() for item in payload.positions]
-    analysis = await _analyze_portfolio_positions(normalized)
-    cost = round(0.2 * analysis.parsed_positions_count, 2)
-    updated_user, charged = await _consume_credits(current_user, cost)
-    return PortfolioAnalyzeResponse(
-        cost_charged=charged,
-        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
-        parsed_positions_count=analysis.parsed_positions_count,
-        stocks=analysis.stocks,
-        failed_symbols=analysis.failed_symbols,
-        portfolio_risk_metrics=analysis.portfolio_risk_metrics,
-        enhanced_analytics=analysis.enhanced_analytics,
-    )
 
-
-@api_router.post("/portfolio/analyze-upload", response_model=PortfolioAnalyzeResponse)
-async def analyze_portfolio_upload(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    extension = (file.filename or "").split(".")[-1].lower() if "." in (file.filename or "") else ""
-    allowed = {"txt", "csv", "xls", "xlsx", "pdf", "jpg", "jpeg", "bmp", "png", "webp"}
-    if extension not in allowed:
-        raise HTTPException(status_code=400, detail="Unsupported file format")
-
-    positions = await _parse_positions_from_upload(file)
-    if not positions:
-        ocr_hint = "enabled" if _is_tesseract_ready() else "not available"
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No valid rows could be parsed from uploaded file. "
-                "Use columns like Symbol/Name, Avg Price, Quantity. "
-                f"OCR engine status: {ocr_hint}."
-            ),
-        )
-    analysis = await _analyze_portfolio_positions(positions)
-    cost = round(0.2 * analysis.parsed_positions_count, 2)
-    updated_user, charged = await _consume_credits(current_user, cost)
-    return PortfolioAnalyzeResponse(
-        cost_charged=charged,
-        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
-        parsed_positions_count=analysis.parsed_positions_count,
-        stocks=analysis.stocks,
-        failed_symbols=analysis.failed_symbols,
-        portfolio_risk_metrics=analysis.portfolio_risk_metrics,
-        enhanced_analytics=analysis.enhanced_analytics,
-    )
-
-
+# ── Endpoints extracted to routes/ ── (removed 56 lines) ──
 
 # ── Endpoints extracted to routes/ ── (removed 12 lines) ──
 
@@ -6847,98 +6750,9 @@ async def get_status_checks():
 
 
 # Backward compatibility endpoints
-@api_router.get("/multibagger/candidates", response_model=List[MultibaggerCandidate])
-async def get_multibagger_candidates(refresh_nonce: str | None = Query(default=None)):
-    _ = refresh_nonce
-    return await _build_multibagger_candidates(_utc_now_iso())
 
+# ── Endpoints extracted to routes/ ── (removed 92 lines) ──
 
-class MultibaggerCustomSearchRequest(BaseModel):
-    symbol: str
-
-
-@api_router.post("/multibagger/custom-search", response_model=MultibaggerCandidate)
-async def multibagger_custom_search(
-    payload: MultibaggerCustomSearchRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    """Analyze any NSE symbol on-demand using the multibagger scoring engine."""
-    symbol = payload.symbol.strip().upper()
-    refreshed_at = _utc_now_iso()
-
-    try:
-        core = await _get_stock_core_cached(symbol)
-        if core.get("ltp") is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No live data for '{symbol}'. Ensure it is a valid NSE symbol (e.g. RELIANCE, INFY).",
-            )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Symbol '{symbol}' not found or unavailable: {exc}",
-        ) from exc
-
-    stock = StockCoreNormalized(**core)
-    fundamental: dict = {}
-    try:
-        fundamental = await _get_fundamental_data(symbol)
-    except Exception:
-        pass
-
-    # Fetch hist OHLCV to inject actual hist_vol and RSI/trend into analysis
-    try:
-        _cs_hist_df = await _get_hist_ohlcv(symbol, period="1y")
-        if _cs_hist_df is not None and len(_cs_hist_df) >= 20:
-            _cs_ts = compute_full_technical_snapshot(symbol, _cs_hist_df, ltp=stock.ltp)
-            _cs_hist_vol = _cs_ts.get("hist_vol")
-            _cs_rsi = _cs_ts.get("rsi")
-            _cs_trend = _cs_ts.get("trend_alignment")
-            if _cs_hist_vol is not None:
-                fundamental = {**fundamental, "hist_vol": _cs_hist_vol, "rsi": _cs_rsi, "trend_alignment": _cs_trend}
-    except Exception:
-        pass
-
-    analysis = compute_multibagger_analysis(
-        stock,
-        fundamental=fundamental,
-        active_macro_events=await _get_active_macro_events(),
-        india_vix=await _get_india_vix(),
-    )
-
-    return MultibaggerCandidate(
-        symbol=stock.symbol,
-        company_name=stock.company_name,
-        sector=stock.sector,
-        ltp=stock.ltp,
-        market_cap_cr=stock.market_cap,
-        pe_ratio=stock.pe_ratio,
-        year_high=stock.year_high,
-        year_low=stock.year_low,
-        upside_to_52w_high_pct=analysis["upside_to_52w_high_pct"],
-        pb_ratio_est=analysis["pb_ratio_est"],
-        peg_ratio_est=analysis["peg_ratio_est"],
-        tier_pass_count=analysis["tier_pass_count"],
-        is_potential_multibagger=analysis["is_potential_multibagger"],
-        multibagger_score=analysis["multibagger_score"],
-        current_rsi_level=analysis["current_rsi_level"],
-        gtt_buy_price=analysis["gtt_buy_price"],
-        targeted_upside_price=analysis["targeted_upside_price"],
-        targeted_upside_profit_pct=analysis["targeted_upside_profit_pct"],
-        thesis=analysis["thesis"],
-        analysis_refreshed_at=refreshed_at,
-        roe=analysis.get("roe"),
-        roce=analysis.get("roce"),
-        piotroski_score=analysis.get("piotroski_score"),
-        beneish_m_score=analysis.get("beneish_m_score"),
-        eps_growth_pct=analysis.get("eps_growth_pct"),
-        debt_to_equity=analysis.get("debt_to_equity"),
-        current_ratio=analysis.get("current_ratio"),
-        gross_margin=analysis.get("gross_margin"),
-        vol_bands=analysis.get("vol_bands"),
-    )
 async def get_fno_contracts():
     return [FNOContract(**row) for row in FNO_CONTRACTS]
 
@@ -6946,175 +6760,20 @@ async def get_fno_contracts():
 
 # ── Endpoints extracted to routes/ ── (removed 36 lines) ──
 
-@api_router.get("/sector-momentum")
-async def get_sector_momentum(
-    force_refresh: bool = Query(default=False),
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Compute or return cached sector momentum dashboard.
-    Returns momentum scores, 1W/1M/3M returns, RSI, ADX for 15 NSE sectors.
-    Results cached for 30 minutes. Use ?force_refresh=true to bypass cache.
-    """
-    _ = current_user
-    now_ts = datetime.now(timezone.utc).timestamp()
 
-    # In-memory cache check
-    if not force_refresh and SECTOR_MOMENTUM_CACHE:
-        cached_ts = SECTOR_MOMENTUM_CACHE.get("_ts", 0)
-        if (now_ts - cached_ts) < SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
-            data = {k: v for k, v in SECTOR_MOMENTUM_CACHE.items() if not k.startswith("_")}
-            data["from_cache"] = True
-            return data
-
-    # MongoDB cache check
-    if not force_refresh:
-        try:
-            cached_doc = await db.sector_momentum_cache.find_one(
-                {"_key": "sector_momentum"}, {"_id": 0}
-            )
-            if cached_doc and (now_ts - float(cached_doc.get("cached_at_ts", 0))) < SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
-                payload = {k: v for k, v in cached_doc.items() if k not in ("_key", "cached_at_ts")}
-                SECTOR_MOMENTUM_CACHE.update({**payload, "_ts": now_ts})
-                payload["from_cache"] = True
-                return payload
-        except Exception:
-            pass
-
-    # Compute fresh
-    try:
-        result = await compute_sector_momentum_dashboard(db=db)
-    except Exception as exc:
-        logger.error("Sector momentum computation failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Sector momentum computation failed: {exc}")
-
-    # Store in caches
-    SECTOR_MOMENTUM_CACHE.update({**result, "_ts": now_ts})
-    try:
-        await db.sector_momentum_cache.update_one(
-            {"_key": "sector_momentum"},
-            {"$set": {"_key": "sector_momentum", "cached_at_ts": now_ts, **result}},
-            upsert=True,
-        )
-    except Exception:
-        pass
-
-    result["from_cache"] = False
-    return result
-
-
-@api_router.get("/kite/auth-url")
-async def get_kite_auth_url(current_user: dict = Depends(get_owner_user)):
-    _ = current_user
-    if not KITE_API_KEY or not KITE_API_SECRET or not KITE_REDIRECT_URL:
-        raise HTTPException(status_code=400, detail="Kite credentials not configured")
-    return {
-        "auth_url": f"https://kite.zerodha.com/connect/login?v=3&api_key={KITE_API_KEY}",
-        "redirect_url": KITE_REDIRECT_URL,
-    }
-
-
-@api_router.get("/kite/callback")
-async def kite_callback(request_token: str = Query(...), status: str | None = Query(default=None)):
-    _ = status
-    if not KITE_API_KEY or not KITE_API_SECRET:
-        raise HTTPException(status_code=400, detail="Kite credentials not configured")
-
-    checksum = hashlib.sha256(f"{KITE_API_KEY}{request_token}{KITE_API_SECRET}".encode()).hexdigest()
-
-    def _create_session() -> dict:
-        response = requests.post(
-            "https://api.kite.trade/session/token",
-            data={
-                "api_key": KITE_API_KEY,
-                "request_token": request_token,
-                "checksum": checksum,
-            },
-            headers={"X-Kite-Version": "3"},
-            timeout=15,
-        )
-        if response.status_code != 200:
-            raise HTTPException(status_code=502, detail="Kite session exchange failed")
-        payload = response.json()
-        if payload.get("status") != "success":
-            raise HTTPException(status_code=502, detail="Kite session exchange failed")
-        return payload.get("data", {})
-
-    session_data = await asyncio.to_thread(_create_session)
-    access_token = str(session_data.get("access_token", "")).strip()
-    if not access_token:
-        raise HTTPException(status_code=502, detail="Kite access token missing")
-
-    today = _today_ist()
-    await db.system_meta.update_one(
-        {"key": "kite_session"},
-        {
-            "$set": {
-                "key": "kite_session",
-                "date": today,
-                "api_key": KITE_API_KEY,
-                "access_token": access_token,
-                "public_token": session_data.get("public_token"),
-                "user_id": session_data.get("user_id"),
-                "user_name": session_data.get("user_name"),
-                "updated_at": _utc_now_iso(),
-            }
-        },
-        upsert=True,
-    )
-
-    await _sync_kite_option_master_daily(force=True)
-    return {
-        "connected": True,
-        "user_id": session_data.get("user_id"),
-        "updated_at": _utc_now_iso(),
-    }
-
-
-@api_router.get("/kite/status")
-async def kite_status(current_user: dict = Depends(get_owner_user)):
-    _ = current_user
-    row = await db.system_meta.find_one({"key": "kite_session"}, {"_id": 0, "access_token": 0})
-    if not row:
-        return {"connected": False}
-    return {
-        "connected": bool(row.get("date") == _today_ist()),
-        "date": row.get("date"),
-        "user_id": row.get("user_id"),
-        "updated_at": row.get("updated_at"),
-    }
-
-
-@api_router.post("/kite/refresh-option-master")
-async def kite_refresh_option_master(current_user: dict = Depends(get_owner_user)):
-    _ = current_user
-    await _sync_kite_option_master_daily(force=True)
-    meta = await db.system_meta.find_one({"key": "kite_option_master_sync"}, {"_id": 0})
-    return {"refreshed": True, "meta": meta or {}}
-
-
-@api_router.post("/kite/postback")
-async def kite_postback(payload: dict):
-    _ = payload
-    return {"received": True}
-
-
-@api_router.get("/kite/policy")
-async def kite_policy(current_user: dict = Depends(get_owner_user)):
-    _ = current_user
-    return {
-        "read_only_mode": KITE_READ_ONLY_MODE,
-        "trading_enabled": False,
-        "allowed_data_endpoints": KITE_ALLOWED_DATA_ENDPOINTS,
-        "blocked_categories": ["orders", "gtt", "positions-write", "basket-orders"],
-    }
-
+# ── Endpoints extracted to routes/ ── (removed 164 lines) ──
 
 # ── Include extracted route modules ───────────────────────────────────────────
 from routes.fno import fno_router
 from routes.admin import admin_router
+from routes.market_data import market_data_router
+from routes.portfolio import portfolio_router
+from routes.multibagger import multibagger_router
 api_router.include_router(fno_router)
 api_router.include_router(admin_router)
+api_router.include_router(market_data_router)
+api_router.include_router(portfolio_router)
+api_router.include_router(multibagger_router)
 
 app.include_router(api_router)
 
