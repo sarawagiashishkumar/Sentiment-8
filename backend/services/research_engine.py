@@ -173,6 +173,12 @@ from services.fo_universe import (
     get_fo_universe_size,
 )
 
+# ── Batch 4 NEW: Position Monitoring & Alerts (Section 8) ─────────────────────
+from services.position_monitor import (
+    recompute_position_features,
+    generate_position_alerts,
+)
+
 __all__ = [
     # Core
     "HORIZON_TRADING_DAYS",
@@ -235,4 +241,6 @@ __all__ = [
     # NEW: F&O Universe
     "NSE_FO_STOCKS", "INDEX_FO_UNDERLYINGS",
     "get_fo_universe", "get_fo_universe_from_db", "get_fo_universe_size",
+    # NEW: Position Monitoring & Alerts (Batch 4)
+    "recompute_position_features", "generate_position_alerts",
 ]

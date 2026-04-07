@@ -126,6 +126,8 @@ from services.research_engine import (
     # ── Mini-Batch: F&O Universe ─────────────────────────────────────────
     get_fo_universe,
     get_fo_universe_from_db,
+    # ── Batch 4 NEW: Position Monitoring & Alerts ────────────────────────
+    generate_position_alerts as generate_monitoring_alerts,
 )
 from services.data_verifier import (
     fetch_verified_price,
@@ -478,7 +480,7 @@ from models import (
     PortfolioAnalyzeResponse, CustomPositionCreateRequest,
     CustomPositionSellRequest, CustomPositionResponse,
     CustomPositionCreateResponse, ScriptSearchResult,
-    MacroEventsUpdateRequest,
+    MacroEventsUpdateRequest, MonitoringEvent,
 )
 
 def clamp(value: float, lower: float, upper: float) -> float:
@@ -6085,6 +6087,31 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
     return candidates[:80]
 
 
+_MONITORING_EVENT_COMMON_KEYS = frozenset({
+    "type", "symbol", "underlying", "script", "direction",
+    "timestamp", "severity", "reason",
+})
+
+
+def _build_monitoring_events(raw_events: list[dict]) -> list[MonitoringEvent]:
+    """Convert raw monitoring event dicts (from MongoDB) to MonitoringEvent models."""
+    result: list[MonitoringEvent] = []
+    for evt in raw_events:
+        details = {k: v for k, v in evt.items() if k not in _MONITORING_EVENT_COMMON_KEYS}
+        result.append(MonitoringEvent(
+            type=evt.get("type", ""),
+            symbol=evt.get("symbol", ""),
+            underlying=evt.get("underlying", ""),
+            script=evt.get("script", ""),
+            direction=evt.get("direction", ""),
+            timestamp=evt.get("timestamp", ""),
+            severity=evt.get("severity", "MEDIUM"),
+            reason=evt.get("reason", ""),
+            details=details,
+        ))
+    return result
+
+
 def _position_to_response(position: dict) -> CustomPositionResponse:
     lot_size = int(position.get("lot_size", 1))
     quantity_lots = max(1, int(position.get("quantity_lots", 1)))
@@ -6147,6 +6174,7 @@ def _position_to_response(position: dict) -> CustomPositionResponse:
         recovery_potential=position.get("recovery_potential"),
         minutes_to_expiry=int(position.get("minutes_to_expiry", 0)),
         revised_exit_plan=position.get("revised_exit_plan", ""),
+        monitoring_events=_build_monitoring_events(position.get("monitoring_events", [])),
     )
 
 
@@ -6513,6 +6541,97 @@ async def _refresh_open_position(position: dict) -> dict:
     if new_signal_state in ("WATCHING_SL", "CLOSED_LOSS") and alert is None:
         alert = "SL_WATCH"
 
+    # ── Batch 4: Position Monitoring & Alerts (Section 8) ─────────────────
+    _monitoring_events: list[dict] = []
+    _mon_state_snapshot: dict = {}
+    try:
+        _mon_underlying = position.get("underlying", "")
+        _mon_vix = await _get_india_vix() or 15.0
+        _mon_und_ltp = 0.0
+        if _mon_underlying:
+            try:
+                _mon_core = await _get_stock_core_cached(_mon_underlying.upper())
+                _mon_und_ltp = float(_mon_core.get("ltp") or 0)
+            except Exception:
+                pass
+
+        # Regime classification (reuses existing service)
+        _mon_regime = classify_regime_enhanced(
+            india_vix=_mon_vix, realized_vol=None, adx=None,
+        )
+
+        # News sentiment (cached RSS feed, fast)
+        _mon_news: dict = {}
+        if _mon_underlying:
+            try:
+                _mon_news = get_symbol_sentiment(_mon_underlying)
+            except Exception:
+                pass
+
+        # Flow band: default (live order book unavailable during position refresh)
+        _mon_flow_band = "NeutralFlow"
+
+        # Retrieve previous state snapshots for shift detection
+        _mon_prev_regime = position.get("_mon_previous_regime")
+        _mon_prev_news_flag = position.get("_mon_previous_news_flag", "NEUTRAL")
+        _mon_orig_p_t1 = position.get("_mon_original_p_hit_t1")
+        _mon_orig_p_t2 = position.get("_mon_original_p_hit_t2")
+
+        # Current P_hit proxy from recovery_potential
+        _mon_p_t1 = recovery_potential if recovery_potential is not None else None
+        _mon_p_t2 = round(recovery_potential * 0.6, 4) if recovery_potential else None
+
+        # Minutes to session close (15:30 IST)
+        _mon_now = datetime.now(IST)
+        _mon_close = _mon_now.replace(hour=15, minute=30, second=0, microsecond=0)
+        _mon_mins = max(0, int((_mon_close - _mon_now).total_seconds() / 60))
+
+        # P(recovery) heuristic: based on PnL direction and recovery_potential
+        _mon_p_rec = None
+        if pnl_pct < 0 and recovery_potential is not None:
+            _mon_p_rec = min(recovery_potential * 2.0, 0.95) if recovery_potential > 0 else 0.05
+
+        # Generate alert events via position_monitor engine
+        _monitoring_events = generate_monitoring_alerts(
+            position=position,
+            current_ltp=latest_option_ltp,
+            entry_price=buy_price,
+            stop_loss=_stop_loss_price,
+            minutes_remaining=_mon_mins,
+            news_sentiment=_mon_news,
+            previous_news_flag=_mon_prev_news_flag,
+            current_regime=_mon_regime,
+            previous_regime=_mon_prev_regime,
+            current_p_hit_t1=_mon_p_t1,
+            original_p_hit_t1=_mon_orig_p_t1,
+            current_p_hit_t2=_mon_p_t2,
+            original_p_hit_t2=_mon_orig_p_t2,
+            p_recovery=_mon_p_rec,
+            flow_band=_mon_flow_band,
+        )
+
+        # Build state snapshot for next refresh cycle
+        _mon_state_snapshot = {
+            "_mon_previous_regime": _mon_regime.get("regime"),
+            "_mon_previous_news_flag": _mon_news.get("news_flag", "NEUTRAL"),
+        }
+        # Set original P_hit baselines on first observation
+        if _mon_orig_p_t1 is None and _mon_p_t1 is not None:
+            _mon_state_snapshot["_mon_original_p_hit_t1"] = _mon_p_t1
+        if _mon_orig_p_t2 is None and _mon_p_t2 is not None:
+            _mon_state_snapshot["_mon_original_p_hit_t2"] = _mon_p_t2
+
+        # Verbose monitoring log (toggleable)
+        if _monitoring_events and os.environ.get("MONITORING_LOG_VERBOSE", "1") == "1":
+            for _mevt in _monitoring_events:
+                logger.info(
+                    "MONITOR [%s] %s %s | Sev=%s | %s",
+                    _mevt.get("type"), _mevt.get("symbol"), _mevt.get("direction"),
+                    _mevt.get("severity"), _mevt.get("reason", "")[:120],
+                )
+    except Exception as _mon_err:
+        logger.debug("Position monitoring failed for %s: %s", position.get("id"), _mon_err)
+
     updated = await db.custom_positions.find_one_and_update(
         {"id": position["id"]},
         {
@@ -6534,6 +6653,8 @@ async def _refresh_open_position(position: dict) -> dict:
                 "recovery_potential": round(recovery_potential, 4),
                 "last_update": _utc_now_iso(),
                 "revised_exit_plan": revised_exit_plan,
+                "monitoring_events": _monitoring_events,
+                **_mon_state_snapshot,
             }
         },
         projection={"_id": 0},
@@ -7684,6 +7805,30 @@ async def remove_custom_position(position_id: str, current_user: dict = Depends(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Custom position not found")
     return {"removed": True, "id": position_id}
+
+
+@api_router.get("/fno/position-alerts")
+async def get_position_alerts(current_user: dict = Depends(get_current_user)):
+    """Aggregated monitoring events across all OPEN positions for current user."""
+    rows = await db.custom_positions.find(
+        {"user_key": current_user["user_key"], "status": "OPEN"},
+        {"_id": 0, "id": 1, "script": 1, "underlying": 1, "monitoring_events": 1},
+    ).to_list(200)
+
+    all_events: list[dict] = []
+    for row in rows:
+        events = row.get("monitoring_events", [])
+        for evt in events:
+            evt_copy = {**evt, "position_id": row.get("id")}
+            all_events.append(evt_copy)
+
+    # Sort by severity (CRITICAL > HIGH > MEDIUM > LOW), then by timestamp desc
+    _sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    all_events.sort(
+        key=lambda e: (_sev_order.get(e.get("severity", "MEDIUM"), 2), e.get("timestamp", "")),
+    )
+
+    return {"alerts": all_events, "count": len(all_events)}
 
 
 @api_router.post("/portfolio/analyze", response_model=PortfolioAnalyzeResponse)

@@ -371,6 +371,19 @@ class CustomPositionSellRequest(BaseModel):
     confirm: bool = True
 
 
+class MonitoringEvent(BaseModel):
+    """Batch 4: Monitoring event for sticky F&O positions."""
+    type: str  # NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT
+    symbol: str = ""
+    underlying: str = ""
+    script: str = ""
+    direction: str = ""
+    timestamp: str = ""
+    severity: str = "MEDIUM"
+    reason: str = ""
+    details: dict = Field(default_factory=dict)
+
+
 class CustomPositionResponse(BaseModel):
     id: str
     script: str
@@ -407,6 +420,7 @@ class CustomPositionResponse(BaseModel):
     recovery_potential: float | None = None
     minutes_to_expiry: int
     revised_exit_plan: str
+    monitoring_events: list[MonitoringEvent] = Field(default_factory=list)
 
 
 class CustomPositionCreateResponse(BaseModel):
@@ -437,6 +451,7 @@ __all__ = [
     "PortfolioPositionInput", "PortfolioAnalyzeRequest",
     "PortfolioHorizonRange", "PortfolioExpectedSignal", "PortfolioStockAnalysis",
     "PortfolioAnalyzeResponse", "CustomPositionCreateRequest",
+    "MonitoringEvent",
     "CustomPositionSellRequest", "CustomPositionResponse",
     "CustomPositionCreateResponse", "ScriptSearchResult",
     "MacroEventsUpdateRequest",
