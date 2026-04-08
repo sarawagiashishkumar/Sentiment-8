@@ -14,83 +14,41 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - **Live Data:** Kite Connect API v3
 - **Streaming:** NDJSON StreamingResponse for heavy compute endpoints
 
-## Code Structure
-```
-backend/
-├── server.py                          # Core utilities, data access, auth, settings endpoints
-├── routes/
-│   ├── fno.py                         # F&O signal generation + sticky cards + events + position sizing
-│   ├── admin.py                       # Admin/user management
-│   ├── market_data.py                 # Sector momentum, script master
-│   ├── portfolio.py                   # Portfolio analysis
-│   ├── multibagger.py                 # Multibagger screening
-│   └── batch_jobs.py                  # Offline MFE/Theta/FwdMFE builders
-├── services/
-│   ├── fno_signal_engine.py           # F&O signal building with contextvars for user budget
-│   ├── position_sizing.py            # Enhanced: ATR14, fixed-risk, lots_atr_method, lots_fixed_risk, max_risk_Rs
-│   ├── mfe_mae_engine.py             # MFE/MAE library + select_targets_v2 + DB persistence
-│   ├── confluence_score_v2.py         # 4-bucket scoring (A/B/C/D) with hard vetoes
-│   ├── news_sentiment.py             # Parallel-verified news, NEWS_AGGREGATE, continuous monitor
-│   ├── sticky_card_engine.py         # State machine, popup events, MongoDB CRUD
-│   └── ... (20+ total service modules)
-├── models/__init__.py                 # Pydantic models (UserSettingsUpdate, enhanced MeResponse/AccessResponse)
-└── deps.py                            # Shared auth dependencies
-
-frontend/
-└── src/
-    ├── App.js                         # 259 lines — routing shell
-    └── components/
-        ├── FNO/                       # FNODashboard (settings panel), FNOSignalCard (not_affordable + sizing info)
-        ├── Multibagger/
-        ├── Portfolio/
-        ├── Shared/
-        ├── Layout/
-        ├── Auth/
-        ├── Admin/
-        ├── Home/
-        └── Sectors/
-```
-
 ## Key Endpoints
-| Endpoint | Method | Type | Description |
-|---|---|---|---|
-| /api/auth/access | POST | JSON | Login, returns fno_budget + account_risk_pct |
-| /api/auth/me | GET | JSON | Current user with settings |
-| /api/auth/settings | PATCH | JSON | Update fno_budget, account_risk_pct |
-| /api/fno/generate | POST | NDJSON Stream | Full F&O signal generation |
-| /api/fno/position-sizing | POST | JSON | Enhanced: lots_atr_method, lots_fixed_risk, max_risk_Rs |
-| /api/fno/events | GET | JSON | Unacknowledged popup events |
-| /api/fno/sticky-cards | GET | JSON | Active sticky cards |
-| /api/batch/status | GET | JSON | Batch cache counts |
+| Endpoint | Method | Description |
+|---|---|---|
+| /api/auth/access | POST | Login, returns fno_budget + account_risk_pct |
+| /api/auth/me | GET | Current user with settings |
+| /api/auth/settings | PATCH | Update fno_budget, account_risk_pct |
+| /api/fno/generate | POST | Full F&O signal generation (NDJSON stream) |
+| /api/fno/position-sizing | POST | Enhanced: lots_atr_method, lots_fixed_risk, max_risk_Rs |
+| /api/fno/events | GET | Unacknowledged popup events |
+| /api/fno/sticky-cards | GET | Active sticky cards |
+| /api/fno/performance-stats | GET | Aggregated performance stats (win rate, avg P&L, by-symbol) |
+| /api/fno/signal-history | GET | Paginated closed trades with outcomes |
+| /api/fno/signal-log | GET | Paginated signal generation log |
+| /api/batch/status | GET | Batch cache counts |
 
-## Master Spec v2.0 — ALL BATCHES COMPLETE
-| Batch | Description | Status | Tests |
-|---|---|---|---|
-| Batch 1 | Data Layer: Constituent Engine, Regime Engine, Liquidity/PCR | DONE | 28/28 |
-| Batch 2 | MFE/MAE Library, Theta Curves, Forward MFE persistence | DONE | 23/23 |
-| Batch 3 | Target Engine + Confluence Score overhaul (6 items) | DONE | 20/20 |
-| Batch 4 | News Sentiment + Sticky Card Monitoring + Popup Events | DONE | 27/27 |
-
-## P2 Implementation — COMPLETE
-| Task | Description | Status | Tests |
-|---|---|---|---|
-| P2-A | App.js Componentization (3265→259 lines) | DONE | Visual + Compilation verified |
-| P2-B | Budget Entry Trigger Alert UI (not_affordable wiring, fno_budget settings) | DONE | 8/8 + 11/11 |
-| P2-C | Position Sizing Calculator (ATR14, fixed-risk, lots_atr_method, lots_fixed_risk, max_risk_Rs) | DONE | 8/8 + 11/11 |
-
-## Completed Features (Comprehensive)
-- [x] All Master Spec v2.0 Batches (1-4)
-- [x] P2-A: App.js componentization — pure structural refactor, 259 lines
-- [x] P2-B: not_affordable inline warning in FNOSignalCard, fno_budget user setting, PATCH /auth/settings
-- [x] P2-C: ATR14-based sizing (lots_atr_method), fixed-risk sizing (lots_fixed_risk), max_risk_Rs, account_risk_pct
-- [x] Settings panel in F&O dashboard (Account Size + Risk Per Trade %)
-- [x] Position sizing info badges in signal cards (Lots, ATR, Risk, Max₹)
-- [x] Test infrastructure fix: BASE_URL resolution from frontend/.env fallback + asyncio.run() for Py3.11
+## Completed Features
+- [x] Master Spec v2.0 Batches 1-4 (Data Layer, MFE/MAE, Target Engine, News Sentiment)
+- [x] P2-A: App.js componentization (3265 to 259 lines)
+- [x] P2-B: Budget Entry Trigger Alert UI (not_affordable wiring, fno_budget settings)
+- [x] P2-C: Position Sizing Calculator (ATR14, fixed-risk methods)
+- [x] Test infrastructure fix: BASE_URL resolution + asyncio.run() for Py3.11
+- [x] Historical Signal Performance Tracking (close_card archival, P&L calculation, 3-tab UI)
 
 ## Testing Status
-- All iterations (44-48): 83/83 pass, 0 failures, 0 errors (fully green)
+- Iteration 49: 6/6 pass (Signal History, 100%)
+- Iterations 44-48: 83/83 pass (All previous features, 100%)
+- Total: 89/89 all green
+
+## DB Collections
+- `sticky_fno_cards`, `fno_popup_events`
+- `fno_signal_history` (archived terminal cards with outcome + pnl_pct)
+- `fno_signal_log` (all generated signals)
+- `mfe_library`, `theta_curves`, `fwd_mfe`
+- `iv_history`, `regime_history`, `index_constituents`
 
 ## Backlog (Priority Order)
 - **Future:** IV cone + IV term structure charts (wait for 30+ days iv_history data)
-- **Future:** Historical signal performance tracking
 - **Future:** Multi-timeframe analysis views
