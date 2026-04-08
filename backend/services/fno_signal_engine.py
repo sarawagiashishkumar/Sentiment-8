@@ -40,6 +40,12 @@ from services.mfe_mae_engine import (
     check_no_chasing_rule,
     compute_best_exit_online,
     select_targets_from_probability,
+    get_cached_prob_table,
+    get_cached_fwd_mfe,
+    build_and_store_mfe_library,
+    build_and_store_forward_mfe,
+    _classify_dte_band,
+    _classify_iv_regime,
 )
 from services.confluence_score_v2 import (
     compute_bucket_a,
@@ -1180,49 +1186,87 @@ async def build_fno_signal(
     _atr_sl_dist = max(entry_price * 0.07, min(_atr_proxy * _delta_proxy * 1.5, entry_price * 0.25))
     stop_loss = max(round(entry_price - _atr_sl_dist, 2), round(entry_price * 0.01, 2))
 
-    # ── Batch 2 NEW: MFE/MAE probability-based target refinement ─────────
-    # Build MFE/MAE library from underlying historical data, then use
-    # probability tables to validate/refine ATR-based targets.
+    # ── Expiry-today flag (moved early — used by MFE, 0DTE, and target caps) ──
+    _today_ist = datetime.now(IST).strftime("%Y-%m-%d")
+    _is_expiry_today = (contract.expiry == _today_ist) if contract.expiry else False
+
+    # ── Batch 2: MFE/MAE probability-based target refinement (cache-first) ──
+    # First try MongoDB cached library, then compute on-the-fly as fallback.
     _prob_targets: dict = {}
     _mfe_library: list = []
     _hist_for_mfe = None
-    # With Kite as primary, MFE/MAE is available for ALL underlyings including indices
+    _prob_table = None
+    _dte_for_mfe = 0 if _is_expiry_today else max(get_remaining_trading_days(contract.expiry), 1)
+    _iv_for_mfe = (_enhanced_opt_features or {}).get("iv") or india_vix
     try:
-        _hist_for_mfe = await _get_hist_ohlcv(contract.underlying, period="1y")
-        if _hist_for_mfe is not None and not _hist_for_mfe.empty and len(_hist_for_mfe) >= 100:
-            _atr_for_mfe = underlying_atr or (float(underlying_ltp) * 0.012)
-            _mfe_library = build_mfe_mae_library(
-                hist_df=_hist_for_mfe,
-                atr=_atr_for_mfe,
-                strategy_id=_strategy_id,
-                direction="LONG",
-                window_bars=min(75, len(_hist_for_mfe) // 4),
-            )
-            if _mfe_library and len(_mfe_library) >= 20:
+        _s = _srv()
+        db = _s.db
+
+        # Step 1: Try cached probability table from MongoDB
+        _cached_pt = await get_cached_prob_table(
+            db, contract.underlying, _strategy_id, _dte_for_mfe, _iv_for_mfe,
+        )
+        if _cached_pt:
+            _prob_table = _cached_pt
+            trigger_factors.append("MFE:cached")
+        else:
+            # Step 2: Compute on-the-fly and persist for next time
+            _hist_for_mfe = await _get_hist_ohlcv(contract.underlying, period="1y")
+            if _hist_for_mfe is not None and not _hist_for_mfe.empty and len(_hist_for_mfe) >= 100:
+                _atr_for_mfe = underlying_atr or (float(underlying_ltp) * 0.012)
                 _sl_dist_pct = ((entry_price - stop_loss) / entry_price) * 100
-                _prob_table = build_probability_table(
-                    _mfe_library,
+                # Build and persist
+                _build_result = await build_and_store_mfe_library(
+                    db, contract.underlying, _hist_for_mfe, _atr_for_mfe,
+                    strategy_id=_strategy_id,
+                    dte=_dte_for_mfe,
+                    iv=_iv_for_mfe,
                     sl_distance_pct=max(_sl_dist_pct, 5.0),
                 )
-                _prob_targets = select_targets_from_probability(
-                    _prob_table,
-                    entry_price=entry_price,
-                    stop_loss=stop_loss,
-                    minutes_remaining=effective_minutes,
-                )
-                if _prob_targets.get("method") == "probability_based":
-                    _pt1 = _prob_targets.get("t1")
-                    _pt2 = _prob_targets.get("t2")
-                    # Use probability targets only if they are MORE conservative
-                    # (lower) than ATR targets — ensures higher hit probability
-                    if _pt1 and _pt1 < target1:
-                        target1 = _pt1
-                        trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
-                    if _pt2 and _pt2 < target2:
-                        target2 = _pt2
-                        trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
-                    # Ensure T2 > T1
-                    target2 = max(target2, round(target1 * 1.05, 2))
+                if _build_result.get("stored"):
+                    # Re-fetch the just-stored prob table
+                    _cached_pt = await get_cached_prob_table(
+                        db, contract.underlying, _strategy_id, _dte_for_mfe, _iv_for_mfe,
+                    )
+                    if _cached_pt:
+                        _prob_table = _cached_pt
+                        trigger_factors.append("MFE:computed")
+                else:
+                    # Fallback: inline compute without persistence
+                    _mfe_library = build_mfe_mae_library(
+                        hist_df=_hist_for_mfe,
+                        atr=_atr_for_mfe,
+                        strategy_id=_strategy_id,
+                        direction="LONG",
+                        window_bars=min(75, len(_hist_for_mfe) // 4),
+                    )
+                    if _mfe_library and len(_mfe_library) >= 20:
+                        _prob_table = build_probability_table(
+                            _mfe_library,
+                            sl_distance_pct=max(_sl_dist_pct, 5.0),
+                        )
+
+        # Step 3: Use probability table to refine targets
+        if _prob_table:
+            _prob_targets = select_targets_from_probability(
+                _prob_table,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                minutes_remaining=effective_minutes,
+            )
+            if _prob_targets.get("method") == "probability_based":
+                _pt1 = _prob_targets.get("t1")
+                _pt2 = _prob_targets.get("t2")
+                # Use probability targets only if they are MORE conservative
+                # (lower) than ATR targets — ensures higher hit probability
+                if _pt1 and _pt1 < target1:
+                    target1 = _pt1
+                    trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
+                if _pt2 and _pt2 < target2:
+                    target2 = _pt2
+                    trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
+                # Ensure T2 > T1
+                target2 = max(target2, round(target1 * 1.05, 2))
     except Exception as _mfe_err:
         logger.debug(f"MFE/MAE probability refinement failed: {_mfe_err}")
 
@@ -1295,8 +1339,6 @@ async def build_fno_signal(
     # SAME-DAY EXPIRY CAP: when option expires today, cap T2 at 2× entry (100% gain max).
     # On expiry day, achieving 3× entry requires a 2–3 ATR underlying move which is
     # statistically improbable in a single session. This keeps targets realistic.
-    _today_ist = datetime.now(IST).strftime("%Y-%m-%d")
-    _is_expiry_today = (contract.expiry == _today_ist) if contract.expiry else False
     if _is_expiry_today:
         _same_day_t2_cap = round(entry_price * 2.0, 2)   # Hard cap: 100% gain on expiry day
         _same_day_t1_cap = round(entry_price * 1.50, 2)  # T1 cap: 50% gain on expiry day
@@ -1390,34 +1432,65 @@ async def build_fno_signal(
         ), 2)
         best_exit_price = max(best_exit_price, entry_price * 1.01)  # Never below entry+1%
 
-    # ── Batch 2 NEW: Forward MFE-based Best Exit refinement ──────────────
-    # If forward MFE data is reliable, use it to refine best exit price
+    # ── Batch 2: Forward MFE-based Best Exit refinement (cache-first) ────
+    # Try cached forward MFE from MongoDB first, then compute on-the-fly.
     if not _is_expiry_today and remaining_trading_days > 0:
         try:
             _iv_regime_str = _enhanced_regime.get("regime", "LowVolTrend") if _enhanced_regime else "LowVolTrend"
             _mono_label_be = _enhanced_opt_features.get("moneyness", "ATM") if _enhanced_opt_features else "ATM"
             _opt_class = "index_weekly" if contract.underlying in ("NIFTY", "BANKNIFTY") else "stock_monthly"
-            _hist_for_be = _hist_for_mfe  # Reuse cached data, avoid redundant fetch
-            _be_online = compute_best_exit_online(
-                entry_price=entry_price,
-                remaining_trading_days=remaining_trading_days,
-                dte=remaining_trading_days,
-                iv_regime=_enhanced_regime.get("vix_level", "normal").upper() + "_IV" if _enhanced_regime else "NORMAL_IV",
-                market_regime=_enhanced_regime.get("regime", "LowVolTrend") if _enhanced_regime else "LowVolTrend",
-                hist_df=_hist_for_be,
-                atr=underlying_atr,
-                vix=india_vix,
-                option_class=_opt_class,
-                moneyness=_mono_label_be,
+
+            # Step 1: Try cached forward MFE
+            _s = _srv()
+            _cached_fwd = await get_cached_fwd_mfe(
+                _s.db, contract.underlying, remaining_trading_days, _iv_regime_str,
             )
-            if _be_online.get("reliable"):
-                _be_price_new = _be_online["best_exit_price"]
-                # Use forward MFE best exit only if it's MORE conservative
-                if _be_price_new < best_exit_price:
-                    best_exit_price = round(_be_price_new, 2)
-                    trigger_factors.append(f"BestExitMFE:{_be_online.get('method', 'fwd')}")
-                if _be_online.get("best_exit_day") is not None:
-                    best_exit_days = _be_online["best_exit_day"]
+            if _cached_fwd and _cached_fwd.get("reliable"):
+                # Apply cached percentile to current entry price
+                _adj_pct = _cached_fwd.get("theta_adj_p80_pct", 0)
+                _be_price_cached = round(entry_price * (1 + _adj_pct / 100), 2)
+                if _be_price_cached < best_exit_price:
+                    best_exit_price = _be_price_cached
+                    trigger_factors.append("BestExitMFE:cached")
+                if _cached_fwd.get("best_exit_day") is not None:
+                    best_exit_days = _cached_fwd["best_exit_day"]
+            else:
+                # Step 2: Compute on-the-fly
+                _hist_for_be = _hist_for_mfe  # Reuse cached data, avoid redundant fetch
+                _be_online = compute_best_exit_online(
+                    entry_price=entry_price,
+                    remaining_trading_days=remaining_trading_days,
+                    dte=remaining_trading_days,
+                    iv_regime=_enhanced_regime.get("vix_level", "normal").upper() + "_IV" if _enhanced_regime else "NORMAL_IV",
+                    market_regime=_iv_regime_str,
+                    hist_df=_hist_for_be,
+                    atr=underlying_atr,
+                    vix=india_vix,
+                    option_class=_opt_class,
+                    moneyness=_mono_label_be,
+                )
+                if _be_online.get("reliable"):
+                    _be_price_new = _be_online["best_exit_price"]
+                    if _be_price_new < best_exit_price:
+                        best_exit_price = round(_be_price_new, 2)
+                        trigger_factors.append(f"BestExitMFE:{_be_online.get('method', 'fwd')}")
+                    if _be_online.get("best_exit_day") is not None:
+                        best_exit_days = _be_online["best_exit_day"]
+
+                    # Persist for next time (fire-and-forget)
+                    if _hist_for_be is not None and not _hist_for_be.empty:
+                        try:
+                            await build_and_store_forward_mfe(
+                                _s.db, contract.underlying, _hist_for_be,
+                                atr=underlying_atr or (float(underlying_ltp) * 0.012),
+                                remaining_trading_days=remaining_trading_days,
+                                regime=_iv_regime_str,
+                                iv_regime=_enhanced_regime.get("vix_level", "normal").upper() + "_IV" if _enhanced_regime else "NORMAL_IV",
+                                option_class=_opt_class,
+                                moneyness=_mono_label_be,
+                            )
+                        except Exception:
+                            pass  # Non-critical: persistence failure doesn't block signal
         except Exception as _be_err:
             logger.debug(f"Forward MFE best exit failed: {_be_err}")
 

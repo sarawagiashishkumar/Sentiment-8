@@ -2,13 +2,14 @@
 MFE/MAE Library, Probability Models & Theta Curves — Sections 5 & 6 of Master Spec.
 
 Batch 2 implements:
-- 5.1: Offline MFE/MAE library builder per strategy profile
-- 5.2: Probability estimators (P_hit, P_SL_first)
+- 5.1: Offline MFE/MAE library builder per strategy profile + DB persistence
+- 5.2: Probability estimators (P_hit, P_SL_first) with cached lookups
 - 5.3: Online T1/T2 selector for new signals
 - 5.4: Intraday re-evaluation
-- 6.1: Empirical theta curves
-- 6.2: Forward MFE to expiry
-- 6.3: Online Best Exit for live scripts
+- 6.1: Empirical theta curves + DB persistence
+- 6.2: Forward MFE to expiry + DB persistence
+- 6.3: Online Best Exit for live scripts (cache-first)
+- DB Collections: mfe_library, theta_curves, fwd_mfe
 
 All calculations are pure Python/NumPy/Pandas. NO LLM numeric work.
 """
@@ -23,6 +24,16 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# MongoDB Collection Names
+# ---------------------------------------------------------------------------
+COLL_MFE_LIBRARY = "mfe_library"
+COLL_THETA_CURVES = "theta_curves"
+COLL_FWD_MFE = "fwd_mfe"
+
+# Cache staleness threshold (hours) — rebuild if older than this
+CACHE_TTL_HOURS = 24
 
 
 # ---------------------------------------------------------------------------
@@ -760,3 +771,417 @@ def check_0dte_atm_safety(
         }
 
     return {"allow_entry": True, "reason": "0DTE ATM conditions met"}
+
+
+
+# ===========================================================================
+# BATCH 2 DB PERSISTENCE — MongoDB storage/retrieval for offline libraries
+# ===========================================================================
+
+
+async def ensure_indexes(db) -> None:
+    """Create compound indexes for mfe_library, theta_curves, fwd_mfe."""
+    # mfe_library: keyed by (symbol, strategy_id, dte_band, iv_regime)
+    await db[COLL_MFE_LIBRARY].create_index(
+        [("symbol", 1), ("strategy_id", 1), ("dte_band", 1), ("iv_regime", 1)],
+        unique=True,
+        name="mfe_lib_compound_unique",
+    )
+    # theta_curves: keyed by (option_class, moneyness, iv_regime, dte)
+    await db[COLL_THETA_CURVES].create_index(
+        [("option_class", 1), ("moneyness", 1), ("iv_regime", 1), ("dte", 1)],
+        unique=True,
+        name="theta_curve_compound_unique",
+    )
+    # fwd_mfe: keyed by (symbol, dte_band, regime)
+    await db[COLL_FWD_MFE].create_index(
+        [("symbol", 1), ("dte_band", 1), ("regime", 1)],
+        unique=True,
+        name="fwd_mfe_compound_unique",
+    )
+    logger.info("MFE/MAE/Theta/FwdMFE indexes ensured")
+
+
+# ---------------------------------------------------------------------------
+# Store / Fetch: MFE Library (Section 5.1 persistence)
+# ---------------------------------------------------------------------------
+
+async def store_mfe_library(
+    db,
+    symbol: str,
+    strategy_id: str,
+    dte_band: str,
+    iv_regime: str,
+    prob_table: dict,
+    mfe_stats: dict,
+    sample_size: int,
+) -> bool:
+    """Upsert bucketed MFE probability table into MongoDB."""
+    key = {
+        "symbol": symbol,
+        "strategy_id": strategy_id,
+        "dte_band": dte_band,
+        "iv_regime": iv_regime,
+    }
+    doc = {
+        **key,
+        "prob_table": prob_table,
+        "mfe_stats": mfe_stats,
+        "sample_size": sample_size,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    result = await db[COLL_MFE_LIBRARY].update_one(
+        key, {"$set": doc}, upsert=True,
+    )
+    return result.upserted_id is not None or result.modified_count > 0
+
+
+async def fetch_mfe_library(
+    db,
+    symbol: str,
+    strategy_id: str,
+    dte_band: str,
+    iv_regime: str,
+    max_age_hours: int = CACHE_TTL_HOURS,
+) -> dict | None:
+    """
+    Fetch cached MFE probability table. Returns None if not found or stale.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    doc = await db[COLL_MFE_LIBRARY].find_one(
+        {
+            "symbol": symbol,
+            "strategy_id": strategy_id,
+            "dte_band": dte_band,
+            "iv_regime": iv_regime,
+            "updated_at": {"$gte": cutoff},
+        },
+        {"_id": 0},
+    )
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# Store / Fetch: Theta Curves (Section 6.1 persistence)
+# ---------------------------------------------------------------------------
+
+async def store_theta_curve(
+    db,
+    option_class: str,
+    moneyness: str,
+    iv_regime: str,
+    dte: int,
+    curve_data: dict,
+) -> bool:
+    """Upsert empirical theta curve data."""
+    key = {
+        "option_class": option_class,
+        "moneyness": moneyness,
+        "iv_regime": iv_regime,
+        "dte": dte,
+    }
+    doc = {
+        **key,
+        "curve": curve_data,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    result = await db[COLL_THETA_CURVES].update_one(
+        key, {"$set": doc}, upsert=True,
+    )
+    return result.upserted_id is not None or result.modified_count > 0
+
+
+async def fetch_theta_curve(
+    db,
+    option_class: str,
+    moneyness: str,
+    iv_regime: str,
+    dte: int,
+    max_age_hours: int = CACHE_TTL_HOURS,
+) -> dict | None:
+    """Fetch cached theta curve. Returns None if not found or stale."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    doc = await db[COLL_THETA_CURVES].find_one(
+        {
+            "option_class": option_class,
+            "moneyness": moneyness,
+            "iv_regime": iv_regime,
+            "dte": dte,
+            "updated_at": {"$gte": cutoff},
+        },
+        {"_id": 0},
+    )
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# Store / Fetch: Forward MFE (Section 6.2 persistence)
+# ---------------------------------------------------------------------------
+
+async def store_fwd_mfe(
+    db,
+    symbol: str,
+    dte_band: str,
+    regime: str,
+    fwd_data: dict,
+) -> bool:
+    """Upsert forward MFE percentile data."""
+    key = {
+        "symbol": symbol,
+        "dte_band": dte_band,
+        "regime": regime,
+    }
+    doc = {
+        **key,
+        "forward_mfe_p80_pct": fwd_data.get("forward_mfe_p80_pct"),
+        "forward_mfe_p90_pct": fwd_data.get("forward_mfe_p90_pct"),
+        "theta_adj_p80_pct": fwd_data.get("theta_adj_p80_pct"),
+        "best_exit_price": fwd_data.get("best_exit_price"),
+        "best_exit_day": fwd_data.get("best_exit_day"),
+        "sample_size": fwd_data.get("sample_size", 0),
+        "reliable": fwd_data.get("reliable", False),
+        "updated_at": datetime.now(timezone.utc),
+    }
+    result = await db[COLL_FWD_MFE].update_one(
+        key, {"$set": doc}, upsert=True,
+    )
+    return result.upserted_id is not None or result.modified_count > 0
+
+
+async def fetch_fwd_mfe(
+    db,
+    symbol: str,
+    dte_band: str,
+    regime: str,
+    max_age_hours: int = CACHE_TTL_HOURS,
+) -> dict | None:
+    """Fetch cached forward MFE. Returns None if not found or stale."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    doc = await db[COLL_FWD_MFE].find_one(
+        {
+            "symbol": symbol,
+            "dte_band": dte_band,
+            "regime": regime,
+            "updated_at": {"$gte": cutoff},
+        },
+        {"_id": 0},
+    )
+    return doc
+
+
+# ===========================================================================
+# BATCH 2 OFFLINE BUILDERS — Compute & store bucketed frequency tables
+# ===========================================================================
+
+def _compute_mfe_stats(library: list[dict]) -> dict:
+    """Compute summary stats from an MFE/MAE library."""
+    if not library:
+        return {}
+    mfe_pcts = [t["mfe_pct"] for t in library]
+    mae_pcts = [t["mae_pct"] for t in library]
+    return {
+        "mean_mfe_pct": round(float(np.mean(mfe_pcts)), 2),
+        "median_mfe_pct": round(float(np.median(mfe_pcts)), 2),
+        "p80_mfe_pct": round(float(np.percentile(mfe_pcts, 80)), 2),
+        "p90_mfe_pct": round(float(np.percentile(mfe_pcts, 90)), 2),
+        "mean_mae_pct": round(float(np.mean(mae_pcts)), 2),
+        "median_mae_pct": round(float(np.median(mae_pcts)), 2),
+        "p80_mae_pct": round(float(np.percentile(mae_pcts, 80)), 2),
+    }
+
+
+async def build_and_store_mfe_library(
+    db,
+    symbol: str,
+    hist_df: pd.DataFrame,
+    atr: float,
+    strategy_id: str = "S3_SUPERTREND",
+    dte: int = 5,
+    iv: float | None = None,
+    sl_distance_pct: float = 10.0,
+) -> dict:
+    """
+    MFE_BUILD_LIBRARY: Build MFE/MAE library from historical OHLCV,
+    compute probability table, and persist to MongoDB.
+
+    Returns: {stored: bool, sample_size: int, dte_band, iv_regime, key_probs: [...]}
+    """
+    dte_band = _classify_dte_band(dte)
+    iv_regime = _classify_iv_regime(iv)
+
+    library = build_mfe_mae_library(
+        hist_df=hist_df,
+        atr=atr,
+        strategy_id=strategy_id,
+        direction="LONG",
+        window_bars=min(75, len(hist_df) // 4) if len(hist_df) >= 100 else 50,
+    )
+
+    if not library or len(library) < 10:
+        return {"stored": False, "sample_size": len(library), "reason": "insufficient_trades"}
+
+    prob_table = build_probability_table(library, sl_distance_pct=sl_distance_pct)
+    mfe_stats = _compute_mfe_stats(library)
+
+    stored = await store_mfe_library(
+        db, symbol, strategy_id, dte_band, iv_regime,
+        prob_table=prob_table,
+        mfe_stats=mfe_stats,
+        sample_size=len(library),
+    )
+
+    return {
+        "stored": stored,
+        "symbol": symbol,
+        "strategy_id": strategy_id,
+        "dte_band": dte_band,
+        "iv_regime": iv_regime,
+        "sample_size": len(library),
+        "key_probs": prob_table.get("targets", [])[:5],
+    }
+
+
+async def build_and_store_theta_curves(db) -> dict:
+    """
+    BUILD_THETA_CURVES: Pre-compute empirical theta decay for all
+    (option_class × moneyness × iv_regime × dte) combinations and store.
+
+    Returns: {stored_count: int, combos: int}
+    """
+    option_classes = ["index_weekly", "index_monthly", "stock_monthly"]
+    moneyness_levels = ["ATM", "ITM", "OTM"]
+    iv_regimes = list(IV_REGIMES.keys())
+    dte_values = [0, 1, 2, 3, 5, 7, 10, 14, 21, 30]
+
+    stored_count = 0
+    combos = 0
+
+    for oc in option_classes:
+        for m in moneyness_levels:
+            for iv_r in iv_regimes:
+                for dte in dte_values:
+                    combos += 1
+                    # calendar_days estimate: dte * 1.4 for weekends
+                    cal_days = max(int(dte * 1.4), dte + 1) if dte > 0 else 1
+                    curve = compute_empirical_theta(
+                        entry_price=100.0,  # Normalized to 100 for percentage-based storage
+                        dte=dte,
+                        calendar_days=cal_days,
+                        iv_regime=iv_r,
+                        option_class=oc,
+                        moneyness=m,
+                    )
+                    ok = await store_theta_curve(db, oc, m, iv_r, dte, curve)
+                    if ok:
+                        stored_count += 1
+
+    logger.info(f"BUILD_THETA_CURVES: stored {stored_count}/{combos} curves")
+    return {"stored_count": stored_count, "combos": combos}
+
+
+async def build_and_store_forward_mfe(
+    db,
+    symbol: str,
+    hist_df: pd.DataFrame,
+    atr: float,
+    remaining_trading_days: int = 5,
+    regime: str = "LowVolTrend",
+    iv_regime: str = "NORMAL_IV",
+    option_class: str = "index_weekly",
+    moneyness: str = "ATM",
+) -> dict:
+    """
+    BUILD_FORWARD_MFE: Compute forward MFE-to-expiry from historical data,
+    adjust for theta, and persist to MongoDB.
+
+    Returns: {stored: bool, symbol, dte_band, regime, best_exit_price, reliable, sample_size}
+    """
+    dte_band = _classify_dte_band(remaining_trading_days)
+
+    # Get theta for daily decay cost
+    cal_days = max(int(remaining_trading_days * 1.4), remaining_trading_days + 1)
+    theta = compute_empirical_theta(
+        entry_price=100.0,  # normalized
+        dte=remaining_trading_days,
+        calendar_days=cal_days,
+        iv_regime=iv_regime,
+        option_class=option_class,
+        moneyness=moneyness,
+    )
+    daily_theta = theta["total_theta"]
+
+    fwd = compute_forward_mfe(
+        hist_df=hist_df,
+        entry_price=100.0,  # normalized to get percentages
+        remaining_trading_days=remaining_trading_days,
+        atr=atr,
+        daily_theta=daily_theta,
+    )
+
+    if fwd.get("sample_size", 0) < 10:
+        return {"stored": False, "symbol": symbol, "reason": "insufficient_samples"}
+
+    stored = await store_fwd_mfe(db, symbol, dte_band, regime, fwd)
+
+    return {
+        "stored": stored,
+        "symbol": symbol,
+        "dte_band": dte_band,
+        "regime": regime,
+        "best_exit_price_pct": fwd.get("theta_adj_p80_pct"),
+        "best_exit_day": fwd.get("best_exit_day"),
+        "reliable": fwd.get("reliable", False),
+        "sample_size": fwd.get("sample_size", 0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Online Cache-First Lookups (used by fno_signal_engine pipeline)
+# ---------------------------------------------------------------------------
+
+async def get_cached_prob_table(
+    db,
+    symbol: str,
+    strategy_id: str,
+    dte: int,
+    iv: float | None = None,
+) -> dict | None:
+    """
+    Cache-first probability table lookup. Returns the prob_table dict
+    from MongoDB if fresh, else None (caller should compute on-the-fly).
+    """
+    dte_band = _classify_dte_band(dte)
+    iv_regime = _classify_iv_regime(iv)
+    doc = await fetch_mfe_library(db, symbol, strategy_id, dte_band, iv_regime)
+    if doc and doc.get("prob_table"):
+        logger.debug(f"MFE cache HIT: {symbol}/{strategy_id}/{dte_band}/{iv_regime}")
+        return doc["prob_table"]
+    return None
+
+
+async def get_cached_theta(
+    db,
+    option_class: str,
+    moneyness: str,
+    iv_regime: str,
+    dte: int,
+) -> dict | None:
+    """Cache-first theta curve lookup."""
+    doc = await fetch_theta_curve(db, option_class, moneyness, iv_regime, dte)
+    if doc and doc.get("curve"):
+        return doc["curve"]
+    return None
+
+
+async def get_cached_fwd_mfe(
+    db,
+    symbol: str,
+    dte: int,
+    regime: str,
+) -> dict | None:
+    """Cache-first forward MFE lookup."""
+    dte_band = _classify_dte_band(dte)
+    doc = await fetch_fwd_mfe(db, symbol, dte_band, regime)
+    if doc and doc.get("reliable"):
+        return doc
+    return None

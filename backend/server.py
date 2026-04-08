@@ -3816,11 +3816,13 @@ from routes.admin import admin_router
 from routes.market_data import market_data_router
 from routes.portfolio import portfolio_router
 from routes.multibagger import multibagger_router
+from routes.batch_jobs import batch_router
 api_router.include_router(fno_router)
 api_router.include_router(admin_router)
 api_router.include_router(market_data_router)
 api_router.include_router(portfolio_router)
 api_router.include_router(multibagger_router)
+api_router.include_router(batch_router, prefix="/batch")
 
 app.include_router(api_router)
 
@@ -3929,6 +3931,13 @@ async def startup_tasks():
         await _ensure_regime_indexes(db)
     except Exception as exc:
         logger.warning("Regime history index creation failed (non-fatal): %s", exc)
+
+    # ── Batch 2 NEW: MFE/MAE Library, Theta Curves, Forward MFE indexes ──
+    try:
+        from services.mfe_mae_engine import ensure_indexes as _ensure_mfe_indexes
+        await _ensure_mfe_indexes(db)
+    except Exception as exc:
+        logger.warning("MFE/MAE index creation failed (non-fatal): %s", exc)
 
 
 @app.on_event("shutdown")
