@@ -87,4 +87,4 @@ regime_history, index_constituents, fundamental_cache
 - Multi-timeframe analysis views enhancements
 
 ## Kite Connect Postback URL
-https://signal-backtester.preview.emergentagent.com/api/kite/postback
+https://backend-refactor-p2.preview.emergentagent.com/api/kite/postback

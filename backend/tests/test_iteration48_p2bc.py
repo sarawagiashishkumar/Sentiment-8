@@ -15,7 +15,7 @@ import httpx
 
 from services.position_sizing import compute_position_size
 
-BASE_URL = "https://signal-backtester.preview.emergentagent.com/api"
+BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com/api"
 
 
 # ── Unit Tests ─────────────────────────────────────────────────────────────

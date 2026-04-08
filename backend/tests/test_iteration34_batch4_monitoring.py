@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://signal-backtester.preview.emergentagent.com"
+    BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com"
 
 AUTH_ENDPOINT = f"{BASE_URL}/api/auth/access"
 POSITION_ALERTS_ENDPOINT = f"{BASE_URL}/api/fno/position-alerts"

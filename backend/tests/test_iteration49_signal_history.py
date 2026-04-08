@@ -29,7 +29,7 @@ def _resolve_base_url():
                     return line.split('=', 1)[1].strip().rstrip('/')
     except FileNotFoundError:
         pass
-    return 'https://signal-backtester.preview.emergentagent.com'
+    return 'https://backend-refactor-p2.preview.emergentagent.com'
 
 BASE_URL = _resolve_base_url()
 

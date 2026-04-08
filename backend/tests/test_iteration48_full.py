@@ -13,7 +13,7 @@ import pytest
 import requests
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://signal-backtester.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://backend-refactor-p2.preview.emergentagent.com').rstrip('/')
 
 class TestAuthAccess:
     """Test /api/auth/access returns fno_budget and account_risk_pct"""

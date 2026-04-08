@@ -25,7 +25,7 @@ import time
 # Add backend to path for module imports
 sys.path.insert(0, "/app/backend")
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://signal-backtester.preview.emergentagent.com")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://backend-refactor-p2.preview.emergentagent.com")
 AUTH_TOKEN = None
 
 

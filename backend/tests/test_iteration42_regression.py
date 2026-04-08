@@ -16,7 +16,7 @@ import requests
 import json
 import time
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://signal-backtester.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://backend-refactor-p2.preview.emergentagent.com").rstrip("/")
 ADMIN_USERNAME = "@shish123"
 ADMIN_PASSWORD = "1234"
 

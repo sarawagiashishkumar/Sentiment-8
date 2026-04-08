@@ -17,7 +17,7 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://signal-backtester.preview.emergentagent.com"
+    BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com"
 
 # Test credentials from test_credentials.md
 TEST_USERNAME = "@shish123"

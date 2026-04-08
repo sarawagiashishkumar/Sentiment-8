@@ -30,7 +30,7 @@ import inspect
 # Add backend to path for direct imports
 sys.path.insert(0, '/app/backend')
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://signal-backtester.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://backend-refactor-p2.preview.emergentagent.com').rstrip('/')
 
 
 class TestDataVerifierDataclasses:
