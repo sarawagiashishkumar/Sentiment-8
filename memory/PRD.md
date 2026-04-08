@@ -39,12 +39,11 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - [x] Historical Signal Performance Tracking
 - [x] IV Analytics: IV Cone + IV Term Structure (data pipeline + charts)
 - [x] Multi-Timeframe Analysis Views (Daily/Weekly/Monthly with alignment scoring)
+- [x] Signal Log Auto-Capture (logs every generated signal + IV term structure during F&O projection)
 
 ## Testing Status
-- Iteration 50: 8/8 pass (IV + Multi-TF, 100%)
-- Iteration 49: 6/6 pass (Signal History, 100%)
-- Iterations 44-48: 83/83 pass
-- Total: 97 tests, all green
+- Iterations 44-50: 97+ tests, all green
+- Latest test files: test_iteration48-50 (22/22 pass)
 
 ## DB Collections
 sticky_fno_cards, fno_popup_events, fno_signal_history, fno_signal_log,

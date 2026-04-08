@@ -210,6 +210,33 @@ async def generate_fno_signals(
 
         yield _ndjson_line({"type": "complete", "data": json.loads(response.model_dump_json())})
 
+        # ── Auto-capture: log all generated signals to signal_log ──
+        try:
+            from services.sticky_card_engine import log_generated_signal
+            all_sigs = [*signals, *stock_signals]
+            if custom_signal:
+                all_sigs.append(custom_signal)
+            for sig in all_sigs:
+                sig_dict = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else sig.__dict__
+                await log_generated_signal(_srv.db, sig_dict)
+        except Exception as _log_err:
+            pass  # signal logging is optional, never blocks response
+
+        # ── Auto-capture: IV term structure snapshots ──
+        try:
+            from services.iv_analytics import capture_iv_term_structure
+            for proj in (nifty_projection, banknifty_projection):
+                if proj and hasattr(proj, 'assured_signals') and proj.assured_signals:
+                    sym = proj.assured_signals[0].underlying or ""
+                    expiry_iv_map = {}
+                    for s in proj.assured_signals:
+                        if s.expiry and s.atm_iv:
+                            expiry_iv_map[s.expiry] = s.atm_iv
+                    if expiry_iv_map:
+                        await capture_iv_term_structure(_srv.db, sym, expiry_iv_map)
+        except Exception:
+            pass  # IV capture is optional
+
     return StreamingResponse(_stream_generate(), media_type="application/x-ndjson")
 
 
