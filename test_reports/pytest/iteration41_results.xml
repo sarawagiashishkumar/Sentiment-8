@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="18" time="51.616" timestamp="2026-04-08T02:25:20.817930+00:00" hostname="agent-env-510a0f47-807d-40e0-a5cc-63281adb00b3"><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestAuthEndpoint" name="test_auth_access_login" time="0.227" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestSectorMomentumEndpoint" name="test_sector_momentum_returns_200" time="0.392" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestSectorMomentumEndpoint" name="test_sector_momentum_response_shape" time="0.141" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestSectorMomentumEndpoint" name="test_sector_momentum_has_8_sectors" time="0.127" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestSectorMomentumEndpoint" name="test_sector_object_has_required_fields" time="0.129" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestSectorMomentumEndpoint" name="test_summary_has_required_fields" time="0.157" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestSectorMomentumEndpoint" name="test_sector_momentum_force_refresh" time="2.347" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestSectorMomentumEndpoint" name="test_sector_momentum_caching_behavior" time="0.327" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_fno_generate_content_type" time="0.156" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_fno_generate_first_line_is_progress" time="0.126" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_multibagger_generate_content_type" time="0.120" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_multibagger_generate_first_line_is_progress" time="15.559"><failure message="requests.exceptions.ConnectionError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.">/root/.venv/lib/python3.11/site-packages/urllib3/response.py:903: in _error_catcher
+    yield
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1418: in read_chunked
+    self._update_chunk_length()
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1333: in _update_chunk_length
+    line = self._fp.fp.readline()  # type: ignore[union-attr]
+           ^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/socket.py:718: in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1314: in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1166: in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TimeoutError: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/models.py:820: in generate
+    yield from self.raw.stream(chunk_size, decode_content=True)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1250: in stream
+    yield from self.read_chunked(amt, decode_content=decode_content)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1397: in read_chunked
+    with self._error_catcher():
+/usr/local/lib/python3.11/contextlib.py:158: in __exit__
+    self.gen.throw(typ, value, traceback)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:908: in _error_catcher
+    raise ReadTimeoutError(self._pool, None, "Read timed out.") from e  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_iteration41_sector_momentum_ndjson.py:330: in test_multibagger_generate_first_line_is_progress
+    lines = self._parse_ndjson_response(response, timeout_lines=2)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration41_sector_momentum_ndjson.py:250: in _parse_ndjson_response
+    for line in response.iter_lines(decode_unicode=True):
+/root/.venv/lib/python3.11/site-packages/requests/models.py:869: in iter_lines
+    for chunk in self.iter_content(
+/root/.venv/lib/python3.11/site-packages/requests/utils.py:558: in stream_decode_response_unicode
+    yield from iterator
+/root/.venv/lib/python3.11/site-packages/requests/models.py:826: in generate
+    raise ConnectionError(e)
+E   requests.exceptions.ConnectionError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.</failure></testcase><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_multibagger_candidates_content_type" time="0.153" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_multibagger_candidates_first_line_is_progress" time="15.127"><failure message="requests.exceptions.ConnectionError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.">/root/.venv/lib/python3.11/site-packages/urllib3/response.py:903: in _error_catcher
+    yield
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1418: in read_chunked
+    self._update_chunk_length()
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1333: in _update_chunk_length
+    line = self._fp.fp.readline()  # type: ignore[union-attr]
+           ^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/socket.py:718: in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1314: in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1166: in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TimeoutError: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/models.py:820: in generate
+    yield from self.raw.stream(chunk_size, decode_content=True)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1250: in stream
+    yield from self.read_chunked(amt, decode_content=decode_content)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1397: in read_chunked
+    with self._error_catcher():
+/usr/local/lib/python3.11/contextlib.py:158: in __exit__
+    self.gen.throw(typ, value, traceback)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:908: in _error_catcher
+    raise ReadTimeoutError(self._pool, None, "Read timed out.") from e  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_iteration41_sector_momentum_ndjson.py:366: in test_multibagger_candidates_first_line_is_progress
+    lines = self._parse_ndjson_response(response, timeout_lines=2)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration41_sector_momentum_ndjson.py:250: in _parse_ndjson_response
+    for line in response.iter_lines(decode_unicode=True):
+/root/.venv/lib/python3.11/site-packages/requests/models.py:869: in iter_lines
+    for chunk in self.iter_content(
+/root/.venv/lib/python3.11/site-packages/requests/utils.py:558: in stream_decode_response_unicode
+    yield from iterator
+/root/.venv/lib/python3.11/site-packages/requests/models.py:826: in generate
+    raise ConnectionError(e)
+E   requests.exceptions.ConnectionError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.</failure></testcase><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_script_master_refresh_content_type" time="0.200" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestNDJSONStreamingEndpoints" name="test_script_master_refresh_first_line_is_progress" time="15.119"><failure message="requests.exceptions.ConnectionError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.">/root/.venv/lib/python3.11/site-packages/urllib3/response.py:903: in _error_catcher
+    yield
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1418: in read_chunked
+    self._update_chunk_length()
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1333: in _update_chunk_length
+    line = self._fp.fp.readline()  # type: ignore[union-attr]
+           ^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/socket.py:718: in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1314: in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1166: in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TimeoutError: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/models.py:820: in generate
+    yield from self.raw.stream(chunk_size, decode_content=True)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1250: in stream
+    yield from self.read_chunked(amt, decode_content=decode_content)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:1397: in read_chunked
+    with self._error_catcher():
+/usr/local/lib/python3.11/contextlib.py:158: in __exit__
+    self.gen.throw(typ, value, traceback)
+/root/.venv/lib/python3.11/site-packages/urllib3/response.py:908: in _error_catcher
+    raise ReadTimeoutError(self._pool, None, "Read timed out.") from e  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_iteration41_sector_momentum_ndjson.py:404: in test_script_master_refresh_first_line_is_progress
+    lines = self._parse_ndjson_response(response, timeout_lines=2)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration41_sector_momentum_ndjson.py:250: in _parse_ndjson_response
+    for line in response.iter_lines(decode_unicode=True):
+/root/.venv/lib/python3.11/site-packages/requests/models.py:869: in iter_lines
+    for chunk in self.iter_content(
+/root/.venv/lib/python3.11/site-packages/requests/utils.py:558: in stream_decode_response_unicode
+    yield from iterator
+/root/.venv/lib/python3.11/site-packages/requests/models.py:826: in generate
+    raise ConnectionError(e)
+E   requests.exceptions.ConnectionError: HTTPSConnectionPool(host='stock-signals-62.preview.emergentagent.com', port=443): Read timed out.</failure></testcase><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestBackendHealth" name="test_api_root_accessible" time="0.697" /><testcase classname="backend.tests.test_iteration41_sector_momentum_ndjson.TestBackendHealth" name="test_health_endpoint" time="0.121" /></testsuite></testsuites>
