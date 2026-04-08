@@ -46,6 +46,49 @@ import { LiveInfoBox } from "./components/shared/LiveInfoBox";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+/**
+ * Read an NDJSON stream from a fetch Response.
+ * Calls onProgress({type, phase, message}) for progress events.
+ * Returns the "complete" event's data payload.
+ */
+async function readNDJSONStream(response, onProgress) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "progress" && onProgress) {
+          onProgress(event);
+        } else if (event.type === "complete") {
+          result = event.data;
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+  }
+  // Process any remaining buffer
+  if (buffer.trim()) {
+    try {
+      const event = JSON.parse(buffer);
+      if (event.type === "complete") result = event.data;
+    } catch {
+      // skip
+    }
+  }
+  return result;
+}
+
 // Backward-compat wrapper for renderLiveInfoBox calls in JSX
 const renderLiveInfoBox = (signal, suffix) => <LiveInfoBox signal={signal} suffix={suffix} />;
 
@@ -90,6 +133,8 @@ export default function App() {
   }, [exportMenuOpen]);
   const [fnoLoading, setFnoLoading] = useState(false);
   const [fnoError, setFnoError] = useState("");
+  const [fnoProgress, setFnoProgress] = useState("");
+  const [multibaggerProgress, setMultibaggerProgress] = useState("");
   const [customScript, setCustomScript] = useState("");
   const [customBuyPrice, setCustomBuyPrice] = useState("");
   const [customLots, setCustomLots] = useState("1");
@@ -353,14 +398,27 @@ export default function App() {
   const generateMultibagger = async () => {
     setMultibaggerError("");
     setMultibaggerLoading(true);
+    setMultibaggerProgress("");
     try {
-      const response = await axios.post(`${API}/multibagger/generate`, {}, { headers: authHeaders });
-      setMultibaggerData(response.data);
-      syncCredits(response.data.credits_remaining);
+      const response = await fetch(`${API}/multibagger/generate`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${response.status}`);
+      }
+      const data = await readNDJSONStream(response, (evt) => setMultibaggerProgress(evt.message || ""));
+      if (data) {
+        setMultibaggerData(data);
+        syncCredits(data.credits_remaining);
+      }
     } catch (error) {
-      setMultibaggerError(error?.response?.data?.detail || "Unable to generate multibagger list");
+      setMultibaggerError(error?.message || "Unable to generate multibagger list");
     } finally {
       setMultibaggerLoading(false);
+      setMultibaggerProgress("");
     }
   };
 
@@ -403,15 +461,28 @@ export default function App() {
   const generateFnoProjection = async (script = "") => {
     setFnoError("");
     setFnoLoading(true);
+    setFnoProgress("");
     try {
       const payload = script ? { custom_script: script.trim().toUpperCase() } : {};
-      const response = await axios.post(`${API}/fno/generate`, payload, { headers: authHeaders });
-      setFnoData(response.data);
-      syncCredits(response.data.credits_remaining);
+      const response = await fetch(`${API}/fno/generate`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${response.status}`);
+      }
+      const data = await readNDJSONStream(response, (evt) => setFnoProgress(evt.message || ""));
+      if (data) {
+        setFnoData(data);
+        syncCredits(data.credits_remaining);
+      }
     } catch (error) {
-      setFnoError(error?.response?.data?.detail || "Unable to generate F&O projections");
+      setFnoError(error?.message || "Unable to generate F&O projections");
     } finally {
       setFnoLoading(false);
+      setFnoProgress("");
     }
   };
 
@@ -1101,7 +1172,7 @@ export default function App() {
                   data-testid="multibagger-generate-button"
                 >
                   <RefreshCw size={16} className={multibaggerLoading ? "animate-spin" : ""} />
-                  {multibaggerLoading ? "Finding..." : "Find Multibagger (-2)"}
+                  {multibaggerLoading ? (multibaggerProgress || "Finding...") : "Find Multibagger (-2)"}
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -1664,7 +1735,7 @@ export default function App() {
                   data-testid="fno-generate-button"
                 >
                   <RefreshCw size={16} className={fnoLoading ? "animate-spin" : ""} />
-                  {fnoLoading ? "Generating..." : "Generate F&O Projections (-2)"}
+                  {fnoLoading ? (fnoProgress || "Generating...") : "Generate F&O Projections (-2)"}
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">

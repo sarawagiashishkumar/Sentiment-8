@@ -9,11 +9,13 @@ to avoid circular imports.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
-from typing import List
+from typing import AsyncGenerator, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from deps import get_current_user, get_owner_user
 from models import (
@@ -40,198 +42,168 @@ logger = logging.getLogger(__name__)
 fno_router = APIRouter()
 
 
+def _ndjson_line(obj: dict) -> str:
+    """Serialize a dict to a single NDJSON line."""
+    return json.dumps(obj, default=str) + "\n"
+
+
+def _empty_index_pane(name: str, note: str) -> IndexProjectionPane:
+    report = IndexAnalysisReport(
+        report_type="with_consolidated",
+        breadth_score=0, momentum_score=0, bias="NEUTRAL",
+        top_contributors=[], summary=note,
+    )
+    return IndexProjectionPane(
+        index_name=name, spot=0,
+        strike_range_min=0, strike_range_max=0,
+        assured_signals=[], watchlist_signals=[],
+        non_directional_strategies=[],
+        rejection_note=note,
+        with_consolidated_report=report,
+        without_consolidated_report=report.model_copy(update={"report_type": "without_consolidated"}),
+    )
+
+
 # ── /fno/generate ─────────────────────────────────────────────────────────────
 
-@fno_router.post("/fno/generate", response_model=FNOGenerateResponse)
+@fno_router.post("/fno/generate")
 async def generate_fno_signals(
     payload: FNOGenerateRequest,
     current_user: dict = Depends(get_current_user),
 ):
+    """Stream F&O signal generation as NDJSON lines for progressive UI rendering."""
     import server as _srv
     from services.technical_core import compute_full_technical_snapshot
     from services.macro_context import classify_market_regime_enhanced
     from services.data_verifier import get_market_session_status
     from datetime import datetime
 
+    # Consume credits upfront (fast)
     updated_user, charged = await _srv._consume_credits(current_user, 2)
     refreshed_at = _srv._utc_now_iso()
 
-    _now_ist = datetime.now(_srv.IST)
-    _is_market_hrs = (
-        _now_ist.weekday() < 5
-        and (_now_ist.hour > 9 or (_now_ist.hour == 9 and _now_ist.minute >= 15))
-        and (_now_ist.hour < 15 or (_now_ist.hour == 15 and _now_ist.minute <= 30))
-    )
-    _market_closed = not _is_market_hrs
-    if _market_closed:
-        logger.info(
-            "F&O signal generation running outside market hours (%s). Data may be stale.",
-            _now_ist.strftime("%H:%M IST"),
+    async def _stream_generate() -> AsyncGenerator[str, None]:
+        _now_ist = datetime.now(_srv.IST)
+        _is_market_hrs = (
+            _now_ist.weekday() < 5
+            and (_now_ist.hour > 9 or (_now_ist.hour == 9 and _now_ist.minute >= 15))
+            and (_now_ist.hour < 15 or (_now_ist.hour == 15 and _now_ist.minute <= 30))
         )
+        if not _is_market_hrs:
+            yield _ndjson_line({"type": "progress", "phase": "market_hours", "message": "Market closed — using last available data"})
 
-    try:
-        nifty_projection = await asyncio.wait_for(
-            _srv._build_index_projection("NIFTY", refreshed_at), timeout=120
-        )
-    except Exception:
-        nifty_projection = IndexProjectionPane(
-            index_name="NIFTY",
-            spot=0,
-            strike_range_min=0,
-            strike_range_max=0,
-            assured_signals=[],
-            watchlist_signals=[],
-            non_directional_strategies=[],
-            rejection_note="NIFTY projection temporarily unavailable",
-            with_consolidated_report=IndexAnalysisReport(
-                report_type="with_consolidated",
-                breadth_score=0,
-                momentum_score=0,
-                bias="NEUTRAL",
-                top_contributors=[],
-                summary="NIFTY projection temporarily unavailable",
-            ),
-            without_consolidated_report=IndexAnalysisReport(
-                report_type="without_consolidated",
-                breadth_score=0,
-                momentum_score=0,
-                bias="NEUTRAL",
-                top_contributors=[],
-                summary="NIFTY projection temporarily unavailable",
-            ),
-        )
-
-    try:
-        banknifty_projection = await asyncio.wait_for(
-            _srv._build_index_projection("BANKNIFTY", refreshed_at), timeout=120
-        )
-    except Exception:
-        banknifty_projection = IndexProjectionPane(
-            index_name="BANKNIFTY",
-            spot=0,
-            strike_range_min=0,
-            strike_range_max=0,
-            assured_signals=[],
-            watchlist_signals=[],
-            non_directional_strategies=[],
-            rejection_note="BANKNIFTY projection temporarily unavailable",
-            with_consolidated_report=IndexAnalysisReport(
-                report_type="with_consolidated",
-                breadth_score=0,
-                momentum_score=0,
-                bias="NEUTRAL",
-                top_contributors=[],
-                summary="BANKNIFTY projection temporarily unavailable",
-            ),
-            without_consolidated_report=IndexAnalysisReport(
-                report_type="without_consolidated",
-                breadth_score=0,
-                momentum_score=0,
-                bias="NEUTRAL",
-                top_contributors=[],
-                summary="BANKNIFTY projection temporarily unavailable",
-            ),
-        )
-
-    try:
-        stock_signals = await asyncio.wait_for(
-            _srv._build_stock_fno_signals(refreshed_at), timeout=60
-        )
-        logger.info("Stock F&O signals generated: %d", len(stock_signals))
-    except asyncio.TimeoutError:
-        logger.warning("Stock F&O signal generation timed out after 60s")
-        stock_signals = []
-    except Exception as exc:
-        logger.error("Stock F&O signal generation failed: %s", exc)
-        stock_signals = []
-
-    potential_signals = [
-        *nifty_projection.assured_signals,
-        *banknifty_projection.assured_signals,
-    ]
-    signals = sorted(potential_signals, key=lambda row: row.confluence_score, reverse=True)
-
-    custom_signal = None
-    if payload.custom_script:
-        contract = await _srv._resolve_contract_from_input(payload.custom_script)
+        # ── Phase 1: NIFTY projection ─────────────────────────────────────
+        yield _ndjson_line({"type": "progress", "phase": "nifty", "message": "Computing NIFTY projection..."})
         try:
-            custom_signal = await _srv._build_signal_for_contract(contract, refreshed_at)
-        except HTTPException:
-            raise
+            nifty_projection = await asyncio.wait_for(
+                _srv._build_index_projection("NIFTY", refreshed_at), timeout=120
+            )
+        except Exception:
+            nifty_projection = _empty_index_pane("NIFTY", "NIFTY projection temporarily unavailable")
+        yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals"})
+
+        # ── Phase 2: BANKNIFTY projection ─────────────────────────────────
+        yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY projection..."})
+        try:
+            banknifty_projection = await asyncio.wait_for(
+                _srv._build_index_projection("BANKNIFTY", refreshed_at), timeout=120
+            )
+        except Exception:
+            banknifty_projection = _empty_index_pane("BANKNIFTY", "BANKNIFTY projection temporarily unavailable")
+        yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals"})
+
+        # ── Phase 3: Stock F&O signals ────────────────────────────────────
+        yield _ndjson_line({"type": "progress", "phase": "stocks", "message": "Scanning stock F&O universe..."})
+        try:
+            stock_signals = await asyncio.wait_for(
+                _srv._build_stock_fno_signals(refreshed_at), timeout=120
+            )
+            logger.info("Stock F&O signals generated: %d", len(stock_signals))
+        except asyncio.TimeoutError:
+            logger.warning("Stock F&O signal generation timed out")
+            stock_signals = []
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            logger.error("Stock F&O signal generation failed: %s", exc)
+            stock_signals = []
+        yield _ndjson_line({"type": "progress", "phase": "stocks_done", "message": f"Stocks: {len(stock_signals)} signals"})
 
-    top_pool = [*signals, *stock_signals]
-    if custom_signal:
-        top_pool.append(custom_signal)
-    top_trades = sorted(
-        top_pool,
-        key=lambda row: (row.is_potential_trade, row.confluence_score),
-        reverse=True,
-    )[:4]
+        # ── Phase 4: Custom signal (if requested) ────────────────────────
+        custom_signal = None
+        if payload.custom_script:
+            yield _ndjson_line({"type": "progress", "phase": "custom", "message": f"Analyzing {payload.custom_script}..."})
+            contract = await _srv._resolve_contract_from_input(payload.custom_script)
+            try:
+                custom_signal = await _srv._build_signal_for_contract(contract, refreshed_at)
+            except Exception as exc:
+                yield _ndjson_line({"type": "progress", "phase": "custom_error", "message": f"Custom signal failed: {exc}"})
 
-    india_vix = await _srv._get_india_vix()
-    _nifty_ts = None
-    try:
-        _nifty_hist = await _srv._get_hist_ohlcv("NIFTY", period="3mo")
-        if _nifty_hist is not None:
-            _nifty_ts = compute_full_technical_snapshot("NIFTY", _nifty_hist)
-    except Exception:
-        pass
-    _nifty_adx = _nifty_ts.get("adx") if _nifty_ts else None
-    _nifty_rsi = _nifty_ts.get("rsi") if _nifty_ts else None
-    market_regime = classify_market_regime_enhanced(
-        vix=india_vix, adx=_nifty_adx, rsi=_nifty_rsi
-    )
-    market_session = get_market_session_status()
+        # ── Phase 5: Assembly ─────────────────────────────────────────────
+        yield _ndjson_line({"type": "progress", "phase": "assembly", "message": "Assembling final results..."})
 
-    no_signals_alert = None
-    all_top_trades = [row for row in top_trades if row.is_potential_trade]
-    if not all_top_trades:
-        reasons: list[str] = []
-        if nifty_projection.rejection_note:
-            reasons.append(f"NIFTY: {nifty_projection.rejection_note}")
-        if banknifty_projection.rejection_note:
-            reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
-        if not stock_signals:
-            reasons.append(
-                "Individual stock signals: No scripts passed 78% confluence & R:R >= 1.2 filters"
-            )
-        regime = market_regime.get("regime", "UNKNOWN")
-        if regime in ("LOW_VOL_RANGE",):
-            reasons.append(
-                f"Market in {regime} — directional setups lacking conviction; consider non-directional strategies"
-            )
-        elif regime in ("CRASH_MODE",):
-            reasons.append(
-                f"Market in {regime} — extreme volatility; avoid aggressive directional entries"
-            )
-        if not market_session.get("is_open"):
-            reasons.append(
-                f"Market is currently CLOSED ({market_session.get('status', 'CLOSED')}) — signals based on last available prices"
-            )
-        reason_text = (
-            " | ".join(reasons)
-            if reasons
-            else "Current market conditions do not meet minimum 78% confluence threshold"
+        potential_signals = [*nifty_projection.assured_signals, *banknifty_projection.assured_signals]
+        signals = sorted(potential_signals, key=lambda r: r.confluence_score, reverse=True)
+
+        top_pool = [*signals, *stock_signals]
+        if custom_signal:
+            top_pool.append(custom_signal)
+        top_trades = sorted(
+            top_pool,
+            key=lambda r: (r.is_potential_trade, r.confluence_score),
+            reverse=True,
+        )[:4]
+
+        india_vix = await _srv._get_india_vix()
+        _nifty_ts = None
+        try:
+            _nifty_hist = await _srv._get_hist_ohlcv("NIFTY", period="3mo")
+            if _nifty_hist is not None:
+                _nifty_ts = compute_full_technical_snapshot("NIFTY", _nifty_hist)
+        except Exception:
+            pass
+        _nifty_adx = _nifty_ts.get("adx") if _nifty_ts else None
+        _nifty_rsi = _nifty_ts.get("rsi") if _nifty_ts else None
+        market_regime = classify_market_regime_enhanced(vix=india_vix, adx=_nifty_adx, rsi=_nifty_rsi)
+        market_session = get_market_session_status()
+
+        no_signals_alert = None
+        all_top_trades = [r for r in top_trades if r.is_potential_trade]
+        if not all_top_trades:
+            reasons: list[str] = []
+            if nifty_projection.rejection_note:
+                reasons.append(f"NIFTY: {nifty_projection.rejection_note}")
+            if banknifty_projection.rejection_note:
+                reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
+            if not stock_signals:
+                reasons.append("Individual stock signals: No scripts passed 78% confluence & R:R >= 1.2 filters")
+            regime = market_regime.get("regime", "UNKNOWN")
+            if regime in ("LOW_VOL_RANGE",):
+                reasons.append(f"Market in {regime} — directional setups lacking conviction")
+            elif regime in ("CRASH_MODE",):
+                reasons.append(f"Market in {regime} — extreme volatility")
+            if not market_session.get("is_open"):
+                reasons.append(f"Market CLOSED ({market_session.get('status', 'CLOSED')})")
+            reason_text = " | ".join(reasons) if reasons else "Current market conditions do not meet minimum 78% confluence threshold"
+            no_signals_alert = f"No script signals currently available. Reason: {reason_text}"
+
+        response = FNOGenerateResponse(
+            cost_charged=charged,
+            credits_remaining=round(float(updated_user.get("credits", 0)), 2),
+            analysis_refreshed_at=refreshed_at,
+            signals=signals,
+            potential_signals=[r for r in signals if r.is_potential_trade],
+            top_trades=top_trades,
+            custom_signal=custom_signal,
+            nifty_projection=nifty_projection,
+            banknifty_projection=banknifty_projection,
+            stock_signals=stock_signals,
+            no_signals_alert=no_signals_alert,
+            market_regime=market_regime,
+            market_session=market_session,
         )
-        no_signals_alert = f"No script signals currently available. Reason: {reason_text}"
 
-    return FNOGenerateResponse(
-        cost_charged=charged,
-        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
-        analysis_refreshed_at=refreshed_at,
-        signals=signals,
-        potential_signals=[row for row in signals if row.is_potential_trade],
-        top_trades=top_trades,
-        custom_signal=custom_signal,
-        nifty_projection=nifty_projection,
-        banknifty_projection=banknifty_projection,
-        stock_signals=stock_signals,
-        no_signals_alert=no_signals_alert,
-        market_regime=market_regime,
-        market_session=market_session,
-    )
+        yield _ndjson_line({"type": "complete", "data": json.loads(response.model_dump_json())})
+
+    return StreamingResponse(_stream_generate(), media_type="application/x-ndjson")
 
 
 # ── /fno/custom-position (CRUD) ──────────────────────────────────────────────

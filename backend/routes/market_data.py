@@ -49,13 +49,23 @@ async def script_master_lookup(q: str = Query(default="")):
 
 @market_data_router.post("/script-master/refresh")
 async def script_master_refresh(owner_user: dict = Depends(get_owner_user)):
+    """Stream script-master refresh progress as NDJSON."""
+    import json
     import server as _srv
     from datetime import datetime
+    from typing import AsyncGenerator
+    from fastapi.responses import StreamingResponse
 
     _ = owner_user
-    _srv.SCRIPT_MASTER_LAST_SYNC_DATE = None
-    await _srv._sync_script_master_daily(force=True)
-    return {"refreshed": True, "date": datetime.now(_srv.IST).date().isoformat()}
+
+    async def _stream() -> AsyncGenerator[str, None]:
+        yield json.dumps({"type": "progress", "phase": "start", "message": "Syncing script master..."}) + "\n"
+        _srv.SCRIPT_MASTER_LAST_SYNC_DATE = None
+        await _srv._sync_script_master_daily(force=True)
+        result = {"refreshed": True, "date": datetime.now(_srv.IST).date().isoformat()}
+        yield json.dumps({"type": "complete", "data": result}) + "\n"
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
 # ── Sector Momentum ───────────────────────────────────────────────────────────

@@ -5,10 +5,12 @@ Endpoints: /multibagger/generate, /multibagger/candidates, /multibagger/custom-s
 """
 from __future__ import annotations
 
+import json
 import logging
-from typing import List
+from typing import AsyncGenerator, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from deps import get_current_user
@@ -23,33 +25,56 @@ logger = logging.getLogger(__name__)
 multibagger_router = APIRouter()
 
 
+def _ndjson_line(obj: dict) -> str:
+    return json.dumps(obj, default=str) + "\n"
+
+
 class MultibaggerCustomSearchRequest(BaseModel):
     symbol: str
 
 
-@multibagger_router.post("/multibagger/generate", response_model=MultibaggerGenerateResponse)
+@multibagger_router.post("/multibagger/generate")
 async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
+    """Stream multibagger candidate generation as NDJSON."""
     import server as _srv
 
     updated_user, charged = await _srv._consume_credits(current_user, 2.0)
     refreshed_at = _srv._utc_now_iso()
-    candidates = await _srv._build_multibagger_candidates(refreshed_at)
-    potential_count = len([row for row in candidates if row.is_potential_multibagger])
-    return MultibaggerGenerateResponse(
-        cost_charged=charged,
-        credits_remaining=round(float(updated_user.get("credits", 0)), 2),
-        analysis_refreshed_at=refreshed_at,
-        candidates=candidates,
-        potential_count=potential_count,
-    )
+
+    async def _stream() -> AsyncGenerator[str, None]:
+        yield _ndjson_line({"type": "progress", "phase": "start", "message": "Scanning multibagger universe..."})
+
+        candidates = await _srv._build_multibagger_candidates(refreshed_at)
+        potential_count = len([r for r in candidates if r.is_potential_multibagger])
+
+        yield _ndjson_line({"type": "progress", "phase": "scored", "message": f"Scored {len(candidates)} candidates, {potential_count} potential"})
+
+        response = MultibaggerGenerateResponse(
+            cost_charged=charged,
+            credits_remaining=round(float(updated_user.get("credits", 0)), 2),
+            analysis_refreshed_at=refreshed_at,
+            candidates=candidates,
+            potential_count=potential_count,
+        )
+        yield _ndjson_line({"type": "complete", "data": json.loads(response.model_dump_json())})
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
-@multibagger_router.get("/multibagger/candidates", response_model=List[MultibaggerCandidate])
+@multibagger_router.get("/multibagger/candidates")
 async def get_multibagger_candidates(refresh_nonce: str | None = Query(default=None)):
+    """Stream multibagger candidates as NDJSON."""
     import server as _srv
 
     _ = refresh_nonce
-    return await _srv._build_multibagger_candidates(_srv._utc_now_iso())
+
+    async def _stream() -> AsyncGenerator[str, None]:
+        yield _ndjson_line({"type": "progress", "phase": "start", "message": "Scanning candidates..."})
+        candidates = await _srv._build_multibagger_candidates(_srv._utc_now_iso())
+        data = [json.loads(c.model_dump_json()) for c in candidates]
+        yield _ndjson_line({"type": "complete", "data": data})
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
 @multibagger_router.post("/multibagger/custom-search", response_model=MultibaggerCandidate)
