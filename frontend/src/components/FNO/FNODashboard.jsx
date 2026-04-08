@@ -13,6 +13,8 @@ import { FNOSignalCard } from "./FNOSignalCard";
 import { FNOStickyCards } from "./FNOStickyCards";
 import { FNOEventPopup } from "./FNOEventPopup";
 import { FNOSignalHistory } from "./FNOSignalHistory";
+import { FNOIVAnalytics } from "./FNOIVAnalytics";
+import { FNOMultiTimeframe } from "./FNOMultiTimeframe";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -377,6 +379,18 @@ export function FNODashboard({
       <div className="mt-4 border-t border-slate-700/50 pt-4">
         <h3 className="text-sm font-semibold text-slate-300 mb-2">Signal Performance Tracking</h3>
         <FNOSignalHistory authHeaders={authHeaders} />
+      </div>
+
+      {/* IV Analytics: Cone + Term Structure */}
+      <div className="mt-4 border-t border-slate-700/50 pt-4">
+        <h3 className="text-sm font-semibold text-slate-300 mb-2">IV Analytics</h3>
+        <FNOIVAnalytics authHeaders={authHeaders} />
+      </div>
+
+      {/* Multi-timeframe Analysis */}
+      <div className="mt-4 border-t border-slate-700/50 pt-4">
+        <h3 className="text-sm font-semibold text-slate-300 mb-2">Multi-Timeframe Analysis</h3>
+        <FNOMultiTimeframe authHeaders={authHeaders} />
       </div>
     </section>
   );

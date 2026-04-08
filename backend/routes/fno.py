@@ -664,3 +664,57 @@ async def get_signal_log_endpoint(
     from services.sticky_card_engine import get_signal_log
     log = await get_signal_log(_srv.db, limit=limit, skip=skip)
     return {"log": log, "count": len(log)}
+
+
+# ---------------------------------------------------------------------------
+# IV Analytics: IV Cone + IV Term Structure
+# ---------------------------------------------------------------------------
+
+@fno_router.get("/fno/iv-cone/{symbol}")
+async def get_iv_cone(
+    symbol: str,
+    lookback_days: int = Query(default=365, ge=30, le=730),
+    user=Depends(get_owner_user),
+):
+    """Get IV Cone data with percentile bands for a symbol."""
+    import server as _srv
+    from services.iv_analytics import compute_iv_cone
+    return await compute_iv_cone(_srv.db, symbol.upper(), lookback_days)
+
+
+@fno_router.get("/fno/iv-term-structure/{symbol}")
+async def get_iv_term_structure_endpoint(
+    symbol: str,
+    user=Depends(get_owner_user),
+):
+    """Get latest IV term structure for a symbol."""
+    import server as _srv
+    from services.iv_analytics import get_iv_term_structure
+    return await get_iv_term_structure(_srv.db, symbol.upper())
+
+
+# ---------------------------------------------------------------------------
+# Multi-timeframe Analysis
+# ---------------------------------------------------------------------------
+
+@fno_router.get("/fno/multi-timeframe/{symbol}")
+async def get_multi_timeframe(
+    symbol: str,
+    user=Depends(get_owner_user),
+):
+    """Get detailed multi-timeframe technical analysis for a symbol."""
+    import server as _srv
+    from services.multiframe_analysis import compute_detailed_multiframe
+
+    # Fetch OHLCV from cache or Kite
+    hist_df = await _srv._get_hist_ohlcv(symbol.upper(), period="1y")
+    if hist_df is None or hist_df.empty:
+        return {
+            "symbol": symbol.upper(),
+            "data_available": False,
+            "frames": {},
+            "alignment": "NO_DATA",
+            "message": "No historical OHLCV data available for this symbol.",
+        }
+
+    return compute_detailed_multiframe(hist_df, symbol.upper())
