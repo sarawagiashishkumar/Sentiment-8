@@ -543,3 +543,74 @@ async def get_potential_index_signals(refresh_nonce: str | None = Query(default=
     if rows:
         return rows[:6]
     return rows
+
+
+
+# ===========================================================================
+# Batch 4: Sticky Card & Popup Event Endpoints
+# ===========================================================================
+
+@fno_router.get("/fno/events")
+async def get_popup_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    user=Depends(get_owner_user),
+):
+    """Get unacknowledged popup events (most recent first)."""
+    import server as _srv
+    from services.sticky_card_engine import get_unacknowledged_events
+    return await get_unacknowledged_events(_srv.db, limit=limit)
+
+
+@fno_router.post("/events/acknowledge")
+async def acknowledge_popup_event(
+    event_id: str = Query(...),
+    user=Depends(get_owner_user),
+):
+    """Acknowledge (dismiss) a single popup event."""
+    import server as _srv
+    from services.sticky_card_engine import acknowledge_event
+    ok = await acknowledge_event(_srv.db, event_id)
+    return {"acknowledged": ok}
+
+
+@fno_router.post("/fno/events/acknowledge-all")
+async def acknowledge_all_popup_events(user=Depends(get_owner_user)):
+    """Acknowledge all pending popup events."""
+    import server as _srv
+    from services.sticky_card_engine import acknowledge_all_events
+    count = await acknowledge_all_events(_srv.db)
+    return {"acknowledged_count": count}
+
+
+@fno_router.get("/fno/sticky-cards")
+async def get_sticky_cards(
+    include_terminal: bool = Query(default=False),
+    user=Depends(get_owner_user),
+):
+    """Get all sticky cards (active only by default)."""
+    import server as _srv
+    from services.sticky_card_engine import get_all_cards
+    return await get_all_cards(_srv.db, include_terminal=include_terminal)
+
+
+@fno_router.post("/fno/sticky-cards/{signal_id}/cancel")
+async def cancel_sticky_card(
+    signal_id: str,
+    user=Depends(get_owner_user),
+):
+    """Cancel a sticky card (user-initiated)."""
+    import server as _srv
+    from services.sticky_card_engine import cancel_card
+    ok = await cancel_card(_srv.db, signal_id)
+    if not ok:
+        raise HTTPException(404, "Card not found or already in terminal state")
+    return {"cancelled": True, "signal_id": signal_id}
+
+
+@fno_router.post("/fno/sticky-cards/refresh")
+async def trigger_sticky_card_refresh(user=Depends(get_owner_user)):
+    """Manually trigger a refresh cycle for all active sticky cards."""
+    import server as _srv
+    from services.sticky_card_engine import refresh_sticky_cards
+    result = await refresh_sticky_cards(_srv.db)
+    return result

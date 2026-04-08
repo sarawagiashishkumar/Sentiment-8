@@ -3939,8 +3939,35 @@ async def startup_tasks():
     except Exception as exc:
         logger.warning("MFE/MAE index creation failed (non-fatal): %s", exc)
 
+    # ── Batch 4 NEW: Sticky Cards, Popup Events indexes + news monitor ────
+    try:
+        from services.sticky_card_engine import ensure_indexes as _ensure_sticky_indexes
+        await _ensure_sticky_indexes(db)
+    except Exception as exc:
+        logger.warning("Sticky card index creation failed (non-fatal): %s", exc)
+
+    try:
+        import asyncio as _aio
+        from services.news_sentiment import start_continuous_monitor, stop_continuous_monitor
+        from services.sticky_card_engine import get_watch_list_symbols
+
+        async def _get_monitor_watch_list():
+            return await get_watch_list_symbols(db)
+
+        _monitor = _aio.create_task(
+            start_continuous_monitor(_get_monitor_watch_list)
+        )
+        logger.info("News continuous monitor background task started")
+    except Exception as exc:
+        logger.warning("News continuous monitor start failed (non-fatal): %s", exc)
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    try:
+        from services.news_sentiment import stop_continuous_monitor
+        stop_continuous_monitor()
+    except Exception:
+        pass
     await shutdown_holiday_manager()
     client.close()
