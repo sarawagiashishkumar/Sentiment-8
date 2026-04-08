@@ -2117,6 +2117,20 @@ export default function App() {
                                         )}
                                       </div>
                                     )}
+                                    {(signal.iv_rank_52w !== null || signal.atm_iv !== null) && (
+                                      <div className="mt-1 flex flex-wrap gap-2">
+                                        {signal.atm_iv !== null && (
+                                          <span className="rounded px-1.5 py-0.5 text-xs font-semibold bg-violet-900/50 text-violet-300" data-testid={`atm-iv-${signal.script?.toLowerCase()}`}>
+                                            ATM IV: {signal.atm_iv?.toFixed(1)}%
+                                          </span>
+                                        )}
+                                        {signal.iv_rank_52w !== null && (
+                                          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${signal.iv_rank_52w >= 70 ? 'bg-red-900/50 text-red-300' : signal.iv_rank_52w <= 30 ? 'bg-green-900/50 text-green-300' : 'bg-zinc-800/50 text-zinc-300'}`} data-testid={`iv-rank-52w-${signal.script?.toLowerCase()}`}>
+                                            IV Rank 52W: {signal.iv_rank_52w?.toFixed(1)}%
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
                                     {String(signal.strategy || "").toUpperCase().includes("CAUTION") ? (
                                       <p className="font-semibold text-amber-200">⚠ Caution: Probable setup only. Use strict stop-loss and position sizing.</p>
                                     ) : null}
@@ -2319,6 +2333,20 @@ export default function App() {
                                   {trade.underlying_bias_score !== null && (
                                     <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${trade.underlying_bias_score >= 0 ? 'bg-blue-900/50 text-blue-300' : 'bg-orange-900/50 text-orange-300'}`}>
                                       Bias: {trade.underlying_bias_score?.toFixed(2)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {(trade.iv_rank_52w !== null || trade.atm_iv !== null) && (
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  {trade.atm_iv !== null && (
+                                    <span className="rounded px-1.5 py-0.5 text-xs font-semibold bg-violet-900/50 text-violet-300" data-testid={`atm-iv-top4-${trade.script?.toLowerCase()}`}>
+                                      ATM IV: {trade.atm_iv?.toFixed(1)}%
+                                    </span>
+                                  )}
+                                  {trade.iv_rank_52w !== null && (
+                                    <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${trade.iv_rank_52w >= 70 ? 'bg-red-900/50 text-red-300' : trade.iv_rank_52w <= 30 ? 'bg-green-900/50 text-green-300' : 'bg-zinc-800/50 text-zinc-300'}`} data-testid={`iv-rank-52w-top4-${trade.script?.toLowerCase()}`}>
+                                      IV Rank 52W: {trade.iv_rank_52w?.toFixed(1)}%
                                     </span>
                                   )}
                                 </div>

@@ -233,6 +233,8 @@ class FNOSignalResponse(BaseModel):
     # Option chain analytics (computed from live Kite OI / IV / Gamma data)
     max_pain: float | None = None
     iv_rank: float | None = None       # IV percentile within current chain (0-100 proxy)
+    iv_rank_52w: float | None = None   # True 52-week IV percentile (from iv_history)
+    atm_iv: float | None = None        # Current ATM implied volatility
     oi_buildup: str | None = None      # LONG_BUILDUP | SHORT_BUILDUP | SHORT_COVERING | LONG_UNWINDING | NEUTRAL
     gex: float | None = None           # Net gamma exposure (scaled, CE-minus-PE)
     # Step 4: Position sizing annotation (additive, does NOT block signals)

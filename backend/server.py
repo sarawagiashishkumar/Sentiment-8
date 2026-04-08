@@ -149,6 +149,11 @@ from services.data_verifier import (
     get_market_session_status,
 )
 from services.sector_momentum import compute_sector_momentum_dashboard
+from services.iv_history import (
+    capture_atm_iv as _capture_atm_iv,
+    ensure_indexes as _ensure_iv_indexes,
+    get_iv_stats_52w,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -1490,6 +1495,7 @@ def compute_option_chain_analytics(
         "max_pain":  float(max_pain_strike) if max_pain_strike is not None else None,
         "pcr":       pcr,
         "iv_rank":   iv_rank,
+        "atm_iv":    round(atm_iv, 4) if atm_iv > 0 else None,
         "gex":       gex,
         "oi_buildup": oi_buildup,
     }
@@ -3910,6 +3916,12 @@ async def startup_tasks():
         logger.info("News sentiment cache primed on startup")
     except Exception as exc:
         logger.warning("News cache prime failed (non-fatal): %s", exc)
+
+    # ── IV History indexes ────────────────────────────────────────────────
+    try:
+        await _ensure_iv_indexes(db)
+    except Exception as exc:
+        logger.warning("IV history index creation failed (non-fatal): %s", exc)
 
 
 @app.on_event("shutdown")

@@ -69,6 +69,7 @@ from services.backtest_engine import (
     fetch_strategy_backtest,
     is_strategy_enabled as is_backtest_enabled,
 )
+from services.iv_history import capture_atm_iv, get_iv_stats_52w
 from services.research_engine import (
     compute_index_constituent_bias,
     compute_weighted_breadth,
@@ -650,6 +651,8 @@ async def build_fno_signal(
     # ── Option chain analytics (Max Pain, IV Rank, GEX, OI Buildup) ────────
     max_pain: float | None = None,
     iv_rank: float | None = None,
+    iv_rank_52w: float | None = None,
+    atm_iv: float | None = None,
     oi_buildup: str | None = None,
     gex: float | None = None,
 ) -> FNOSignalResponse:
@@ -1492,6 +1495,8 @@ async def build_fno_signal(
         analysis_refreshed_at=refreshed_at,
         max_pain=max_pain,
         iv_rank=iv_rank,
+        iv_rank_52w=iv_rank_52w,
+        atm_iv=atm_iv,
         oi_buildup=oi_buildup,
         gex=gex,
     )
@@ -1766,6 +1771,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     _s = _srv()
     IST = _s.IST
     LOT_SIZE_MAP = _s.LOT_SIZE_MAP
+    db = _s.db
     _get_stock_core_cached = _s._get_stock_core_cached
     market_data_client = _s.market_data_client
     get_minutes_to_expiry = _s.get_minutes_to_expiry
@@ -1837,6 +1843,17 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         _iv_rank    = _chain_analytics.get("iv_rank")
         _gex        = _chain_analytics.get("gex")
         _oi_buildup = _chain_analytics.get("oi_buildup")
+        _atm_iv     = _chain_analytics.get("atm_iv")
+
+        # ── 52-Week IV Rank enrichment ──────────────────────────────────────
+        _iv_rank_52w = None
+        if _atm_iv and _atm_iv > 0:
+            try:
+                await capture_atm_iv(db, index_name, _atm_iv)
+                _iv_52w = await get_iv_stats_52w(db, index_name, _atm_iv)
+                _iv_rank_52w = _iv_52w.get("iv_rank_52w")
+            except Exception:
+                pass  # Non-fatal: 52-week IV is enrichment only
 
         # ── Fetch India VIX ──────────────────────────────────────────────────
         india_vix = await _get_india_vix()
@@ -1872,6 +1889,8 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
                     fundamental={},  # Index has no individual fundamental data
                     max_pain=_max_pain,
                     iv_rank=_iv_rank,
+                    iv_rank_52w=_iv_rank_52w,
+                    atm_iv=_atm_iv,
                     oi_buildup=_oi_buildup,
                     gex=_gex,
                 )
@@ -2159,10 +2178,20 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
             except Exception:
                 pass
             _stock_analytics: dict = {}
+            _stock_iv_rank_52w = None
             if _ana_kite_map:
                 _stock_analytics = compute_option_chain_analytics(
                     _ana_contracts, _ana_kite_map, core.ltp, step
                 )
+                # ── 52-Week IV Rank for stock ────────────────────────
+                _stock_atm_iv = _stock_analytics.get("atm_iv")
+                if _stock_atm_iv and _stock_atm_iv > 0:
+                    try:
+                        await capture_atm_iv(db, symbol, _stock_atm_iv)
+                        _iv_52 = await get_iv_stats_52w(db, symbol, _stock_atm_iv)
+                        _stock_iv_rank_52w = _iv_52.get("iv_rank_52w")
+                    except Exception:
+                        pass
 
             symbol_rows: list[FNOSignalResponse] = []
             for option_type in ["CE", "PE"]:
@@ -2208,6 +2237,8 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         fundamental=fundamental,
                         max_pain=_stock_analytics.get("max_pain"),
                         iv_rank=_stock_analytics.get("iv_rank"),
+                        iv_rank_52w=_stock_iv_rank_52w,
+                        atm_iv=_stock_analytics.get("atm_iv"),
                         oi_buildup=_stock_analytics.get("oi_buildup"),
                         gex=_stock_analytics.get("gex"),
                     )

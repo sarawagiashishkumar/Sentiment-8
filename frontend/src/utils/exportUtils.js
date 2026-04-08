@@ -52,6 +52,8 @@ export const buildExportRow = (signal) => {
     "T2%": t2Pct,
     "T2 Profit \u20B9": t2Profit,
     Conf: conf,
+    "ATM IV": signal.atm_iv != null ? signal.atm_iv.toFixed(1) + "%" : "-",
+    "IV Rank 52W": signal.iv_rank_52w != null ? signal.iv_rank_52w.toFixed(1) + "%" : "-",
     "Best Exit \u20B9": bestExitLabel,
   };
 };
