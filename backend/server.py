@@ -3923,6 +3923,13 @@ async def startup_tasks():
     except Exception as exc:
         logger.warning("IV history index creation failed (non-fatal): %s", exc)
 
+    # ── Regime History indexes ────────────────────────────────────────────
+    try:
+        from services.regime_engine import ensure_indexes as _ensure_regime_indexes
+        await _ensure_regime_indexes(db)
+    except Exception as exc:
+        logger.warning("Regime history index creation failed (non-fatal): %s", exc)
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

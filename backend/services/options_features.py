@@ -238,3 +238,69 @@ def compute_enhanced_option_features(
         result["moneyness_pct"] = None
 
     return result
+
+
+# Spread threshold for liquidity flag (spec Section 3)
+SPREAD_THRESHOLD = 2.0  # percent
+
+
+def compute_liquidity_flag(
+    bid_ask_spread_pct: float | None,
+    volume: int = 0,
+    oi: int = 0,
+) -> str:
+    """
+    Classify option liquidity.
+    Returns "OK" if spread < SPREAD_THRESHOLD and reasonable volume/OI,
+    else "ILLIQUID".
+    """
+    if bid_ask_spread_pct is None:
+        return "ILLIQUID"
+    if bid_ask_spread_pct >= SPREAD_THRESHOLD:
+        return "ILLIQUID"
+    if volume <= 0 and oi <= 0:
+        return "ILLIQUID"
+    return "OK"
+
+
+def compute_pcr(
+    chain_data: list[dict] | None,
+    strike: float | None = None,
+) -> dict[str, Any]:
+    """
+    Compute Put-Call Ratio from option chain data.
+
+    Returns:
+      pcr_series: total PUT OI / total CALL OI across all strikes
+      pcr_strike: PUT OI / CALL OI at the given strike (if provided)
+    """
+    if not chain_data:
+        return {"pcr_series": None, "pcr_strike": None}
+
+    total_put_oi = 0
+    total_call_oi = 0
+    strike_put_oi = 0
+    strike_call_oi = 0
+
+    for item in chain_data:
+        oi_val = item.get("oi", 0) or 0
+        opt_type = item.get("option_type", "").upper()
+        item_strike = item.get("strike")
+
+        if opt_type == "PE":
+            total_put_oi += oi_val
+            if strike is not None and item_strike == strike:
+                strike_put_oi += oi_val
+        elif opt_type == "CE":
+            total_call_oi += oi_val
+            if strike is not None and item_strike == strike:
+                strike_call_oi += oi_val
+
+    pcr_series = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else None
+    pcr_strike = round(strike_put_oi / strike_call_oi, 2) if strike_call_oi > 0 else None
+
+    return {
+        "pcr_series": pcr_series,
+        "pcr_strike": pcr_strike,
+    }
+

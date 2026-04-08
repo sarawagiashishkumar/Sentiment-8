@@ -74,6 +74,9 @@ from services.research_engine import (
     compute_index_constituent_bias,
     compute_weighted_breadth,
 )
+from services.constituent_engine import compute_breadth_metrics, shared_technical_pipeline
+from services.regime_engine import regime_classify, store_regime
+from services.options_features import compute_liquidity_flag, compute_pcr
 from data.fno_contracts import get_fno_contract
 
 logger = logging.getLogger(__name__)
@@ -92,6 +95,199 @@ def _srv():
 def clamp(value: float, lower: float, upper: float) -> float:
     """Clamp a value between lower and upper bounds."""
     return max(lower, min(upper, value))
+
+
+
+# ── BATCH 1: Feature Wrapper Functions (Section 2+3 of Spec v2.0) ─────────────
+
+async def compute_underlying_features(symbol: str) -> dict:
+    """
+    Compute underlying features per spec Section 3: UNDERLYING_FEATURES.
+    Wraps shared_technical_pipeline and adds nearest support/resistance.
+    """
+    _s = _srv()
+
+    pipeline = await shared_technical_pipeline(symbol)
+    if not pipeline.get("available"):
+        return {"symbol": symbol, "available": False}
+
+    # Nearest support/resistance from recent swing highs/lows
+    support, resistance = None, None
+    try:
+        ohlcv = await _s._get_hist_ohlcv(symbol, interval="day", candles=60)
+        if ohlcv and ohlcv.get("highs") and ohlcv.get("lows"):
+            highs = ohlcv["highs"]
+            lows = ohlcv["lows"]
+            closes = ohlcv["closes"]
+            current = closes[-1] if closes else None
+            if current:
+                # Swing lows below current = support candidates
+                recent_lows = sorted(set(lows[-20:]))
+                supports = [l for l in recent_lows if l < current]
+                if supports:
+                    support = max(supports)  # nearest support below
+                # Swing highs above current = resistance candidates
+                recent_highs = sorted(set(highs[-20:]), reverse=True)
+                resistances = [h for h in recent_highs if h > current]
+                if resistances:
+                    resistance = min(resistances)  # nearest resistance above
+    except Exception:
+        pass
+
+    pipeline["nearest_support"] = round(support, 2) if support else None
+    pipeline["nearest_resistance"] = round(resistance, 2) if resistance else None
+    return pipeline
+
+
+async def compute_option_features_full(
+    option_snapshot: dict | None,
+    underlying_ltp: float | None = None,
+    strike: float | None = None,
+    option_type: str = "CE",
+    chain_ivs: list[float] | None = None,
+    chain_data: list[dict] | None = None,
+) -> dict:
+    """
+    Compute full option features per spec Section 3: OPTION_FEATURES.
+    Wraps compute_enhanced_option_features and adds liquidity_flag + PCR.
+    """
+    from services.options_features import compute_enhanced_option_features
+
+    features = compute_enhanced_option_features(
+        option_snapshot, underlying_ltp, strike, option_type, chain_ivs,
+    )
+    if not features.get("available"):
+        features["liquidity_flag"] = "ILLIQUID"
+        features["pcr_series"] = None
+        features["pcr_strike"] = None
+        return features
+
+    # Liquidity flag
+    spread_pct = features.get("spread_data", {}).get("spread_pct")
+    features["liquidity_flag"] = compute_liquidity_flag(
+        spread_pct, features.get("volume", 0), features.get("oi", 0),
+    )
+
+    # PCR
+    pcr = compute_pcr(chain_data, strike)
+    features["pcr_series"] = pcr.get("pcr_series")
+    features["pcr_strike"] = pcr.get("pcr_strike")
+
+    return features
+
+
+async def compute_order_flow_features(symbol: str) -> dict:
+    """
+    Compute order flow features per spec Section 3: ORDER_FLOW.
+    Uses Kite order book depth for OBI and intraday bars for volume_delta.
+    """
+    _s = _srv()
+    from services.intraday_features import (
+        compute_order_book_imbalance,
+        compute_volume_delta,
+        classify_flow_band,
+    )
+    import pandas as pd
+
+    result = {"symbol": symbol, "obi": 0.0, "volume_delta": 0.0, "flow_band": "NeutralFlow"}
+
+    # OBI from Kite order book (if available)
+    try:
+        snapshot = await _s._fetch_live_option_snapshot(symbol)
+        if snapshot:
+            depth = snapshot.get("depth", {})
+            buy_depths = depth.get("buy", [])
+            sell_depths = depth.get("sell", [])
+            bid_vols = [d.get("quantity", 0) for d in buy_depths[:5]]
+            ask_vols = [d.get("quantity", 0) for d in sell_depths[:5]]
+            obi_result = compute_order_book_imbalance(bid_vols, ask_vols)
+            result["obi"] = obi_result.get("obi", 0.0)
+            result["total_bid_volume"] = obi_result.get("total_bid_volume", 0)
+            result["total_ask_volume"] = obi_result.get("total_ask_volume", 0)
+    except Exception:
+        pass
+
+    # Volume delta from intraday bars
+    try:
+        ohlcv = await _s._get_hist_ohlcv(symbol, interval="minute", candles=60)
+        if ohlcv and ohlcv.get("closes"):
+            bars_df = pd.DataFrame({
+                "Open": ohlcv["opens"],
+                "Close": ohlcv["closes"],
+                "Volume": ohlcv["volumes"],
+            })
+            vd = compute_volume_delta(bars_df)
+            result["volume_delta"] = vd.get("volume_delta", 0.0)
+            result["buy_volume"] = vd.get("buy_volume", 0)
+            result["sell_volume"] = vd.get("sell_volume", 0)
+    except Exception:
+        pass
+
+    # Classify flow band
+    result["flow_band"] = classify_flow_band(
+        result["obi"], result["volume_delta"],
+    )
+
+    return result
+
+
+async def log_batch1_features(
+    index_name: str,
+    db,
+    vix: float | None = None,
+    adx: float | None = None,
+    hv_20d: float | None = None,
+) -> dict:
+    """
+    BATCH 1 LOG-ONLY: Compute and log all new feature layers for audit.
+    Does NOT change scoring. Returns the full feature audit dict.
+    """
+    logger.info(f"[BATCH1-AUDIT] Computing features for {index_name}")
+
+    # 1. Breadth metrics
+    breadth = await compute_breadth_metrics(db, index_name)
+    logger.info(
+        f"[BATCH1-AUDIT] {index_name} breadth: score={breadth.get('breadth_score')}, "
+        f"uptrend_wt={breadth.get('pct_weight_in_uptrend')}%, "
+        f"vwap_wt={breadth.get('pct_weight_above_vwap')}%, "
+        f"scanned={breadth.get('constituents_scanned')}"
+    )
+
+    # 2. Regime classification
+    regime = regime_classify(
+        india_vix=vix,
+        realized_hv_20d=hv_20d,
+        adx_14=adx,
+        breadth_metrics=breadth,
+    )
+    logger.info(
+        f"[BATCH1-AUDIT] {index_name} regime: {regime['regime_label']} "
+        f"(VIX={regime['vix_value']}, ADX={regime['adx_value']}, "
+        f"conf={regime['confidence']})"
+    )
+
+    # 3. Store regime for audit trail
+    await store_regime(db, index_name, regime)
+
+    # 4. Top contributors
+    top_bull = breadth.get("top3_bullish", [])
+    top_bear = breadth.get("top3_bearish", [])
+    logger.info(
+        f"[BATCH1-AUDIT] {index_name} top3 bullish: "
+        f"{[c['symbol'] for c in top_bull]}"
+    )
+    logger.info(
+        f"[BATCH1-AUDIT] {index_name} top3 bearish: "
+        f"{[c['symbol'] for c in top_bear]}"
+    )
+
+    return {
+        "index_name": index_name,
+        "breadth": breadth,
+        "regime": regime,
+        "top3_bullish": top_bull,
+        "top3_bearish": top_bear,
+    }
 
 
 # ── Pure utility functions ─────────────────────────────────────────────────────
@@ -1807,6 +2003,32 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         )
     if stock.ltp is None:
         raise HTTPException(status_code=502, detail=f"{index_name} spot unavailable")
+
+    # ── BATCH 1: LOG-ONLY feature audit ──────────────────────────────────
+    try:
+        _vix = await _get_india_vix()
+        _adx_for_regime = None
+        try:
+            _hist = await _get_hist_ohlcv(index_name, interval="day", candles=30)
+            if _hist and _hist.get("closes") and len(_hist["closes"]) >= 14:
+                from services.indicators import compute_atr_based_fno_targets
+                import pandas as pd
+                _h_df = pd.DataFrame({"High": _hist["highs"], "Low": _hist["lows"], "Close": _hist["closes"]})
+                _dx_series = pd.Series(dtype=float)
+                for i in range(1, len(_h_df)):
+                    _plus_dm = max(_h_df["High"].iloc[i] - _h_df["High"].iloc[i-1], 0)
+                    _minus_dm = max(_h_df["Low"].iloc[i-1] - _h_df["Low"].iloc[i], 0)
+                    _tr = max(_h_df["High"].iloc[i] - _h_df["Low"].iloc[i],
+                             abs(_h_df["High"].iloc[i] - _h_df["Close"].iloc[i-1]),
+                             abs(_h_df["Low"].iloc[i] - _h_df["Close"].iloc[i-1]))
+                    _dx_series.loc[i] = abs(_plus_dm - _minus_dm) / max(_tr, 0.01) * 100
+                if len(_dx_series) >= 14:
+                    _adx_for_regime = float(_dx_series.rolling(14).mean().iloc[-1])
+        except Exception:
+            pass
+        await log_batch1_features(index_name, db, vix=_vix, adx=_adx_for_regime)
+    except Exception as exc:
+        logger.debug(f"[BATCH1] Feature audit skipped: {exc}")
 
     step = 50 if index_name == "NIFTY" else 100
     atm = round(stock.ltp / step) * step
