@@ -173,6 +173,8 @@ export default function App() {
         role: response.data.role, credits: response.data.credits,
         user_key: response.data.user_key, username: response.data.username,
         admin_exempt: response.data.admin_exempt,
+        fno_budget: response.data.fno_budget || 500000,
+        account_risk_pct: response.data.account_risk_pct || 2.0,
       });
       setCurrentPage("home");
       setLoginUsername("");
@@ -227,7 +229,7 @@ export default function App() {
 
         {currentPage === "fno" ? (
           <FNODashboard
-            authHeaders={authHeaders} syncCredits={syncCredits} me={me}
+            authHeaders={authHeaders} syncCredits={syncCredits} me={me} setMe={setMe}
             customPositions={customPositions} loadCustomPositions={loadCustomPositions}
             alertSoundEnabled={alertSoundEnabled} enableAlertSound={enableAlertSound}
             playAlertSound={playAlertSound}

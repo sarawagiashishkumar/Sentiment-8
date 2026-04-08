@@ -31,45 +31,39 @@ def compute_position_size(
     entry_price: float | None = None,
     max_risk_per_trade_pct: float = DEFAULT_MAX_RISK_PER_TRADE_PCT,
     max_allocation_pct: float = DEFAULT_MAX_ALLOCATION_PCT,
+    atr14: float | None = None,
+    account_risk_pct: float | None = None,
 ) -> dict[str, Any]:
     """
     Compute position sizing based on risk parameters.
 
-    Inputs:
-        user_budget: Total portfolio/capital available (in Rs)
-        option_premium: Current premium per unit of the option
-        lot_size: NSE lot size for the instrument
-        sl_price: Stop-loss price per unit (optional)
-        entry_price: Entry/buy price per unit (defaults to option_premium)
-        max_risk_per_trade_pct: Max portfolio risk per trade (default 2%)
-        max_allocation_pct: Max portfolio allocation for one trade (default 10%)
-
-    Output:
-        {
-            lots_allowed: int,
-            capital_required_per_lot: float,
-            total_capital_required: float,
-            risk_per_lot: float,
-            total_risk_amount: float,
-            risk_pct_of_portfolio: float,
-            not_affordable: bool,
-            sizing_reason: str,
-        }
+    Enhanced with:
+      - lots_atr_method: ATR14-based lot sizing (risk / (ATR14 * lot_size))
+      - lots_fixed_risk: Fixed-risk lot sizing using account_risk_pct
+      - max_risk_Rs: Maximum risk in Rupees based on account_risk_pct
     """
+    _zero_result = {
+        "lots_allowed": 0,
+        "capital_required_per_lot": 0.0,
+        "total_capital_required": 0.0,
+        "risk_per_lot": 0.0,
+        "total_risk_amount": 0.0,
+        "risk_pct_of_portfolio": 0.0,
+        "not_affordable": True,
+        "sizing_reason": "Invalid inputs (zero budget, premium, or lot size)",
+        "lots_atr_method": 0,
+        "lots_fixed_risk": 0,
+        "max_risk_Rs": 0.0,
+    }
     if user_budget <= 0 or option_premium <= 0 or lot_size <= 0:
-        return {
-            "lots_allowed": 0,
-            "capital_required_per_lot": 0.0,
-            "total_capital_required": 0.0,
-            "risk_per_lot": 0.0,
-            "total_risk_amount": 0.0,
-            "risk_pct_of_portfolio": 0.0,
-            "not_affordable": True,
-            "sizing_reason": "Invalid inputs (zero budget, premium, or lot size)",
-        }
+        return _zero_result
 
     ep = entry_price if entry_price is not None else option_premium
     capital_per_lot = ep * lot_size
+
+    # Effective risk percentage (prefer user's account_risk_pct, fallback to max_risk_per_trade_pct)
+    _effective_risk_pct = account_risk_pct if account_risk_pct is not None else max_risk_per_trade_pct
+    max_risk_Rs = round(user_budget * (_effective_risk_pct / 100), 2)
 
     # Max lots by allocation limit
     max_alloc = user_budget * (max_allocation_pct / 100)
@@ -78,20 +72,28 @@ def compute_position_size(
     # Max lots by risk limit (SL-based)
     sl_dist_per_unit = abs(ep - sl_price) if sl_price is not None and sl_price > 0 else ep * 0.15
     risk_per_lot = sl_dist_per_unit * lot_size
-    max_risk = user_budget * (max_risk_per_trade_pct / 100)
-    lots_by_risk = max(0, int(max_risk / risk_per_lot)) if risk_per_lot > 0 else 0
+    lots_by_risk = max(0, int(max_risk_Rs / risk_per_lot)) if risk_per_lot > 0 else 0
 
     # Final: minimum of the two constraints
     lots_allowed = min(lots_by_allocation, lots_by_risk)
 
+    # ── ATR14-based lot sizing ──
+    lots_atr_method = 0
+    if atr14 and atr14 > 0 and lot_size > 0:
+        atr_risk_per_lot = atr14 * lot_size
+        lots_atr_method = max(0, int(max_risk_Rs / atr_risk_per_lot)) if atr_risk_per_lot > 0 else 0
+
+    # ── Fixed-risk lot sizing ──
+    lots_fixed_risk = 0
+    if risk_per_lot > 0:
+        lots_fixed_risk = max(0, int(max_risk_Rs / risk_per_lot))
+
     # Ensure at least 1 lot is checked for affordability
-    total_capital = capital_per_lot * max(lots_allowed, 1)
     total_risk = risk_per_lot * max(lots_allowed, 1)
     risk_pct = (total_risk / user_budget * 100) if user_budget > 0 else 0.0
 
     not_affordable = capital_per_lot > user_budget
     if lots_allowed == 0 and not not_affordable:
-        # Can afford 1 lot but risk constraint blocks it
         lots_allowed = 0
         sizing_reason = "Risk constraint limits to 0 lots; consider reducing risk per trade"
     elif not_affordable:
@@ -109,6 +111,9 @@ def compute_position_size(
         "risk_pct_of_portfolio": round(risk_pct, 2),
         "not_affordable": not_affordable,
         "sizing_reason": sizing_reason,
+        "lots_atr_method": lots_atr_method,
+        "lots_fixed_risk": lots_fixed_risk,
+        "max_risk_Rs": max_risk_Rs,
     }
 
 

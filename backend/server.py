@@ -535,6 +535,7 @@ from models import (
     CustomPositionSellRequest, CustomPositionResponse,
     CustomPositionCreateResponse, ScriptSearchResult,
     MacroEventsUpdateRequest, MonitoringEvent,
+    UserSettingsUpdate,
 )
 
 def clamp(value: float, lower: float, upper: float) -> float:
@@ -3720,6 +3721,8 @@ async def auth_access(payload: AccessRequest):
         user_key=user["user_key"],
         username=user["username"],
         admin_exempt=_is_credit_exempt(user),
+        fno_budget=float(user.get("fno_budget", 500000)),
+        account_risk_pct=float(user.get("account_risk_pct", 2.0)),
     )
 
 
@@ -3743,7 +3746,38 @@ async def auth_me(current_user: dict = Depends(get_current_user)):
         user_key=current_user["user_key"],
         username=current_user["username"],
         admin_exempt=_is_credit_exempt(current_user),
+        fno_budget=float(current_user.get("fno_budget", 500000)),
+        account_risk_pct=float(current_user.get("account_risk_pct", 2.0)),
     )
+
+
+@api_router.patch("/auth/settings")
+async def update_user_settings(
+    payload: UserSettingsUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update user's F&O trading settings (fno_budget, account_risk_pct)."""
+    update_fields = {}
+    if payload.fno_budget is not None:
+        if payload.fno_budget < 0:
+            raise HTTPException(status_code=400, detail="Budget must be non-negative")
+        update_fields["fno_budget"] = payload.fno_budget
+    if payload.account_risk_pct is not None:
+        if not (0 < payload.account_risk_pct <= 100):
+            raise HTTPException(status_code=400, detail="Risk % must be between 0 and 100")
+        update_fields["account_risk_pct"] = payload.account_risk_pct
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    await db.app_users.update_one(
+        {"user_key": current_user["user_key"]},
+        {"$set": update_fields},
+    )
+    updated = await _get_user_by_key(current_user["user_key"])
+    return {
+        "ok": True,
+        "fno_budget": float(updated.get("fno_budget", 500000)),
+        "account_risk_pct": float(updated.get("account_risk_pct", 2.0)),
+    }
 
 
 

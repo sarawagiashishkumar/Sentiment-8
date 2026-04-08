@@ -8,6 +8,7 @@ market_data_client, etc.) to avoid circular imports.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import math
 import os
@@ -16,6 +17,10 @@ from datetime import datetime, time, timedelta
 from typing import Any, Literal
 
 from fastapi import HTTPException
+
+# Context variables for per-request user settings (set in route handlers)
+_ctx_user_budget = contextvars.ContextVar("user_budget", default=None)
+_ctx_account_risk_pct = contextvars.ContextVar("account_risk_pct", default=None)
 
 from models import (
     FNOContract,
@@ -1915,13 +1920,18 @@ async def build_fno_signal(
 
     # ── Step 4: Position Sizing Annotation (additive, does not block signals) ──
     try:
-        _user_budget = float(os.environ.get("DEFAULT_USER_BUDGET", "500000"))
+        _ctx_budget = _ctx_user_budget.get()
+        _ctx_risk = _ctx_account_risk_pct.get()
+        _user_budget = float(_ctx_budget) if _ctx_budget is not None else float(os.environ.get("DEFAULT_USER_BUDGET", "500000"))
+        _acct_risk = float(_ctx_risk) if _ctx_risk is not None else None
         _sizing = compute_position_size(
             user_budget=_user_budget,
             option_premium=option_ltp,
             lot_size=contract.lot_size,
             sl_price=stop_loss,
             entry_price=best_budget_entry or entry_price,
+            atr14=underlying_atr,
+            account_risk_pct=_acct_risk,
         )
         _sig_resp.not_affordable = _sizing["not_affordable"]
         _sig_resp.sizing_info = _sizing

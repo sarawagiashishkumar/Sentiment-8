@@ -35,6 +35,8 @@ class AccessResponse(BaseModel):
     user_key: str
     username: str
     admin_exempt: bool
+    fno_budget: float = 500000.0
+    account_risk_pct: float = 2.0
 
 
 class MeResponse(BaseModel):
@@ -43,6 +45,13 @@ class MeResponse(BaseModel):
     user_key: str
     username: str
     admin_exempt: bool
+    fno_budget: float = 500000.0
+    account_risk_pct: float = 2.0
+
+
+class UserSettingsUpdate(BaseModel):
+    fno_budget: float | None = None
+    account_risk_pct: float | None = None
 
 
 class AdminUserView(BaseModel):

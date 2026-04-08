@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import axios from "axios";
+import { Download, RefreshCw, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { formatNumber, formatTime, formatExpiryDate, directionBadge } from "@/utils/formatters";
 import { collectAllFnoSignals, buildExportRow, exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG, exportFnoAsPDF, exportFnoAsWord } from "@/utils/exportUtils";
 import { readNDJSONStream } from "@/components/Shared/NDJSONStreamConsumer";
@@ -14,7 +16,7 @@ import { FNOEventPopup } from "./FNOEventPopup";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export function FNODashboard({
-  authHeaders, syncCredits, me,
+  authHeaders, syncCredits, me, setMe,
   customPositions, loadCustomPositions,
   alertSoundEnabled, enableAlertSound, playAlertSound,
 }) {
@@ -24,6 +26,24 @@ export function FNODashboard({
   const [fnoProgress, setFnoProgress] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportTableRef = useRef(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [budgetInput, setBudgetInput] = useState(String(me?.fno_budget || 500000));
+  const [riskInput, setRiskInput] = useState(String(me?.account_risk_pct || 2.0));
+  const [settingsSaving, setSettingsSaving] = useState(false);
+
+  const saveSettings = async () => {
+    const budget = Number(budgetInput);
+    const risk = Number(riskInput);
+    if (!budget || budget < 0) return;
+    if (!risk || risk <= 0 || risk > 100) return;
+    setSettingsSaving(true);
+    try {
+      await axios.patch(`${API}/auth/settings`, { fno_budget: budget, account_risk_pct: risk }, { headers: authHeaders });
+      setMe((prev) => prev ? { ...prev, fno_budget: budget, account_risk_pct: risk } : prev);
+      setSettingsOpen(false);
+    } catch { /* silent */ }
+    finally { setSettingsSaving(false); }
+  };
 
   // Close export menu on outside click
   useEffect(() => {
@@ -69,13 +89,34 @@ export function FNODashboard({
     <section className="space-y-6" data-testid="fno-page">
       <Card className="result-card border-slate-800 bg-slate-950/70">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-          <CardTitle className="text-white">F&O Projections</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-white">F&O Projections</CardTitle>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSettingsOpen((v) => !v)} className="h-7 w-7 p-0 text-slate-400 hover:text-cyan-300" data-testid="fno-settings-toggle">
+              <Settings size={15} />
+            </Button>
+            <span className="text-xs text-slate-500" data-testid="fno-budget-display">Budget: ₹{Number(me?.fno_budget || 500000).toLocaleString("en-IN")} | Risk: {me?.account_risk_pct || 2}%</span>
+          </div>
           <Button type="button" onClick={() => generateFnoProjection()} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="fno-generate-button">
             <RefreshCw size={16} className={fnoLoading ? "animate-spin" : ""} />
             {fnoLoading ? (fnoProgress || "Generating...") : "Generate F&O Projections (-2)"}
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
+          {settingsOpen && (
+            <div className="flex flex-wrap items-end gap-3 rounded-md border border-slate-700 bg-slate-900/80 p-3" data-testid="fno-settings-panel">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400">Account Size (₹)</label>
+                <Input type="number" min="0" step="1000" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} className="w-40 border-slate-700 bg-slate-800 text-slate-100" data-testid="fno-budget-input" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400">Risk Per Trade (%)</label>
+                <Input type="number" min="0.1" max="100" step="0.1" value={riskInput} onChange={(e) => setRiskInput(e.target.value)} className="w-28 border-slate-700 bg-slate-800 text-slate-100" data-testid="fno-risk-input" />
+              </div>
+              <Button type="button" onClick={saveSettings} disabled={settingsSaving} className="h-9 bg-cyan-600 text-white hover:bg-cyan-500" data-testid="fno-settings-save">
+                {settingsSaving ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          )}
           <FNOStickyCards
             customPositions={customPositions}
             loadCustomPositions={loadCustomPositions}

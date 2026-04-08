@@ -76,11 +76,18 @@ async def generate_fno_signals(
     from services.technical_core import compute_full_technical_snapshot
     from services.macro_context import classify_market_regime_enhanced
     from services.data_verifier import get_market_session_status
+    from services.fno_signal_engine import _ctx_user_budget, _ctx_account_risk_pct
     from datetime import datetime
 
     # Consume credits upfront (fast)
     updated_user, charged = await _srv._consume_credits(current_user, 2)
     refreshed_at = _srv._utc_now_iso()
+
+    # Set user's budget/risk context for signal engine position sizing
+    _user_budget = float(current_user.get("fno_budget", 500000))
+    _user_risk_pct = float(current_user.get("account_risk_pct", 2.0))
+    _ctx_user_budget.set(_user_budget)
+    _ctx_account_risk_pct.set(_user_risk_pct)
 
     async def _stream_generate() -> AsyncGenerator[str, None]:
         _now_ist = datetime.now(_srv.IST)
@@ -473,9 +480,11 @@ async def calculate_position_sizing(
     sl_price: float | None = None,
     entry_price: float | None = None,
     max_risk_pct: float = 2.0,
+    atr14: float | None = None,
     current_user: dict = Depends(get_current_user),
 ):
-    """Calculate position sizing for a given trade setup."""
+    """Calculate position sizing for a given trade setup (enhanced with ATR14)."""
+    _acct_risk = float(current_user.get("account_risk_pct", max_risk_pct))
     result = compute_position_size(
         user_budget=user_budget,
         option_premium=option_premium,
@@ -483,6 +492,8 @@ async def calculate_position_sizing(
         sl_price=sl_price,
         entry_price=entry_price,
         max_risk_per_trade_pct=max_risk_pct,
+        atr14=atr14,
+        account_risk_pct=_acct_risk,
     )
     return result
 

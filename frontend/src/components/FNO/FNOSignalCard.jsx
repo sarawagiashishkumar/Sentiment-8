@@ -89,11 +89,45 @@ export function FNOSignalCard({ signal, suffix, variant = "assured" }) {
         </p>
       )}
 
+      {/* Not Affordable Alert (P2-B) */}
+      {signal.not_affordable && (
+        <div className="mt-1 p-1.5 rounded border border-rose-600/50 bg-rose-950/30" data-testid={`not-affordable-alert-${signal.script?.toLowerCase()}-${variant}`}>
+          <span className="font-bold text-rose-300 text-xs">Exceeds Budget</span>
+          <span className="text-rose-200 text-xs ml-1">
+            {signal.sizing_info?.sizing_reason || "Capital for 1 lot exceeds your F\u0026O budget"}
+          </span>
+        </div>
+      )}
+
       {/* Budget Entry Alert */}
       {signal.budget_entry_alert && signal.best_budget_entry && (
         <div className="mt-1 p-1.5 rounded border border-amber-600/50 bg-amber-950/30" data-testid={`budget-entry-alert-${signal.script?.toLowerCase()}-${variant}`}>
-          <span className="font-bold text-amber-300 text-xs">\u23f3 Wait for Budget Entry</span>
+          <span className="font-bold text-amber-300 text-xs">{"\u23f3"} Wait for Budget Entry</span>
           <span className="text-amber-100 text-xs ml-1">Pullback to ₹{formatNumber(signal.best_budget_entry)} — do not enter at ₹{formatNumber(signal.entry_price)}</span>
+        </div>
+      )}
+
+      {/* Position Sizing Info (P2-C compact display) */}
+      {signal.sizing_info && !signal.not_affordable && signal.sizing_info.lots_allowed > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1.5 text-xs" data-testid={`sizing-info-${signal.script?.toLowerCase()}-${variant}`}>
+          <span className="rounded px-1.5 py-0.5 bg-slate-800/70 text-slate-300">
+            Lots: {signal.sizing_info.lots_allowed}
+          </span>
+          {signal.sizing_info.lots_atr_method > 0 && (
+            <span className="rounded px-1.5 py-0.5 bg-indigo-900/50 text-indigo-300">
+              ATR: {signal.sizing_info.lots_atr_method}
+            </span>
+          )}
+          {signal.sizing_info.lots_fixed_risk > 0 && (
+            <span className="rounded px-1.5 py-0.5 bg-violet-900/50 text-violet-300">
+              Risk: {signal.sizing_info.lots_fixed_risk}
+            </span>
+          )}
+          {signal.sizing_info.max_risk_Rs > 0 && (
+            <span className="rounded px-1.5 py-0.5 bg-slate-800/70 text-slate-400">
+              Max₹{Number(signal.sizing_info.max_risk_Rs).toLocaleString("en-IN")}
+            </span>
+          )}
         </div>
       )}
 
@@ -118,7 +152,7 @@ export function FNOSignalCard({ signal, suffix, variant = "assured" }) {
 
       {/* Caution warning (assured only) */}
       {isAssured && String(signal.strategy || "").toUpperCase().includes("CAUTION") ? (
-        <p className="font-semibold text-amber-200">\u26a0 Caution: Probable setup only. Use strict stop-loss and position sizing.</p>
+        <p className="font-semibold text-amber-200">{"\u26a0"} Caution: Probable setup only. Use strict stop-loss and position sizing.</p>
       ) : null}
 
       {/* Trigger factors (top4 only) */}
