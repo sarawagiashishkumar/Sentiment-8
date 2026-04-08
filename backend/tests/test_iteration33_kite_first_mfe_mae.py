@@ -28,7 +28,7 @@ import sys
 import time
 
 # Use localhost:8001 for FNO generate (long-running) to avoid gateway timeout
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://stock-signals-62.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://signal-backtester.preview.emergentagent.com").rstrip("/")
 LOCAL_URL = "http://localhost:8001"  # For long-running endpoints
 
 

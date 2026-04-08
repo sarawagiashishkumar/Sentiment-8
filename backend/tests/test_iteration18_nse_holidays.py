@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://stock-signals-62.preview.emergentagent.com"
+    BASE_URL = "https://signal-backtester.preview.emergentagent.com"
 
 # Test credentials from test_credentials.md
 ADMIN_USERNAME = "@shish123"
