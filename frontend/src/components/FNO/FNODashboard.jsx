@@ -60,7 +60,20 @@ export function FNODashboard({
     return () => document.removeEventListener("mousedown", handler);
   }, [exportMenuOpen]);
 
+  const abortRef = useRef(null);
+
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
+
   const generateFnoProjection = async (script = "") => {
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setFnoError("");
     setFnoLoading(true);
     setFnoProgress("");
@@ -70,17 +83,19 @@ export function FNODashboard({
         method: "POST",
         headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${response.status}`);
       }
-      const data = await readNDJSONStream(response, (evt) => setFnoProgress(evt.message || ""));
+      const data = await readNDJSONStream(response, (evt) => setFnoProgress(evt.message || ""), controller.signal);
       if (data) {
         setFnoData(data);
         syncCredits(data.credits_remaining);
       }
     } catch (error) {
+      if (error.name === "AbortError") return;
       setFnoError(error?.message || "Unable to generate F&O projections");
     } finally {
       setFnoLoading(false);

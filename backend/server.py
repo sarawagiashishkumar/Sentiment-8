@@ -538,60 +538,23 @@ from models import (
     UserSettingsUpdate,
 )
 
-def clamp(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
+# ── Re-exports from extracted modules (keep backward compat for `import server as _srv`) ──
+from services.utils import (  # noqa: F401
+    clamp, sanitize_float as _sanitize_float, utc_now_iso as _utc_now_iso,
+    safe_ratio as _safe_ratio, estimate_option_ltp as _estimate_option_ltp,
+    normalize_header as _normalize_header, to_float as _to_float,
+    normalize_symbol_key as _normalize_symbol_key,
+)
+from services.date_utils import (  # noqa: F401
+    today_ist as _today_ist, position_in_range as _position_in_range,
+    get_minutes_to_expiry, expiry_risk_bucket as _expiry_risk_bucket,
+    get_remaining_trading_days, get_nth_trading_day_from_today,
+    get_calendar_days_to_date as _get_calendar_days_to_date,
+    get_calendar_days_for_nth_trading_day as _get_calendar_days_for_nth_trading_day,
+)
 
 
-def _sanitize_float(value) -> float | None:
-    """Return None if value is NaN, Infinity or not a valid finite float."""
-    import math
-    if value is None:
-        return None
-    try:
-        f = float(value)
-        if math.isnan(f) or math.isinf(f):
-            return None
-        return f
-    except (TypeError, ValueError):
-        return None
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
-    if numerator is None or denominator is None or denominator == 0:
-        return None
-    return numerator / denominator
-
-
-def _estimate_option_ltp(underlying_ltp: float, strike: float, option_type: str) -> float:
-    intrinsic = (
-        max(underlying_ltp - strike, 0)
-        if option_type == "CE"
-        else max(strike - underlying_ltp, 0)
-    )
-    time_value = max(underlying_ltp * 0.002, 5)
-    return round(intrinsic + time_value, 2)
-
-
-def _normalize_header(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
-
-
-def _to_float(value: object) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    raw = str(value).strip().replace(",", "")
-    if raw in {"", "-", "--", "na", "n/a", "none", "null"}:
-        return None
-    try:
-        return float(raw)
-    except ValueError:
-        return None
+# ── Below functions extracted to services/utils.py, kept as re-imports above ──
 
 
 def _is_tesseract_ready() -> bool:
@@ -887,8 +850,8 @@ async def _parse_positions_from_upload(file: UploadFile) -> list[dict]:
     raise HTTPException(status_code=400, detail="Unsupported file format")
 
 
-def _today_ist() -> str:
-    return datetime.now(IST).date().isoformat()
+
+# _today_ist extracted to services/date_utils.py
 
 
 async def _get_api_controls(force_refresh: bool = False) -> dict[str, bool]:
@@ -1675,79 +1638,9 @@ async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: s
 
 
 # ── _analyze_portfolio_positions — extracted to services/ ──
-def _position_in_range(ltp: float | None, year_low: float | None, year_high: float | None) -> float | None:
-    if ltp is None or year_low is None or year_high is None or year_high <= year_low:
-        return None
-    return clamp((ltp - year_low) / (year_high - year_low), 0.0, 1.0)
-
-
-def get_minutes_to_expiry(contract: FNOContract | dict) -> int:
-    expiry_date_str = contract["expiry"] if isinstance(contract, dict) else contract.expiry
-    expiry_time_str = (
-        contract.get("expiry_time_ist", "15:30")
-        if isinstance(contract, dict)
-        else contract.expiry_time_ist
-    )
-    expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
-    hh, mm = map(int, expiry_time_str.split(":"))
-    expiry_dt = datetime.combine(expiry_date, time(hh, mm, tzinfo=IST))
-    now = datetime.now(IST)
-    return int((expiry_dt - now).total_seconds() / 60)
-
-
-def _expiry_risk_bucket(minutes_to_expiry: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
-    if minutes_to_expiry < 180:
-        return "HIGH"
-    if minutes_to_expiry < 1440:
-        return "MEDIUM"
-    return "LOW"
-
-
-def get_remaining_trading_days(expiry_date_str: str) -> int:
-    """Count NSE trading days from today (IST) to expiry date (inclusive)."""
-    from datetime import date as _date
-    holidays = get_nse_holidays() or NSE_HOLIDAYS
-    today = datetime.now(IST).date()
-    try:
-        expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
-    except ValueError:
-        return 0
-
-    if expiry_date < today:
-        return 0
-
-    count = 0
-    # Check if today is still a valid trading session
-    now_ist = datetime.now(IST)
-    market_still_open_today = (now_ist.hour < 15) or (now_ist.hour == 15 and now_ist.minute < 30)
-    d = today
-    if market_still_open_today and d.weekday() < 5 and d.strftime("%Y-%m-%d") not in holidays:
-        if d <= expiry_date:
-            count += 1
-
-    d = today + timedelta(days=1)
-    while d <= expiry_date:
-        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in holidays:
-            count += 1
-        d += timedelta(days=1)
-
-    return count
-
-
-def get_nth_trading_day_from_today(n: int) -> "datetime.date":
-    """Return the calendar date that is exactly N trading days from today (IST)."""
-    from datetime import date as _date
-    holidays = get_nse_holidays() or NSE_HOLIDAYS
-    if n <= 0:
-        return datetime.now(IST).date()
-    today = datetime.now(IST).date()
-    d = today
-    count = 0
-    while count < n:
-        d += timedelta(days=1)
-        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in holidays:
-            count += 1
-    return d
+# _position_in_range, get_minutes_to_expiry, _expiry_risk_bucket,
+# get_remaining_trading_days, get_nth_trading_day_from_today
+# extracted to services/date_utils.py (re-imported above)
 
 
 def _validate_expiry_guard(minutes_to_expiry: int) -> None:
@@ -2341,30 +2234,8 @@ async def _get_india_vix() -> float | None:
 
 # ── _compute_initial_option_sl — extracted to services/ ──
 
-def _get_calendar_days_to_date(target_date_str: str) -> int:
-    """Calendar days from today (IST) to date string. Includes weekends/holidays."""
-    try:
-        today = datetime.now(IST).date()
-        target = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-        return max(0, (target - today).days)
-    except Exception:
-        return 0
-
-
-def _get_calendar_days_for_nth_trading_day(n: int) -> int:
-    """Calendar days until the nth TRADING day from today (includes non-trading gaps)."""
-    try:
-        from datetime import timedelta
-        today = datetime.now(IST).date()
-        count = 0
-        current = today
-        while count < max(n, 0):
-            current += timedelta(days=1)
-            if current.weekday() < 5 and current.isoformat() not in NSE_HOLIDAYS:
-                count += 1
-        return max(0, (current - today).days)
-    except Exception:
-        return max(n, 0)
+# _get_calendar_days_to_date, _get_calendar_days_for_nth_trading_day
+# extracted to services/date_utils.py (re-imported above)
 
 
 # ── Batch A: Active Macro Events helper ──────────────────────────────────────

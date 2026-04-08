@@ -40,10 +40,25 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - [x] IV Analytics: IV Cone + IV Term Structure (data pipeline + charts)
 - [x] Multi-Timeframe Analysis Views (Daily/Weekly/Monthly with alignment scoring)
 - [x] Signal Log Auto-Capture (logs every generated signal + IV term structure during F&O projection)
+- [x] NDJSONStreamConsumer memory leak fix (AbortController + signal cleanup on unmount)
+- [x] server.py modular extraction: date_utils.py (118 lines), utils.py (69 lines) — server.py 4019→3890 lines
 
 ## Testing Status
-- Iterations 44-50: 97+ tests, all green
-- Latest test files: test_iteration48-50 (22/22 pass)
+- Iterations 44-50: 97 tests, all green (0 failures, 0 errors)
+
+## Code Architecture
+```
+backend/
+├── server.py           (3890 lines — auth, startup, Kite client, domain mgmt)
+├── services/
+│   ├── utils.py         (NEW: clamp, sanitize_float, utc_now_iso, safe_ratio, etc.)
+│   ├── date_utils.py    (NEW: today_ist, trading days, expiry risk, calendar days)
+│   ├── iv_analytics.py  (IV cone, term structure)
+│   ├── multiframe_analysis.py  (Multi-TF daily/weekly/monthly)
+│   └── ... (25+ service modules)
+└── routes/
+    └── fno.py           (721 lines — all F&O endpoints)
+```
 
 ## DB Collections
 sticky_fno_cards, fno_popup_events, fno_signal_history, fno_signal_log,
