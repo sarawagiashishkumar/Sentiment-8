@@ -406,7 +406,28 @@ def compute_bucket_d(
 ) -> dict[str, Any]:
     """
     Score based on trade quality (R:R, probability) and portfolio fit.
+
+    Hard vetoes:
+      rr_to_t1 < 1.0  → D = 0 (hard zero, signal should be suppressed)
+      rr_to_t2 < 1.5  → D capped at 50
+
+    Adjustments:
+      t2_p_hit < 0.45 → D -= 15
+      rr_to_best_exit >= 2.0 AND t2_p_hit >= 0.55 → D += 10 (bonus)
     """
+    # Hard veto: R:R to T1 below 1.0
+    if rr_to_t1 < 1.0:
+        return {
+            "score": 0,
+            "hard_veto": True,
+            "veto_reason": f"rr_to_t1={rr_to_t1:.2f}<1.0",
+            "breakdown": {
+                "rr_t1": 0, "rr_t2": 0, "probability": 0,
+                "sl_distance": 0, "concentration": 0,
+                "rr_best_exit": 0, "t2_prob_adj": 0, "exit_bonus": 0,
+            },
+        }
+
     score = 0
 
     # 1. R:R to T1 (0-30)
@@ -421,7 +442,7 @@ def compute_bucket_d(
     elif rr_to_t1 >= 1.0:
         rr1_score = 10
     else:
-        rr1_score = 2  # R:R < 1:1 to T1 — penalize heavily
+        rr1_score = 2
     score += rr1_score
 
     # 2. R:R to T2 (0-20)
@@ -434,7 +455,7 @@ def compute_bucket_d(
     elif rr_to_t2 >= 1.2:
         rr2_score = 8
     else:
-        rr2_score = 2  # R:R < 1:1.5 to T2 — penalize
+        rr2_score = 2
     score += rr2_score
 
     # 3. Probability of T1 hit (0-20)
@@ -452,7 +473,7 @@ def compute_bucket_d(
             prob_score = 4
     score += prob_score
 
-    # 4. SL distance (0-15) — prefer tighter SL (lower risk per trade)
+    # 4. SL distance (0-15)
     if sl_distance_pct <= 8:
         sl_score = 15
     elif sl_distance_pct <= 12:
@@ -468,23 +489,45 @@ def compute_bucket_d(
     # 5. Portfolio concentration penalty (0-15)
     conc_score = 15
     if existing_exposure_same_direction >= 3:
-        conc_score = 3  # too many trades in same direction
+        conc_score = 3
     elif existing_exposure_same_direction >= 2:
         conc_score = 8
     if existing_exposure_same_sector >= 2:
         conc_score = min(conc_score, 5)
     score += conc_score
 
-    score = min(100, score)
+    # 6. T2 probability penalty: if t2_p_hit < 0.45 → subtract 15
+    t2_prob_adj = 0
+    _t2_p = t2_p_hit if t2_p_hit is not None else 0.0
+    if _t2_p < 0.45:
+        t2_prob_adj = -15
+        score += t2_prob_adj
+
+    # 7. Best Exit bonus: rr_to_best_exit >= 2.0 AND t2_p_hit >= 0.55 → +10
+    exit_bonus = 0
+    _rr_be = rr_to_best_exit if rr_to_best_exit is not None else 0.0
+    if _rr_be >= 2.0 and _t2_p >= 0.55:
+        exit_bonus = 10
+        score += exit_bonus
+
+    # Cap: if rr_to_t2 < 1.5, D capped at 50
+    if rr_to_t2 < 1.5:
+        score = min(score, 50)
+
+    score = min(100, max(0, score))
 
     return {
         "score": score,
+        "hard_veto": False,
         "breakdown": {
             "rr_t1": rr1_score,
             "rr_t2": rr2_score,
             "probability": prob_score,
             "sl_distance": sl_score,
             "concentration": conc_score,
+            "t2_prob_adj": t2_prob_adj,
+            "exit_bonus": exit_bonus,
+            "rr_best_exit": round(_rr_be, 2),
         },
     }
 

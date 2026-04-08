@@ -354,6 +354,147 @@ def select_targets_from_probability(
     }
 
 
+
+# ---------------------------------------------------------------------------
+# 5.3b  SELECT_TARGETS_V2 — Consolidated target selection (Batch 3 Item 4)
+# ---------------------------------------------------------------------------
+
+P1_V2_THRESHOLD = 0.75  # T1 min P_hit for V2
+P2_V2_THRESHOLD = 0.60  # T2 min P_hit for V2
+SL_RISK_THRESHOLD = 0.25  # Max P(SL hit first) allowed
+
+
+def select_targets_v2(
+    entry_price: float,
+    stop_loss: float,
+    atr: float,
+    prob_table: dict | None,
+    mins_to_1530: int = 375,
+    dte: int = 5,
+    iv_regime: str = "NORMAL_IV",
+    regime_label: str = "LowVolRange",
+    flow_band: str = "NeutralFlow",
+    dte_band: str = "3-5DTE",
+    tod_band: str = "MID_SESSION",
+    theta_daily: float = 0.0,
+    high_confidence: bool = False,
+) -> dict:
+    """
+    SELECT_TARGETS_V2: Consolidated target selection from MFE probability tables.
+
+    Steps:
+      1. Compute theta_to_close from theta_daily and minutes remaining
+      2. Build candidate grid: [0.5, 1.0, 1.5, 2.0, 3.0] × ATR14
+      3. For each candidate, look up P_hit and P_SL from prob_table
+      4. T1 = smallest net_target with p_hit >= P1_THRESHOLD and p_sl <= SL_RISK_THRESHOLD
+      5. T2 = next net_target with p_hit >= P2_THRESHOLD and p_sl <= SL_RISK_THRESHOLD
+      6. If no T1 achievable → abort=True
+      7. If no T2 but T1 has p_hit >= 0.80 → T2 = T1 × 1.25
+
+    Returns: {t1, t2, theta_to_close, p_hit_t1, p_hit_t2, abort, reason,
+              tod_band, dte_band, regime_label, flow_band}
+    """
+    risk = max(entry_price - stop_loss, 0.01)
+
+    # Step 1: Theta decay to session close
+    session_frac = max(mins_to_1530, 0) / 375.0
+    theta_to_close = theta_daily * session_frac if theta_daily > 0 else 0.0
+
+    # Step 2: Build candidate grid from ATR multiples
+    atr_multiples = [0.5, 1.0, 1.5, 2.0, 3.0]
+    candidates = []
+    for mult in atr_multiples:
+        offset = atr * mult
+        net_target = entry_price + offset - theta_to_close
+        offset_pct = ((net_target - entry_price) / entry_price) * 100
+
+        # Step 3: Look up P_hit, P_SL from probability table
+        p_hit = 0.0
+        p_sl = 1.0
+        if prob_table and prob_table.get("targets"):
+            # Find closest matching offset in the probability table
+            best_match = None
+            best_dist = float("inf")
+            for row in prob_table["targets"]:
+                dist = abs(row["offset_pct"] - offset_pct)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_match = row
+            if best_match:
+                p_hit = best_match["p_hit"]
+                p_sl = best_match["p_sl_first"]
+
+        candidates.append({
+            "mult": mult,
+            "net_target": round(net_target, 2),
+            "offset_pct": round(offset_pct, 2),
+            "p_hit": p_hit,
+            "p_sl": p_sl,
+            "rr": round((net_target - entry_price) / risk, 2) if risk > 0 else 0,
+        })
+
+    # Adjust thresholds for high-confidence mode
+    p1_thresh = P1_V2_THRESHOLD if not high_confidence else 0.80
+    p2_thresh = P2_V2_THRESHOLD if not high_confidence else 0.65
+
+    # Time adjustment: relax slightly near close
+    time_factor = min(1.0, mins_to_1530 / 375.0)
+    p1_adj = p1_thresh * (0.75 + 0.25 * time_factor)
+    p2_adj = p2_thresh * (0.75 + 0.25 * time_factor)
+
+    # Step 4: Select T1 — smallest qualifying net_target
+    t1_cand = None
+    for c in candidates:
+        if c["net_target"] > entry_price and c["p_hit"] >= p1_adj and c["p_sl"] <= SL_RISK_THRESHOLD:
+            t1_cand = c
+            break
+
+    # Step 6: No T1 achievable → abort
+    if t1_cand is None:
+        return {
+            "t1": None, "t2": None, "abort": True,
+            "reason": "no_achievable_T1_in_session",
+            "theta_to_close": round(theta_to_close, 2),
+            "p_hit_t1": None, "p_hit_t2": None,
+            "tod_band": tod_band, "dte_band": dte_band,
+            "regime_label": regime_label, "flow_band": flow_band,
+        }
+
+    # Step 5: Select T2 — next qualifying net_target above T1
+    t2_cand = None
+    for c in candidates:
+        if c["net_target"] > t1_cand["net_target"] and c["p_hit"] >= p2_adj and c["p_sl"] <= SL_RISK_THRESHOLD * 1.3:
+            t2_cand = c
+
+    # Step 7: If no T2 but T1 has high probability, extrapolate
+    t2_price = None
+    t2_p_hit = None
+    if t2_cand:
+        t2_price = t2_cand["net_target"]
+        t2_p_hit = t2_cand["p_hit"]
+    elif t1_cand["p_hit"] >= 0.80:
+        t2_price = round(t1_cand["net_target"] * 1.25, 2)
+        t2_p_hit = t1_cand["p_hit"] * 0.7  # estimated lower probability
+
+    return {
+        "t1": t1_cand["net_target"],
+        "t2": t2_price,
+        "abort": False,
+        "reason": None,
+        "theta_to_close": round(theta_to_close, 2),
+        "p_hit_t1": t1_cand["p_hit"],
+        "p_hit_t2": t2_p_hit,
+        "t1_offset_pct": t1_cand["offset_pct"],
+        "t2_offset_pct": t2_cand["offset_pct"] if t2_cand else None,
+        "t1_rr": t1_cand["rr"],
+        "t2_rr": t2_cand["rr"] if t2_cand else None,
+        "tod_band": tod_band,
+        "dte_band": dte_band,
+        "regime_label": regime_label,
+        "flow_band": flow_band,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 6.1  Empirical Theta Curves
 # ---------------------------------------------------------------------------

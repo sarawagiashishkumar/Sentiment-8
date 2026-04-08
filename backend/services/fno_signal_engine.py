@@ -40,6 +40,7 @@ from services.mfe_mae_engine import (
     check_no_chasing_rule,
     compute_best_exit_online,
     select_targets_from_probability,
+    select_targets_v2,
     get_cached_prob_table,
     get_cached_fwd_mfe,
     build_and_store_mfe_library,
@@ -1198,6 +1199,7 @@ async def build_fno_signal(
     _prob_table = None
     _dte_for_mfe = 0 if _is_expiry_today else max(get_remaining_trading_days(contract.expiry), 1)
     _iv_for_mfe = (_enhanced_opt_features or {}).get("iv") or india_vix
+    _theta_daily_for_v2 = 0.0
     try:
         _s = _srv()
         db = _s.db
@@ -1224,7 +1226,6 @@ async def build_fno_signal(
                     sl_distance_pct=max(_sl_dist_pct, 5.0),
                 )
                 if _build_result.get("stored"):
-                    # Re-fetch the just-stored prob table
                     _cached_pt = await get_cached_prob_table(
                         db, contract.underlying, _strategy_id, _dte_for_mfe, _iv_for_mfe,
                     )
@@ -1246,29 +1247,89 @@ async def build_fno_signal(
                             sl_distance_pct=max(_sl_dist_pct, 5.0),
                         )
 
-        # Step 3: Use probability table to refine targets
-        if _prob_table:
-            _prob_targets = select_targets_from_probability(
-                _prob_table,
-                entry_price=entry_price,
-                stop_loss=stop_loss,
-                minutes_remaining=effective_minutes,
-            )
-            if _prob_targets.get("method") == "probability_based":
-                _pt1 = _prob_targets.get("t1")
-                _pt2 = _prob_targets.get("t2")
-                # Use probability targets only if they are MORE conservative
-                # (lower) than ATR targets — ensures higher hit probability
-                if _pt1 and _pt1 < target1:
-                    target1 = _pt1
-                    trigger_factors.append(f"ProbT1:P={_prob_targets.get('t1_p_hit', 0):.0%}")
-                if _pt2 and _pt2 < target2:
-                    target2 = _pt2
-                    trigger_factors.append(f"ProbT2:P={_prob_targets.get('t2_p_hit', 0):.0%}")
-                # Ensure T2 > T1
-                target2 = max(target2, round(target1 * 1.05, 2))
+        # Step 3: Use select_targets_v2 for consolidated target selection
+        _flow_band_v2 = _intraday_features.get("flow_band", "NeutralFlow") if _intraday_features else "NeutralFlow"
+        _regime_label_v2 = _enhanced_regime.get("regime", "LowVolRange") if _enhanced_regime else "LowVolRange"
+        _dte_band_v2 = _classify_dte_band(_dte_for_mfe)
+        _iv_regime_v2 = _classify_iv_regime(_iv_for_mfe)
+
+        # Determine time-of-day band
+        _mins_to_close = get_minutes_to_session_close()
+        if _mins_to_close > 300:
+            _tod_band = "EARLY_SESSION"
+        elif _mins_to_close > 120:
+            _tod_band = "MID_SESSION"
+        else:
+            _tod_band = "LATE_SESSION"
+
+        # Get theta estimate for target adjustment
+        try:
+            _opt_class_v2 = "index_weekly" if contract.underlying in ("NIFTY", "BANKNIFTY") else "stock_monthly"
+            _mono_v2 = (_enhanced_opt_features or {}).get("moneyness", "ATM")
+            from services.mfe_mae_engine import get_cached_theta, compute_empirical_theta
+            _theta_cached = await get_cached_theta(db, _opt_class_v2, _mono_v2, _iv_regime_v2, _dte_for_mfe)
+            if _theta_cached:
+                _theta_daily_for_v2 = _theta_cached.get("total_theta", 0)
+            else:
+                _cal_days = max(int(_dte_for_mfe * 1.4), _dte_for_mfe + 1) if _dte_for_mfe > 0 else 1
+                _theta_result = compute_empirical_theta(entry_price, _dte_for_mfe, _cal_days, _iv_regime_v2, _opt_class_v2, _mono_v2)
+                _theta_daily_for_v2 = _theta_result.get("total_theta", 0)
+        except Exception:
+            _theta_daily_for_v2 = 0.0
+
+        _v2_targets = select_targets_v2(
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            atr=underlying_atr or (float(underlying_ltp) * 0.012),
+            prob_table=_prob_table,
+            mins_to_1530=effective_minutes,
+            dte=_dte_for_mfe,
+            iv_regime=_iv_regime_v2,
+            regime_label=_regime_label_v2,
+            flow_band=_flow_band_v2,
+            dte_band=_dte_band_v2,
+            tod_band=_tod_band,
+            theta_daily=_theta_daily_for_v2,
+        )
+
+        if not _v2_targets.get("abort"):
+            _vt1 = _v2_targets.get("t1")
+            _vt2 = _v2_targets.get("t2")
+            # Use V2 targets only if they are MORE conservative
+            if _vt1 and _vt1 < target1:
+                target1 = _vt1
+                trigger_factors.append(f"V2T1:P={_v2_targets.get('p_hit_t1', 0):.0%}")
+            if _vt2 and _vt2 < target2:
+                target2 = _vt2
+                trigger_factors.append(f"V2T2:P={_v2_targets.get('p_hit_t2', 0):.0%}")
+            target2 = max(target2, round(target1 * 1.05, 2))
+
+            # Carry probability data for Bucket D
+            _prob_targets = {
+                "t1_p_hit": _v2_targets.get("p_hit_t1"),
+                "t2_p_hit": _v2_targets.get("p_hit_t2"),
+                "method": "v2_targets",
+            }
+        else:
+            # V2 targets aborted (no achievable T1), keep ATR-based targets
+            trigger_factors.append(f"V2Abort:{_v2_targets.get('reason', 'unknown')}")
+            # Still try old probability refinement as secondary fallback
+            if _prob_table:
+                _old_prob = select_targets_from_probability(
+                    _prob_table, entry_price=entry_price,
+                    stop_loss=stop_loss, minutes_remaining=effective_minutes,
+                )
+                if _old_prob.get("method") == "probability_based":
+                    _pt1 = _old_prob.get("t1")
+                    _pt2 = _old_prob.get("t2")
+                    if _pt1 and _pt1 < target1:
+                        target1 = _pt1
+                    if _pt2 and _pt2 < target2:
+                        target2 = _pt2
+                    target2 = max(target2, round(target1 * 1.05, 2))
+                    _prob_targets = _old_prob
     except Exception as _mfe_err:
-        logger.debug(f"MFE/MAE probability refinement failed: {_mfe_err}")
+        logger.debug(f"MFE/MAE target selection failed: {_mfe_err}")
 
     # ── Batch 2 NEW: No-chasing rule (section 1.8) ───────────────────────
     try:
@@ -1555,112 +1616,184 @@ async def build_fno_signal(
         tech_snapshot=ts,
     )
 
-    # ── Batch 3 NEW: 4-Bucket Confluence Score V2 (section 7) ────────────
-    # Compute all 4 buckets and override the old score.
-    # Old score kept in confluence_score_v1 for comparison/logging.
+    # ── Batch 3: 4-Bucket Confluence Score V2 (section 7) ────────────────
+    # Feature flag: USE_NEW_SCORING controls V1 vs V2 scoring
     _confluence_v1 = confluence_score
     _conviction_v1 = conviction_level
+    _use_v2_scoring = os.environ.get("USE_NEW_SCORING", "true").lower() == "true"
 
-    try:
-        # Bucket A: Strategy & backtest robustness
-        # Step 3: Read from strategy_backtests collection (feature flag: USE_BACKTEST_DB)
-        _use_backtest_db = os.environ.get("USE_BACKTEST_DB", "0") == "1"
-        _strat_stats = {}
-        _bucket_a_strategy_enabled = True
-        if _use_backtest_db:
-            try:
-                _matched_strategy_id = _strategy_id if _strategy_id else None
-                _underlying_for_bt = underlying.replace(" ", "")
-                if _matched_strategy_id and _underlying_for_bt:
-                    _bt_doc = await fetch_strategy_backtest(db, _matched_strategy_id, _underlying_for_bt)
-                    if _bt_doc:
-                        _strat_stats = _bt_doc
-                        _bucket_a_strategy_enabled = is_backtest_enabled(_bt_doc)
-                    else:
-                        # No backtest record → treat as DISABLED
-                        _bucket_a_strategy_enabled = False
-            except Exception as _bt_err:
-                logger.debug("Backtest fetch failed for Bucket A: %s", _bt_err)
-        _bucket_a = compute_bucket_a(
-            win_rate=_strat_stats.get("win_rate"),
-            expectancy_r=_strat_stats.get("expectancy_R") or _strat_stats.get("expectancy_r"),
-            trade_count=_strat_stats.get("trade_count"),
-            strategy_enabled=_bucket_a_strategy_enabled,
-        )
+    # V2 scoring breakdown (populated only when V2 active)
+    _v2_bucket_a = None
+    _v2_bucket_b = None
+    _v2_bucket_c = None
+    _v2_bucket_d = None
+    _v2_suppress_reason = None
+    _v2_regime_label = _enhanced_regime.get("regime", "LowVolRange") if _enhanced_regime else "LowVolRange"
+    _v2_flow_band = _intraday_features.get("flow_band", "NeutralFlow") if _intraday_features else "NeutralFlow"
+    _v2_news_flag = _news_sentiment.get("news_flag", "NEUTRAL") if _news_sentiment else "NEUTRAL"
 
-        # Bucket B: Direction & structure
-        _index_bscore = None
-        _sector_bscore = None
-        _bucket_b = compute_bucket_b(
-            direction=direction,
-            bias_score=bias_score,
-            trend_alignment=tech_alignment,
-            rsi=tech_rsi,
-            macd_bullish=tech_macd.get("bullish_crossover") if tech_macd else None,
-            adx=tech_adx,
-            above_vwap=None,
-            sector_breadth_score=_sector_bscore,
-            index_breadth_score=_index_bscore,
-            regime=_enhanced_regime.get("regime", "LowVolRange") if _enhanced_regime else "LowVolRange",
-            stoch_k=tech_stoch.get("%K") if tech_stoch else None,
-        )
-
-        # Bucket C: Options, order-flow & sentiment
-        _news_flag_c = _news_sentiment.get("news_flag", "NEUTRAL") if _news_sentiment else "NEUTRAL"
-        _flow_band_c = _intraday_features.get("flow_band", "NeutralFlow") if _intraday_features else "NeutralFlow"
-        _oi_buildup_c = _enhanced_opt_features.get("oi_buildup") if _enhanced_opt_features else oi_buildup
-        _iv_rank_c = _enhanced_opt_features.get("iv_rank") if _enhanced_opt_features else iv_rank
-        _is_liquid_c = _enhanced_opt_features.get("is_liquid", True) if _enhanced_opt_features else True
-        _spread_pct_c = None
-        if _enhanced_opt_features and _enhanced_opt_features.get("spread_data"):
-            _spread_pct_c = _enhanced_opt_features["spread_data"].get("spread_pct")
-
-        _bucket_c = compute_bucket_c(
-            oi_buildup=_oi_buildup_c,
-            iv_rank=_iv_rank_c,
-            is_liquid=_is_liquid_c,
-            spread_pct=_spread_pct_c,
-            flow_band=_flow_band_c,
-            news_flag=_news_flag_c,
-            direction=direction,
-            pcr=pcr,
-        )
-
-        # Bucket D: Trade quality & portfolio fit
-        _risk_d = max(entry_price - stop_loss, 0.01)
-        _rr_t1_d = (target1 - entry_price) / _risk_d if _risk_d > 0 else 0
-        _rr_t2_d = (target2 - entry_price) / _risk_d if _risk_d > 0 else 0
-        _sl_dist_pct_d = (_risk_d / entry_price) * 100 if entry_price > 0 else 10
-        _t1_phit_d = _prob_targets.get("t1_p_hit") if _prob_targets else None
-
-        _bucket_d = compute_bucket_d(
-            rr_to_t1=_rr_t1_d,
-            rr_to_t2=_rr_t2_d,
-            t1_p_hit=_t1_phit_d,
-            sl_distance_pct=_sl_dist_pct_d,
-        )
-
-        # Final V2 Score
-        _v2_result = compute_confluence_score_v2(_bucket_a, _bucket_b, _bucket_c, _bucket_d)
-        _v2_score = _v2_result["score"]
-        _v2_conviction = _v2_result["conviction"]
-
-        # Use V2 score as the primary score
-        confluence_score = _v2_score
-        conviction_level = _v2_conviction
-
-        # Log comparison for audit
-        if abs(_v2_score - _confluence_v1) > 10:
-            logger.info(
-                f"{contract.script}: ConfluenceV1={_confluence_v1} V2={_v2_score} "
-                f"A={_bucket_a['score']} B={_bucket_b['score']} C={_bucket_c['score']} D={_bucket_d['score']}"
+    if _use_v2_scoring:
+        try:
+            # Bucket A: Strategy & backtest robustness
+            _use_backtest_db = os.environ.get("USE_BACKTEST_DB", "0") == "1"
+            _strat_stats = {}
+            _bucket_a_strategy_enabled = True
+            if _use_backtest_db:
+                try:
+                    _matched_strategy_id = _strategy_id if _strategy_id else None
+                    _underlying_for_bt = contract.underlying.replace(" ", "")
+                    if _matched_strategy_id and _underlying_for_bt:
+                        _bt_doc = await fetch_strategy_backtest(db, _matched_strategy_id, _underlying_for_bt)
+                        if _bt_doc:
+                            _strat_stats = _bt_doc
+                            _bucket_a_strategy_enabled = is_backtest_enabled(_bt_doc)
+                        else:
+                            _bucket_a_strategy_enabled = False
+                except Exception as _bt_err:
+                    logger.debug("Backtest fetch failed for Bucket A: %s", _bt_err)
+            _v2_bucket_a = compute_bucket_a(
+                win_rate=_strat_stats.get("win_rate"),
+                expectancy_r=_strat_stats.get("expectancy_R") or _strat_stats.get("expectancy_r"),
+                trade_count=_strat_stats.get("trade_count"),
+                strategy_enabled=_bucket_a_strategy_enabled,
             )
 
-        trigger_factors.append(f"V2Score:A{_bucket_a['score']}B{_bucket_b['score']}C{_bucket_c['score']}D{_bucket_d['score']}")
+            # Bucket B: Direction & structure — WIRE REAL BREADTH (Item 2)
+            _index_bscore = None
+            _sector_bscore = None
+            if contract.underlying in ("NIFTY", "BANKNIFTY"):
+                # Use constituent_engine breadth for index signals
+                _ib_pct = _index_breadth.get("breadth_score") if _index_breadth else None
+                if _ib_pct is not None:
+                    # Map breadth % to bucket B sub-score (0-100 scale)
+                    if _ib_pct >= 65:
+                        _index_bscore = _ib_pct  # full B contribution
+                    elif _ib_pct >= 50:
+                        _index_bscore = _ib_pct * 0.7  # partial
+                    else:
+                        _index_bscore = 0  # insufficient breadth
+            else:
+                # For stock signals: use sector sentiment as breadth proxy
+                if _sector_sentiment:
+                    _sec_flag = _sector_sentiment.get("news_flag", "NEUTRAL")
+                    _sec_count = _sector_sentiment.get("news_count", 0)
+                    if _sec_flag == "POSITIVE":
+                        _sector_bscore = min(100, 60 + _sec_count * 5)
+                    elif _sec_flag == "NEGATIVE":
+                        _sector_bscore = max(0, 40 - _sec_count * 5)
+                    else:
+                        _sector_bscore = 50
 
-    except Exception as _v2_err:
-        logger.warning(f"Confluence V2 scoring failed for {contract.script}: {_v2_err}. Using V1 fallback.")
-        trigger_factors.append(f"V1Fallback:{_confluence_v1}")
+            _v2_bucket_b = compute_bucket_b(
+                direction=direction,
+                bias_score=bias_score,
+                trend_alignment=tech_alignment,
+                rsi=tech_rsi,
+                macd_bullish=tech_macd.get("bullish_crossover") if tech_macd else None,
+                adx=tech_adx,
+                above_vwap=None,
+                sector_breadth_score=_sector_bscore,
+                index_breadth_score=_index_bscore,
+                regime=_v2_regime_label,
+                stoch_k=tech_stoch.get("%K") if tech_stoch else None,
+            )
+
+            # Bucket C: Options, order-flow & sentiment
+            _oi_buildup_c = _enhanced_opt_features.get("oi_buildup") if _enhanced_opt_features else oi_buildup
+            _iv_rank_c = _enhanced_opt_features.get("iv_rank") if _enhanced_opt_features else iv_rank
+            _is_liquid_c = _enhanced_opt_features.get("is_liquid", True) if _enhanced_opt_features else True
+            _spread_pct_c = None
+            if _enhanced_opt_features and _enhanced_opt_features.get("spread_data"):
+                _spread_pct_c = _enhanced_opt_features["spread_data"].get("spread_pct")
+
+            _v2_bucket_c = compute_bucket_c(
+                oi_buildup=_oi_buildup_c,
+                iv_rank=_iv_rank_c,
+                is_liquid=_is_liquid_c,
+                spread_pct=_spread_pct_c,
+                flow_band=_v2_flow_band,
+                news_flag=_v2_news_flag,
+                direction=direction,
+                pcr=pcr,
+            )
+
+            # Bucket D: Trade quality — WIRE FULL MFE DATA (Item 3)
+            _risk_d = max(entry_price - stop_loss, 0.01)
+            _rr_t1_d = (target1 - entry_price) / _risk_d if _risk_d > 0 else 0
+            _rr_t2_d = (target2 - entry_price) / _risk_d if _risk_d > 0 else 0
+            _sl_dist_pct_d = (_risk_d / entry_price) * 100 if entry_price > 0 else 10
+            _t1_phit_d = _prob_targets.get("t1_p_hit") if _prob_targets else None
+            _t2_phit_d = _prob_targets.get("t2_p_hit") if _prob_targets else None
+            # Compute rr_to_best_exit from best_exit_price
+            _rr_best_exit_d = None
+            if best_exit_price and best_exit_price > entry_price and _risk_d > 0:
+                _rr_best_exit_d = (best_exit_price - entry_price) / _risk_d
+
+            _v2_bucket_d = compute_bucket_d(
+                rr_to_t1=_rr_t1_d,
+                rr_to_t2=_rr_t2_d,
+                rr_to_best_exit=_rr_best_exit_d,
+                t1_p_hit=_t1_phit_d,
+                t2_p_hit=_t2_phit_d,
+                sl_distance_pct=_sl_dist_pct_d,
+            )
+
+            # Log partial data warning for Bucket D
+            if _t2_phit_d is None or _rr_best_exit_d is None:
+                logger.debug(
+                    f"Bucket D: partial data for {contract.script}, "
+                    f"t2_p_hit={_t2_phit_d}, rr_best_exit={_rr_best_exit_d}, conservative scoring applied"
+                )
+
+            # Final V2 Score
+            _v2_result = compute_confluence_score_v2(_v2_bucket_a, _v2_bucket_b, _v2_bucket_c, _v2_bucket_d)
+            _v2_score = _v2_result["score"]
+            _v2_conviction = _v2_result["conviction"]
+
+            # ITEM 5: Act on should_suppress flag
+            _should_suppress = _v2_result.get("should_suppress", False)
+            # Also check hard veto from Bucket D
+            if _v2_bucket_d.get("hard_veto"):
+                _should_suppress = True
+                _v2_suppress_reason = f"BucketD_hard_veto:{_v2_bucket_d.get('veto_reason', 'rr<1')}"
+            elif _should_suppress:
+                _v2_suppress_reason = f"V2_score={_v2_score}<78"
+            elif _v2_score < 78:
+                _should_suppress = True
+                _v2_suppress_reason = f"V2_score={_v2_score}<78"
+
+            if _should_suppress:
+                logger.info(
+                    f"SUPPRESSED: {contract.script} score={_v2_score} "
+                    f"reason={_v2_suppress_reason} "
+                    f"A={_v2_bucket_a['score']} B={_v2_bucket_b['score']} "
+                    f"C={_v2_bucket_c['score']} D={_v2_bucket_d['score']}"
+                )
+                return None  # Signal suppressed — skip this candidate
+
+            # Use V2 score as the primary score
+            confluence_score = _v2_score
+            conviction_level = _v2_conviction
+
+            # Log comparison for audit
+            if abs(_v2_score - _confluence_v1) > 10:
+                logger.info(
+                    f"{contract.script}: ConfluenceV1={_confluence_v1} V2={_v2_score} "
+                    f"A={_v2_bucket_a['score']} B={_v2_bucket_b['score']} "
+                    f"C={_v2_bucket_c['score']} D={_v2_bucket_d['score']}"
+                )
+
+            trigger_factors.append(
+                f"V2Score:A{_v2_bucket_a['score']}B{_v2_bucket_b['score']}"
+                f"C{_v2_bucket_c['score']}D{_v2_bucket_d['score']}"
+            )
+
+        except Exception as _v2_err:
+            logger.warning(f"Confluence V2 scoring failed for {contract.script}: {_v2_err}. Using V1 fallback.")
+            trigger_factors.append(f"V1Fallback:{_confluence_v1}")
+    else:
+        # USE_NEW_SCORING=false → V1 path
+        trigger_factors.append(f"V1Score:{_confluence_v1}")
     
     # Add technical tags to trigger_factors
     if ts.get("data_available") and tech_alignment:
@@ -1768,6 +1901,16 @@ async def build_fno_signal(
         atm_iv=atm_iv,
         oi_buildup=oi_buildup,
         gex=gex,
+        # Batch 3: V2 Scoring Breakdown (Item 6)
+        confluence_score_v2=float(_v2_bucket_a["score"] + _v2_bucket_b["score"] + _v2_bucket_c["score"] + _v2_bucket_d["score"]) / 4.0 if (_v2_bucket_a and _v2_bucket_b and _v2_bucket_c and _v2_bucket_d) else None,
+        score_bucket_A=float(_v2_bucket_a["score"]) if _v2_bucket_a else None,
+        score_bucket_B=float(_v2_bucket_b["score"]) if _v2_bucket_b else None,
+        score_bucket_C=float(_v2_bucket_c["score"]) if _v2_bucket_c else None,
+        score_bucket_D=float(_v2_bucket_d["score"]) if _v2_bucket_d else None,
+        score_suppress_reason=_v2_suppress_reason,
+        score_regime_label=_v2_regime_label,
+        score_flow_band=_v2_flow_band,
+        score_news_flag=_v2_news_flag,
     )
 
     # ── Step 4: Position Sizing Annotation (additive, does not block signals) ──
@@ -1913,7 +2056,7 @@ async def _resolve_contract_from_input(raw_script: str) -> FNOContract:
     raise HTTPException(status_code=404, detail="Script not supported")
 
 
-async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -> FNOSignalResponse:
+async def _build_signal_for_contract(contract: FNOContract, refreshed_at: str) -> FNOSignalResponse | None:
     _s = _srv()
     get_minutes_to_expiry = _s.get_minutes_to_expiry
     _validate_expiry_guard = _s._validate_expiry_guard

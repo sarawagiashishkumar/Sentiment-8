@@ -240,6 +240,16 @@ class FNOSignalResponse(BaseModel):
     # Step 4: Position sizing annotation (additive, does NOT block signals)
     not_affordable: bool = False
     sizing_info: dict | None = None
+    # Batch 3: V2 Scoring Breakdown (additive fields, existing fields unchanged)
+    confluence_score_v2: float | None = None    # final 0-100 V2 score
+    score_bucket_A: float | None = None         # strategy/backtest sub-score
+    score_bucket_B: float | None = None         # direction/breadth sub-score
+    score_bucket_C: float | None = None         # options/flow/sentiment sub-score
+    score_bucket_D: float | None = None         # trade quality sub-score
+    score_suppress_reason: str | None = None    # reason if nearly suppressed
+    score_regime_label: str | None = None       # regime at signal time
+    score_flow_band: str | None = None          # flow band at signal time
+    score_news_flag: str | None = None          # POSITIVE/NEGATIVE/NEUTRAL
 
 
 class NonDirectionalStrategy(BaseModel):

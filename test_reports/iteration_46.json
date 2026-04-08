@@ -1,0 +1,109 @@
+{
+  "summary": "Iteration 46: BATCH 3 Verification for Master Spec v2.0 - 20/20 backend tests PASS (100%). All 6 Batch 3 items verified: USE_NEW_SCORING feature flag, Bucket B real breadth wiring, Bucket D full MFE data + hard vetoes, select_targets_v2 consolidated function, should_suppress signal gating, and 9 new V2 fields in FNOSignalResponse.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestAuthEndpoint::test_auth_access_returns_token": "PASS",
+    "TestRegressionNDJSONEndpoints::test_fno_generate_returns_ndjson_stream": "PASS",
+    "TestRegressionNDJSONEndpoints::test_multibagger_candidates_returns_ndjson": "PASS",
+    "TestRegressionNDJSONEndpoints::test_sector_momentum_returns_sectors": "PASS - 8 sectors",
+    "TestBatchStatus::test_batch_status_returns_counts": "PASS - theta_curve_entries=360",
+    "TestSelectTargetsV2::test_select_targets_v2_with_prob_table_returns_targets": "PASS - returns t1, t2, p_hit_t1, p_hit_t2, abort=False",
+    "TestSelectTargetsV2::test_select_targets_v2_without_prob_table_returns_abort": "PASS - abort=True, reason='no_achievable_T1_in_session'",
+    "TestComputeBucketD::test_bucket_d_rr_to_t1_below_1_returns_hard_veto": "PASS - score=0, hard_veto=True",
+    "TestComputeBucketD::test_bucket_d_t2_p_hit_below_045_applies_penalty": "PASS - t2_prob_adj=-15",
+    "TestComputeBucketD::test_bucket_d_exit_bonus_applied": "PASS - exit_bonus=+10",
+    "TestComputeBucketD::test_bucket_d_rr_to_t2_below_15_caps_at_50": "PASS - score capped at 50",
+    "TestFNOSignalResponseV2Fields::test_fno_signal_response_has_v2_fields": "PASS - all 9 V2 fields present",
+    "TestUseNewScoringFlag::test_use_new_scoring_env_var_default_true": "PASS - defaults to 'true'",
+    "TestUseNewScoringFlag::test_use_new_scoring_false_disables_v2": "PASS - 'false' disables V2",
+    "TestComputeConfluenceScoreV2::test_confluence_v2_with_hard_veto_bucket_d_returns_should_suppress": "PASS - should_suppress=True",
+    "TestBackendImports::test_select_targets_v2_imports": "PASS",
+    "TestBackendImports::test_fno_signal_engine_imports_select_targets_v2": "PASS",
+    "TestBackendImports::test_confluence_score_v2_functions_import": "PASS",
+    "TestBucketBBreadthWiring::test_compute_bucket_b_accepts_breadth_params": "PASS",
+    "TestBucketBBreadthWiring::test_compute_bucket_b_with_index_breadth": "PASS"
+  },
+
+  "batch3_verification": {
+    "item1_use_new_scoring_flag": {
+      "status": "PASS",
+      "details": "USE_NEW_SCORING env var defaults to 'true', correctly toggles V2/V1 scoring paths"
+    },
+    "item2_bucket_b_real_breadth": {
+      "status": "PASS",
+      "details": "compute_bucket_b accepts sector_breadth_score and index_breadth_score params, fno_signal_engine wires index_breadth for NIFTY/BANKNIFTY and sector_sentiment for stocks"
+    },
+    "item3_bucket_d_full_mfe": {
+      "status": "PASS",
+      "details": "compute_bucket_d implements: (a) rr_to_t1<1.0 → hard_veto + score=0, (b) t2_p_hit<0.45 → -15 penalty, (c) rr_to_best_exit>=2.0 AND t2_p_hit>=0.55 → +10 bonus, (d) rr_to_t2<1.5 → cap at 50"
+    },
+    "item4_select_targets_v2": {
+      "status": "PASS",
+      "details": "select_targets_v2 consolidated function: with prob_table returns t1, t2, p_hit_t1, p_hit_t2, abort=False; without prob_table returns abort=True with reason='no_achievable_T1_in_session'"
+    },
+    "item5_should_suppress_gating": {
+      "status": "PASS",
+      "details": "compute_confluence_score_v2 returns should_suppress=True when score<78 or bucket_d has hard_veto; fno_signal_engine returns None for suppressed signals"
+    },
+    "item6_v2_bucket_breakdown": {
+      "status": "PASS",
+      "details": "FNOSignalResponse model contains all 9 new V2 fields: confluence_score_v2, score_bucket_A/B/C/D, score_suppress_reason, score_regime_label, score_flow_band, score_news_flag"
+    }
+  },
+
+  "regression_tests": {
+    "POST /api/auth/access": "PASS - returns token and role=owner",
+    "POST /api/fno/generate": "PASS - returns NDJSON stream with progress events",
+    "GET /api/multibagger/candidates": "PASS - returns NDJSON stream",
+    "GET /api/sector-momentum": "PASS - returns 8 sectors",
+    "GET /api/batch/status": "PASS - theta_curve_entries=360 (from Batch 2)"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration46_batch3_v2_scoring.py",
+    "/app/test_reports/pytest/iteration46_results.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "All 20 backend tests pass - comprehensive BATCH 3 verification complete",
+    "V2 scoring correctly wired in fno_signal_engine.py lines 1619-1772",
+    "Bucket D hard_veto logic correctly implemented in confluence_score_v2.py lines 418-429",
+    "select_targets_v2 correctly uses ATR grid + MFE prob table lookup (mfe_mae_engine.py lines 367-495)",
+    "Signal suppression correctly returns None when should_suppress=True (line 1772)",
+    "All 9 V2 fields added to FNOSignalResponse model (models/__init__.py lines 244-252)"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration46_batch3_v2_scoring.py (new, 20 tests)"
+  ],
+
+  "success_rate": {
+    "backend": "100% (20/20 tests pass)",
+    "frontend": "N/A (backend-only testing requested)"
+  },
+
+  "test_credentials": "@shish123 / 1234",
+
+  "seed_data_creation": "None (using existing theta curves from Batch 2)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 46: BATCH 3 verification for Master Spec v2.0 completed successfully. All 20 backend tests pass. Key verifications: (1) USE_NEW_SCORING env var feature flag works correctly, (2) Bucket B real breadth wiring for NIFTY/BANKNIFTY (index_breadth) and stocks (sector_sentiment), (3) Bucket D full MFE data with hard_veto, t2_prob_adj, exit_bonus, (4) select_targets_v2 consolidated function using ATR grid + MFE prob table, (5) should_suppress signal gating returns None for suppressed signals, (6) 9 new V2 fields in FNOSignalResponse. All regression tests pass (auth, FNO generate, multibagger, sector momentum, batch status with 360 theta curves). Test file: /app/backend/tests/test_iteration46_batch3_v2_scoring.py",
+
+  "mocked_api_note": "yfinance is permanently disabled (USE_YFINANCE=false). Without active Kite session, FNO generate returns 0 signals (expected behavior). Theta curves still cached (360 entries from Batch 2)."
+}
