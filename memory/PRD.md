@@ -1,117 +1,73 @@
-# PRD — Trading Signal Platform
+# PRD — Trading Research Platform (F&O Signal Engine)
 
 ## Original Problem Statement
-Full-stack web app for stock analysis (FastAPI, React, MongoDB). Core features: F&O Trading Signals, Multibagger Screener, Portfolio Analysis.
+Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
+- F&O Trading Signals with live Kite Connect data
+- Multibagger Screener
+- Portfolio Analysis
+- Strict "Kite Supremacy" — ALL calculations backend Python, NO yfinance in production
 
-## Core Requirements
-1. **Global architecture**: ALL calculations in backend Python. NO LLM numeric work.
-2. **Data source**: Kite Connect is the ONLY production OHLCV source. yfinance disabled by default (USE_YFINANCE=false).
-3. **Mandatory Filtering**: LTP >= 50. Not NCLT/DRT. Debt < 30% mcap. Profit positive.
-4. **Time/Expiry**: 09:15-15:30 IST strict.
-5. **Confluence Score V2**: 4-Bucket system (A: Strategy, B: Direction, C: Options/Flow, D: Trade Quality). Threshold >= 78.
-6. **Dynamic Targets**: Probability-based T1/T2 using MFE/MAE + Theta decay.
-7. **Alerts & Monitoring**: NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT events (risk-focused, no imperative verbs).
-8. **Strategy Backtests**: Real backtest stats gate Bucket A. Enable only if trade_count>=100, win_rate>=0.75, expectancy_R>=0.40.
-9. **Position Sizing**: Risk-based sizing with not_affordable annotation.
-10. **CSV Seed Fallback**: Verified offline OHLCV data for when Kite is unavailable.
+## Core Architecture
+- **Backend:** FastAPI (Python 3.11) — Modularized into routes/ and services/
+- **Frontend:** React with Shadcn/UI
+- **Database:** MongoDB (motor async driver)
+- **Live Data:** Kite Connect API v3
+- **Streaming:** NDJSON StreamingResponse for heavy compute endpoints
 
-## Architecture
+## Code Structure (Post-Extraction)
 ```
-/app/backend/
-  server.py                  (~8500 lines)
-  services/
-    backtest_engine.py       — Kite OHLCV primary + CSV seed fallback (NO yfinance)
-    position_monitor.py      — NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT alerts
-    position_sizing.py       — Risk-based position sizing + budget gate
-    confluence_score_v2.py   — 4-bucket scoring (A+B+C+D), threshold=78
-    fo_universe.py           — Full NSE F&O universe (158 stocks)
-    mfe_mae_engine.py        — MFE/MAE library, probability tables, theta, best exit
-    intraday_features.py     — Multi-TF EMAs, VWAP, order flow, regime
-    options_features.py      — OI buildup, IV rank, bid-ask, depth
-    news_sentiment.py        — RSS feeds, VADER scoring, NewsFlag
-    data_verifier.py         — Parallel verification (yfinance guarded)
-    sector_momentum.py       — Sector analysis (yfinance guarded)
-    [other services...]
-  models/__init__.py         — Pydantic models
-/app/data/ohlcv_seeds/       — Verified CSV seed files for offline OHLCV
+backend/
+├── server.py                          # 3,918 lines (core utilities, data access, auth)
+├── routes/
+│   ├── fno.py                         # F&O signal generation endpoints
+│   ├── admin.py                       # Admin/user management
+│   ├── market_data.py                 # Sector momentum, script master
+│   ├── portfolio.py                   # Portfolio analysis
+│   └── multibagger.py                 # Multibagger screening
+├── services/
+│   ├── fno_signal_engine.py           # F&O signal building (2,293 lines)
+│   ├── multibagger_engine.py          # Multibagger scoring (657 lines)
+│   ├── portfolio_engine.py            # Portfolio analysis (448 lines)
+│   ├── iv_history.py                  # 52-week IV history & rank
+│   ├── sector_momentum.py            # Sector index token mapping
+│   ├── data_policy.py                # Kite Supremacy constants
+│   ├── confluence_score_v2.py         # Signal scoring buckets
+│   └── ... (14 total service modules)
+├── models/__init__.py                 # Pydantic response models
+└── deps.py                            # Shared auth dependencies
 ```
 
-## Data Source Policy
-- **Primary**: Kite Connect Historical Data API (`get_ohlcv_from_kite`)
-- **Fallback**: Verified CSV seed files (`get_ohlcv_from_csv_seed`)
-- **DISABLED**: yfinance (USE_YFINANCE=false by default in all modules)
-- **Admin Panel**: CSV seed upload/delete via /api/admin/csv-seeds endpoints
+## Key Endpoints
+| Endpoint | Method | Type | Description |
+|---|---|---|---|
+| /api/fno/generate | POST | NDJSON Stream | Full F&O signal generation |
+| /api/fno/signals/index | POST | NDJSON Stream | Index-specific signals |
+| /api/multibagger/candidates | GET | NDJSON Stream | Multibagger scan |
+| /api/multibagger/generate | POST | NDJSON Stream | Multibagger analysis |
+| /api/sector-momentum | GET | JSON | 8 NSE sector indices |
+| /api/portfolio/analyze | POST | JSON | Portfolio analysis |
+| /api/auth/access | POST | JSON | Authentication |
 
-## Completed Work
-
-### Phase 1-2 (Earlier Sessions)
-- F&O Signal Engine, Multibagger Screener, Portfolio Analysis
-- Pullback entry, lot size fix, export enhancements
-
-### Phase 3 — Batches 1-3 (2026-04-07)
-- Feature & data layer, MFE/MAE backtests, 4-Bucket Confluence Score V2
-
-### Mini-Batch + Step 1 (2026-04-07)
-- F&O Universe expanded to 158 stocks, Kite Connect primary
-
-### Step 2: Batch 4 — Monitoring & Alerts (2026-04-07)
-- position_monitor.py wired into _refresh_open_position
-- MonitoringEvent model, GET /api/fno/position-alerts endpoint
-
-### Section 2: URGENT_EXIT Wording Fix (2026-04-08)
-- build_urgent_exit_reason(): no imperative verbs
-- expected_best_price_next_60s replaces recommended_exit_price
-
-### Step 3: strategy_backtests (2026-04-08)
-- 5 trade simulators, batch job, Bucket A wiring
-- Feature flag USE_BACKTEST_DB (default "0" = fallback)
-
-### Step 4: Position Sizing (2026-04-08)
-- compute_position_size, not_affordable annotation on signals
-
-### HOTFIX: yfinance Removal (2026-04-08)
-- backtest_engine.py rewritten: Kite → CSV seed → skip (zero yfinance)
-- USE_YFINANCE=false default across server.py, data_verifier.py, sector_momentum.py
-- CSV seed admin panel in frontend (upload, list, delete)
-- GET/POST/DELETE /api/admin/csv-seeds endpoints
-- Tests: Iteration 36 — 21/21 backend + 10/10 frontend pass
+## Completed Features
+- [x] Route extraction: fno.py, admin.py, market_data.py, portfolio.py, multibagger.py
+- [x] Business logic extraction: fno_signal_engine.py, multibagger_engine.py, portfolio_engine.py
+- [x] NDJSON streaming for all heavy compute endpoints (prevents 504 timeouts)
+- [x] Kite Supremacy data policy (yfinance banned, data_policy.py enforced)
+- [x] Sector momentum Kite rewrite with 8 NSE index tokens
+- [x] 52-week IV Rank enrichment (iv_history.py, MongoDB collection)
+- [x] FNOSignalResponse model updated with iv_rank_52w and atm_iv fields
+- [x] Frontend IV Rank badges in signal cards
+- [x] Export ATM IV and IV Rank 52W columns in CSV/PDF/Word
+- [x] Same-day expiry target bug fix
+- [x] Pullback entry strategy ("Best Budget Entry")
+- [x] Lot size corrections (NIFTY=65)
+- [x] Golden Star export indicators
 
 ## Testing Status
-- Iteration 34: 33/33 (Batch 4 Monitoring)
-- Iteration 35: 32/32 (Sections 2-4)
-- Iteration 36: 21/21 backend + 10/10 frontend (yfinance HOTFIX)
-- Iteration 37: 23/23 backend + 13/13 frontend (Route Extraction Regression)
-- Iteration 38: 36/36 backend (Kite-Only Data Integrity Hardening)
-- Iteration 39: 26/26 backend (Global Kite Supremacy Rule / data_policy.py)
-- Iteration 40: 19/21 backend + frontend 100% (Route Extraction Batch 2 — 2 timeouts on slow ops, not bugs)
+- Iteration 43: 31/31 backend pass, all frontend flows verified (100%)
+- Previous: iterations 37-42 all passing
 
-## Prioritized Backlog
-
-### P1
-- StreamingResponse for /fno/generate + /multibagger/candidates (prevent 504 gateway timeouts)
-- 52-week IV data for IV Rank
-
-### P2
-- App.js componentization (~3000 lines)
-- Budget Entry Trigger Alert
-
-## Route Extraction Status (2026-04-08)
-- `routes/fno.py` — DONE (11 endpoints + 3 backward-compat)
-- `routes/admin.py` — DONE (22 endpoints)
-- `routes/market_data.py` — DONE (10 endpoints: script-master, sector-momentum, kite/*)
-- `routes/portfolio.py` — DONE (2 endpoints: analyze, analyze-upload)
-- `routes/multibagger.py` — DONE (3 endpoints: generate, candidates, custom-search)
-- `deps.py` — DONE (shared auth dependencies)
-- server.py reduced from ~8450 to ~6876 lines (1,574 lines extracted)
-
-## Kite-Only Data Integrity (2026-04-08)
-- `data_verifier.py` — REWRITTEN: Kite-native validation only
-- `sector_momentum.py` — REWRITTEN: Kite historical data only, 15 NSE sectors
-- VIX, hist OHLCV, index data: yfinance fallbacks REMOVED
-- Dead code `_fetch_yfinance_hist_ohlcv` REMOVED
-- Only remaining yfinance: `_fetch_yfinance_fundamentals` (gated USE_YFINANCE=false)
-
-## Global Data Policy (2026-04-08)
-- `services/data_policy.py` — KITE_IS_SOURCE_OF_TRUTH=True, USE_YFINANCE=False
-- Imported in: data_verifier, sector_momentum, backtest_engine, intraday_features, options_features, server.py
-- `_fetch_yfinance_fundamentals` marked with disabled-stub comment block
+## Backlog (Priority Order)
+- **P2:** App.js componentization (~3,237 lines)
+- **P2:** Budget Entry Trigger Alert UI
+- **P2:** Position Sizing Calculator enhancements
