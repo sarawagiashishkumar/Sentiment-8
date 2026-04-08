@@ -85,13 +85,10 @@ frontend/
 - [x] P2-C: ATR14-based sizing (lots_atr_method), fixed-risk sizing (lots_fixed_risk), max_risk_Rs, account_risk_pct
 - [x] Settings panel in F&O dashboard (Account Size + Risk Per Trade %)
 - [x] Position sizing info badges in signal cards (Lots, ATR, Risk, Max₹)
+- [x] Test infrastructure fix: BASE_URL resolution from frontend/.env fallback + asyncio.run() for Py3.11
 
 ## Testing Status
-- Iteration 48: 8/8 unit + 11/11 integration pass (P2-B/C verification, 100%)
-- Iteration 47: 27/27 backend pass (Batch 4 verification, 100%)
-- Iteration 46: 20/20 backend pass (Batch 3 verification, 100%)
-- Iteration 45: 23/23 backend pass (Batch 2 verification, 100%)
-- Iteration 44: 28/28 backend pass (Batch 1 verification, 100%)
+- All iterations (44-48): 83/83 pass, 0 failures, 0 errors (fully green)
 
 ## Backlog (Priority Order)
 - **Future:** IV cone + IV term structure charts (wait for 30+ days iv_history data)

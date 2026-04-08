@@ -17,7 +17,20 @@ import pytest
 import requests
 from datetime import datetime, timezone, timedelta
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
+def _resolve_base_url():
+    url = os.environ.get('REACT_APP_BACKEND_URL', '').strip().rstrip('/')
+    if url:
+        return url
+    try:
+        with open('/app/frontend/.env') as f:
+            for line in f:
+                if line.startswith('REACT_APP_BACKEND_URL='):
+                    return line.split('=', 1)[1].strip().rstrip('/')
+    except FileNotFoundError:
+        pass
+    return 'https://signal-backtester.preview.emergentagent.com'
+
+BASE_URL = _resolve_base_url()
 AUTH_ENDPOINT = f"{BASE_URL}/api/auth/access"
 ADMIN_USERNAME = "@shish123"
 ADMIN_PASSWORD = "1234"
@@ -478,7 +491,7 @@ class TestEmitUrgentExit:
                 return result
         
         # Run the async test
-        result = asyncio.get_event_loop().run_until_complete(test_emit())
+        result = asyncio.run(test_emit())
         # Should return False because remaining_mins < 5
         assert result == False, f"Expected False (no trigger in final 5 mins), got {result}"
 

@@ -16,7 +16,20 @@ import json
 # Add backend to path for module imports
 sys.path.insert(0, '/app/backend')
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
+def _resolve_base_url():
+    url = os.environ.get('REACT_APP_BACKEND_URL', '').strip().rstrip('/')
+    if url:
+        return url
+    try:
+        with open('/app/frontend/.env') as f:
+            for line in f:
+                if line.startswith('REACT_APP_BACKEND_URL='):
+                    return line.split('=', 1)[1].strip().rstrip('/')
+    except FileNotFoundError:
+        pass
+    return 'https://signal-backtester.preview.emergentagent.com'
+
+BASE_URL = _resolve_base_url()
 
 # ============================================================================
 # REGRESSION TESTS - Existing Endpoints
