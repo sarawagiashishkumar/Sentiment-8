@@ -12,6 +12,7 @@ import { LiveInfoBox } from "@/components/shared/LiveInfoBox";
 import { FNOSignalCard } from "./FNOSignalCard";
 import { FNOStickyCards } from "./FNOStickyCards";
 import { FNOEventPopup } from "./FNOEventPopup";
+import { FNOSignalHistory } from "./FNOSignalHistory";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -371,6 +372,12 @@ export function FNODashboard({
           </p>
         </div>
       )}
+
+      {/* Signal History & Performance Tracking */}
+      <div className="mt-4 border-t border-slate-700/50 pt-4">
+        <h3 className="text-sm font-semibold text-slate-300 mb-2">Signal Performance Tracking</h3>
+        <FNOSignalHistory authHeaders={authHeaders} />
+      </div>
     </section>
   );
 }

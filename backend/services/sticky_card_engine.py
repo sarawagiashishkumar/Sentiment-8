@@ -27,6 +27,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # ---------------------------------------------------------------------------
 COLL_STICKY_CARDS = "sticky_fno_cards"
 COLL_POPUP_EVENTS = "fno_popup_events"
+COLL_SIGNAL_HISTORY = "fno_signal_history"
 
 # De-duplication window (same event_type + signal_id)
 EVENT_DEDUP_MINUTES = 5
@@ -147,12 +148,40 @@ async def update_card(db, signal_id: str, updates: dict) -> bool:
 
 
 async def close_card(db, signal_id: str, state: str, reason: str) -> bool:
-    """Transition card to a terminal state."""
-    return await update_card(db, signal_id, {
+    """Transition card to a terminal state and archive to signal history."""
+    now = datetime.now(timezone.utc)
+    ok = await update_card(db, signal_id, {
         "signal_state": state,
-        "closed_at": datetime.now(timezone.utc),
+        "closed_at": now,
         "close_reason": reason,
     })
+    if ok:
+        # Archive to signal history
+        try:
+            card = await db[COLL_STICKY_CARDS].find_one(
+                {"signal_id": signal_id}, {"_id": 0},
+            )
+            if card:
+                card["archived_at"] = now
+                outcome = "win" if state == "CLOSED_WIN" else "loss" if state == "CLOSED_LOSS" else "neutral"
+                card["outcome"] = outcome
+                # Calculate P&L if we have entry and close prices
+                entry = card.get("entry_price", 0)
+                close_px = card.get("current_price", entry)
+                direction = card.get("direction", "LONG")
+                if entry > 0:
+                    pnl_pct = ((close_px - entry) / entry * 100) if direction == "LONG" else ((entry - close_px) / entry * 100)
+                    card["pnl_pct"] = round(pnl_pct, 2)
+                else:
+                    card["pnl_pct"] = 0.0
+                await db[COLL_SIGNAL_HISTORY].update_one(
+                    {"signal_id": signal_id},
+                    {"$set": card},
+                    upsert=True,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to archive signal {signal_id}: {e}")
+    return ok
 
 
 # ---------------------------------------------------------------------------
@@ -505,3 +534,136 @@ async def get_all_cards(db, include_terminal: bool = False) -> list[dict]:
 async def cancel_card(db, signal_id: str) -> bool:
     """User-initiated cancel of a sticky card."""
     return await close_card(db, signal_id, "CANCELLED", "user_manual_cancel")
+
+
+# ---------------------------------------------------------------------------
+# Signal History: Logging & Performance Stats
+# ---------------------------------------------------------------------------
+
+COLL_SIGNAL_LOG = "fno_signal_log"
+
+
+async def log_generated_signal(db, signal_data: dict) -> None:
+    """
+    Log every generated signal (regardless of sticky card creation).
+    Called from the generate route after each signal is emitted.
+    """
+    try:
+        doc = {
+            "symbol": signal_data.get("underlying", ""),
+            "option_symbol": signal_data.get("script", ""),
+            "direction": signal_data.get("direction", ""),
+            "strategy": signal_data.get("strategy_library_id", ""),
+            "entry_price": signal_data.get("entry_price", 0),
+            "stop_loss": signal_data.get("stop_loss", 0),
+            "target1": signal_data.get("target1"),
+            "target2": signal_data.get("target2"),
+            "best_exit_price": signal_data.get("best_exit_price"),
+            "confluence_score": signal_data.get("confluence_score", 0),
+            "signal_quality": signal_data.get("signal_quality", ""),
+            "not_affordable": signal_data.get("not_affordable", False),
+            "expiry": signal_data.get("expiry", ""),
+            "generated_at": datetime.now(timezone.utc),
+        }
+        await db[COLL_SIGNAL_LOG].insert_one(doc)
+    except Exception as e:
+        logger.debug(f"Signal log insert failed: {e}")
+
+
+async def get_signal_history(db, limit: int = 50, skip: int = 0) -> list[dict]:
+    """Get paginated signal history (archived terminal cards)."""
+    cursor = db[COLL_SIGNAL_HISTORY].find(
+        {}, {"_id": 0},
+    ).sort("closed_at", -1).skip(skip).limit(limit)
+    return await cursor.to_list(length=limit)
+
+
+async def get_performance_stats(db) -> dict:
+    """
+    Aggregate performance statistics from signal history.
+    Returns: total, wins, losses, neutral, win_rate, avg_pnl_pct,
+             best_trade, worst_trade, by_symbol breakdown.
+    """
+    all_docs = await db[COLL_SIGNAL_HISTORY].find(
+        {}, {"_id": 0, "outcome": 1, "pnl_pct": 1, "symbol": 1,
+             "option_symbol": 1, "direction": 1, "signal_state": 1},
+    ).to_list(length=5000)
+
+    total = len(all_docs)
+    if total == 0:
+        return {
+            "total": 0, "wins": 0, "losses": 0, "neutral": 0,
+            "win_rate": 0.0, "avg_pnl_pct": 0.0,
+            "best_trade_pnl": 0.0, "worst_trade_pnl": 0.0,
+            "by_symbol": {},
+        }
+
+    wins = sum(1 for d in all_docs if d.get("outcome") == "win")
+    losses = sum(1 for d in all_docs if d.get("outcome") == "loss")
+    neutral = total - wins - losses
+    pnls = [d.get("pnl_pct", 0) for d in all_docs if d.get("pnl_pct") is not None]
+    avg_pnl = round(sum(pnls) / len(pnls), 2) if pnls else 0.0
+    best = round(max(pnls), 2) if pnls else 0.0
+    worst = round(min(pnls), 2) if pnls else 0.0
+
+    # By-symbol breakdown
+    by_symbol = {}
+    for d in all_docs:
+        sym = d.get("symbol", "UNKNOWN")
+        if sym not in by_symbol:
+            by_symbol[sym] = {"total": 0, "wins": 0, "losses": 0, "pnls": []}
+        by_symbol[sym]["total"] += 1
+        if d.get("outcome") == "win":
+            by_symbol[sym]["wins"] += 1
+        elif d.get("outcome") == "loss":
+            by_symbol[sym]["losses"] += 1
+        if d.get("pnl_pct") is not None:
+            by_symbol[sym]["pnls"].append(d["pnl_pct"])
+
+    by_symbol_clean = {}
+    for sym, data in by_symbol.items():
+        pnl_list = data["pnls"]
+        by_symbol_clean[sym] = {
+            "total": data["total"],
+            "wins": data["wins"],
+            "losses": data["losses"],
+            "win_rate": round(data["wins"] / data["total"] * 100, 1) if data["total"] else 0,
+            "avg_pnl": round(sum(pnl_list) / len(pnl_list), 2) if pnl_list else 0,
+        }
+
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "neutral": neutral,
+        "win_rate": round(wins / total * 100, 1) if total else 0.0,
+        "avg_pnl_pct": avg_pnl,
+        "best_trade_pnl": best,
+        "worst_trade_pnl": worst,
+        "by_symbol": by_symbol_clean,
+    }
+
+
+async def get_signal_log(db, limit: int = 50, skip: int = 0) -> list[dict]:
+    """Get paginated signal generation log."""
+    cursor = db[COLL_SIGNAL_LOG].find(
+        {}, {"_id": 0},
+    ).sort("generated_at", -1).skip(skip).limit(limit)
+    return await cursor.to_list(length=limit)
+
+
+async def ensure_history_indexes(db) -> None:
+    """Create indexes for signal history and log collections."""
+    await db[COLL_SIGNAL_HISTORY].create_index(
+        [("signal_id", 1)], unique=True, name="history_signal_id_unique",
+    )
+    await db[COLL_SIGNAL_HISTORY].create_index(
+        [("closed_at", -1)], name="history_closed_at_desc",
+    )
+    await db[COLL_SIGNAL_HISTORY].create_index(
+        [("outcome", 1)], name="history_outcome",
+    )
+    await db[COLL_SIGNAL_LOG].create_index(
+        [("generated_at", -1)], name="log_generated_at_desc",
+    )
+    logger.info("Signal history + log indexes ensured")

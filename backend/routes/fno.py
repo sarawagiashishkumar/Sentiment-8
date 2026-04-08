@@ -625,3 +625,42 @@ async def trigger_sticky_card_refresh(user=Depends(get_owner_user)):
     from services.sticky_card_engine import refresh_sticky_cards
     result = await refresh_sticky_cards(_srv.db)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Signal History & Performance Tracking
+# ---------------------------------------------------------------------------
+
+@fno_router.get("/fno/signal-history")
+async def get_signal_history_endpoint(
+    limit: int = Query(default=50, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+    user=Depends(get_owner_user),
+):
+    """Get paginated signal history (archived terminal cards with outcomes)."""
+    import server as _srv
+    from services.sticky_card_engine import get_signal_history
+    history = await get_signal_history(_srv.db, limit=limit, skip=skip)
+    return {"history": history, "count": len(history)}
+
+
+@fno_router.get("/fno/performance-stats")
+async def get_performance_stats_endpoint(user=Depends(get_owner_user)):
+    """Get aggregated performance statistics from signal history."""
+    import server as _srv
+    from services.sticky_card_engine import get_performance_stats
+    stats = await get_performance_stats(_srv.db)
+    return stats
+
+
+@fno_router.get("/fno/signal-log")
+async def get_signal_log_endpoint(
+    limit: int = Query(default=50, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+    user=Depends(get_owner_user),
+):
+    """Get paginated signal generation log (all generated signals)."""
+    import server as _srv
+    from services.sticky_card_engine import get_signal_log
+    log = await get_signal_log(_srv.db, limit=limit, skip=skip)
+    return {"log": log, "count": len(log)}

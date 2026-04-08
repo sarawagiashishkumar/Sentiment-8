@@ -3981,6 +3981,12 @@ async def startup_tasks():
         logger.warning("Sticky card index creation failed (non-fatal): %s", exc)
 
     try:
+        from services.sticky_card_engine import ensure_history_indexes as _ensure_hist_indexes
+        await _ensure_hist_indexes(db)
+    except Exception as exc:
+        logger.warning("Signal history index creation failed (non-fatal): %s", exc)
+
+    try:
         import asyncio as _aio
         from services.news_sentiment import start_continuous_monitor, stop_continuous_monitor
         from services.sticky_card_engine import get_watch_list_symbols

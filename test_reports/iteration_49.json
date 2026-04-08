@@ -1,0 +1,86 @@
+{
+  "summary": "Iteration 49: Historical Signal Performance Tracking - All tests PASS. Backend: 6/6 API tests pass. Frontend: Signal Performance Tracking UI verified - 3 tabs (Performance, Closed Trades, Signal Log) all clickable and switch content correctly. Empty state messages display properly. P2-B regression OK (settings gear, budget display visible).",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestPerformanceStatsEndpoint::test_performance_stats_returns_valid_structure": "PASS - Returns total, wins, losses, neutral, win_rate, avg_pnl_pct, best_trade_pnl, worst_trade_pnl, by_symbol",
+    "TestSignalHistoryEndpoint::test_signal_history_returns_paginated": "PASS - Returns history array and count",
+    "TestSignalLogEndpoint::test_signal_log_returns_paginated": "PASS - Returns log array and count",
+    "TestCloseCardArchival::test_close_card_creates_history_entry": "PASS - close_card archives to fno_signal_history with outcome and pnl_pct",
+    "TestLogGeneratedSignal::test_log_inserts_signal": "PASS - log_generated_signal inserts into fno_signal_log",
+    "TestPerformanceStatsAggregation::test_aggregation_with_data": "PASS - Aggregates wins/losses/neutral correctly"
+  },
+
+  "frontend_verification": {
+    "fno_page_loads": "PASS",
+    "settings_gear_icon": "PASS - data-testid='fno-settings-toggle' visible (P2-B regression OK)",
+    "budget_display": "PASS - data-testid='fno-budget-display' shows 'Budget: ₹5,00,000 | Risk: 2%'",
+    "signal_history_section": "PASS - data-testid='fno-signal-history' visible at bottom of F&O page",
+    "performance_tab": "PASS - data-testid='history-tab-stats' clickable, shows empty state message",
+    "closed_trades_tab": "PASS - data-testid='history-tab-history' clickable, shows empty state",
+    "signal_log_tab": "PASS - data-testid='history-tab-log' clickable, shows empty state",
+    "refresh_button": "PASS - data-testid='history-refresh' clickable",
+    "empty_state_message": "PASS - Shows 'No closed trades yet. Performance stats will appear once signals reach terminal states'",
+    "main_tabs_regression": "PASS - Home, Multibagger, F&O, Portfolio, Sectors all render correctly"
+  },
+
+  "features_verified": {
+    "GET /api/fno/performance-stats": "PASS - Returns valid structure with total, wins, losses, win_rate, avg_pnl_pct, by_symbol",
+    "GET /api/fno/signal-history": "PASS - Returns paginated history with count",
+    "GET /api/fno/signal-log": "PASS - Returns paginated log with count",
+    "close_card archival": "PASS - Archives to fno_signal_history with outcome and pnl_pct calculation",
+    "log_generated_signal": "PASS - Inserts into fno_signal_log collection",
+    "Signal Performance Tracking UI": "PASS - Section visible at bottom of F&O Projections page",
+    "3 tabs clickable": "PASS - Performance, Closed Trades, Signal Log tabs switch content",
+    "Empty state message": "PASS - Shows when no data",
+    "Refresh button": "PASS - Works correctly",
+    "P2-B regression": "PASS - Settings gear icon and budget display still visible"
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration49_signal_history.py",
+    "/app/test_reports/pytest/iteration49_results.xml",
+    "/app/test_reports/it49_fno_signal_history.jpeg",
+    "/app/test_reports/it49_fno_page.jpeg",
+    "/app/test_reports/it49_tabs_test.jpeg"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "All Signal History features implemented correctly",
+    "API endpoints return proper structure with pagination",
+    "close_card correctly calculates P&L percentage based on direction (LONG/SHORT)",
+    "Frontend tabs switch content correctly with proper data-testid attributes",
+    "Empty state messages are user-friendly and informative"
+  ],
+
+  "updated_files": [],
+
+  "success_rate": {
+    "backend": "100% (6/6 tests pass)",
+    "frontend": "100% (all Signal History UI features verified)"
+  },
+
+  "test_credentials": "@shish123 (owner, no PIN required)",
+
+  "seed_data_creation": "None - Signal history collections are empty as expected (no signals archived yet)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 49: Historical Signal Performance Tracking fully verified. Key features: (1) GET /api/fno/performance-stats returns aggregated stats (total, wins, losses, win_rate, avg_pnl_pct, by_symbol), (2) GET /api/fno/signal-history returns paginated closed trades, (3) GET /api/fno/signal-log returns paginated signal generation log, (4) close_card archives to fno_signal_history with outcome and pnl_pct, (5) log_generated_signal inserts into fno_signal_log, (6) Frontend Signal Performance Tracking section at bottom of F&O page with 3 tabs (Performance, Closed Trades, Signal Log), (7) Empty state messages display correctly, (8) Refresh button works. P2-B regression OK (settings gear, budget display). All 6 backend tests pass. Test file: test_iteration49_signal_history.py.",
+
+  "mocked_api_note": "No mocked APIs. yfinance is permanently disabled per Kite Supremacy rule."
+}
