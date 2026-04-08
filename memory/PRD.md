@@ -39,31 +39,52 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - [x] Historical Signal Performance Tracking
 - [x] IV Analytics: IV Cone + IV Term Structure (data pipeline + charts)
 - [x] Multi-Timeframe Analysis Views (Daily/Weekly/Monthly with alignment scoring)
-- [x] Signal Log Auto-Capture (logs every generated signal + IV term structure during F&O projection)
-- [x] NDJSONStreamConsumer memory leak fix (AbortController + signal cleanup on unmount)
-- [x] server.py modular extraction: date_utils.py (118 lines), utils.py (69 lines) — server.py 4019→3890 lines
+- [x] Signal Log Auto-Capture
+- [x] NDJSONStreamConsumer memory leak fix (AbortController)
+- [x] Architecture Hardening Phase 1: utils.py, date_utils.py, position_parser.py, fundamental_scoring.py (server.py 4019→3578)
+- [x] Architecture Hardening Phase 2: kite_client.py, fundamental_data.py, user_service.py, validators.py (server.py 3578→2218)
 
 ## Testing Status
-- Iterations 44-50: 97 tests, all green (0 failures, 0 errors)
+- Iterations 44-51: All green. 58 combined recent tests passing.
+- Test file: test_iteration51_arch_extraction.py (25 tests for extraction validation)
 
 ## Code Architecture
 ```
 backend/
-├── server.py           (3890 lines — auth, startup, Kite client, domain mgmt)
+├── server.py              (2218 lines — auth routes, startup, caching, domain mgmt)
 ├── services/
-│   ├── utils.py         (NEW: clamp, sanitize_float, utc_now_iso, safe_ratio, etc.)
-│   ├── date_utils.py    (NEW: today_ist, trading days, expiry risk, calendar days)
-│   ├── iv_analytics.py  (IV cone, term structure)
+│   ├── kite_client.py      (NEW: All Kite Connect API interactions)
+│   ├── fundamental_data.py (NEW: Piotroski, Beneish, yfinance fundamentals)
+│   ├── user_service.py     (NEW: User CRUD, role helpers)
+│   ├── validators.py       (NEW: Input validation pure functions)
+│   ├── utils.py            (clamp, sanitize_float, utc_now_iso, safe_ratio, etc.)
+│   ├── date_utils.py       (today_ist, trading days, expiry risk, calendar days)
+│   ├── position_parser.py  (Position parsing helpers)
+│   ├── fundamental_scoring.py  (Fund scoring helpers)
+│   ├── iv_analytics.py     (IV cone, term structure)
 │   ├── multiframe_analysis.py  (Multi-TF daily/weekly/monthly)
+│   ├── fno_signal_engine.py (Core F&O signal logic)
+│   ├── sticky_card_engine.py (State machine for live signals)
+│   ├── news_sentiment.py   (RSS + VADER news scoring)
+│   ├── confluence_score_v2.py (4-bucket scoring)
+│   ├── mfe_mae_engine.py   (MFE/MAE/Theta persistence)
 │   └── ... (25+ service modules)
 └── routes/
-    └── fno.py           (721 lines — all F&O endpoints)
+    ├── fno.py              (721 lines — all F&O endpoints)
+    ├── batch_jobs.py       (MFE library batch jobs)
+    └── ...
 ```
 
 ## DB Collections
 sticky_fno_cards, fno_popup_events, fno_signal_history, fno_signal_log,
 mfe_library, theta_curves, fwd_mfe, iv_history, iv_term_structure,
-regime_history, index_constituents
+regime_history, index_constituents, fundamental_cache
 
-## Backlog
-All planned features complete. No remaining P0/P1 items.
+## Backlog (P2)
+- Continue server.py modularization: Extract script_master, india_vix, hist_ohlcv, auth routes (target: <1500 lines)
+- Advanced IV analytics: IV cone + IV term structure chart (wait for 30+ days of iv_history data)
+- Historical signal performance tracking enhancements
+- Multi-timeframe analysis views enhancements
+
+## Kite Connect Postback URL
+https://signal-backtester.preview.emergentagent.com/api/kite/postback
