@@ -24,20 +24,20 @@ backend/
 │   ├── market_data.py                 # Sector momentum, script master
 │   ├── portfolio.py                   # Portfolio analysis
 │   ├── multibagger.py                 # Multibagger screening
-│   └── batch_jobs.py                  # NEW: Offline MFE/Theta/FwdMFE builders
+│   └── batch_jobs.py                  # Offline MFE/Theta/FwdMFE builders
 ├── services/
-│   ├── fno_signal_engine.py           # F&O signal building (~2,550 lines)
-│   ├── mfe_mae_engine.py             # MFE/MAE library + DB persistence (~1,080 lines)
+│   ├── fno_signal_engine.py           # F&O signal building (~2,700 lines)
+│   ├── mfe_mae_engine.py             # MFE/MAE library + select_targets_v2 + DB persistence (~1,300 lines)
+│   ├── confluence_score_v2.py         # 4-bucket scoring (A/B/C/D) with hard vetoes
 │   ├── constituent_engine.py          # Batch 1: Weighted breadth
 │   ├── regime_engine.py              # Batch 1: 8-regime classifier
-│   ├── confluence_score_v2.py         # 4-bucket scoring
 │   ├── iv_history.py                  # 52-week IV history & rank
 │   ├── multibagger_engine.py          # Multibagger scoring (657 lines)
 │   ├── portfolio_engine.py            # Portfolio analysis (448 lines)
 │   ├── sector_momentum.py            # Sector index token mapping
 │   ├── data_policy.py                # Kite Supremacy constants
 │   └── ... (18+ total service modules)
-├── models/__init__.py                 # Pydantic response models
+├── models/__init__.py                 # Pydantic response models (with V2 scoring fields)
 └── deps.py                            # Shared auth dependencies
 ```
 
@@ -79,23 +79,29 @@ backend/
 - [x] Golden Star export indicators
 - [x] **Master Spec v2.0 BATCH 1** — Data & Feature Layer (constituent_engine, regime_engine, LOG-ONLY)
 - [x] **Master Spec v2.0 BATCH 2** — MFE/MAE Library + Theta Curves + Forward MFE DB persistence, cache-first pipeline, batch job endpoints
+- [x] **Master Spec v2.0 BATCH 3** — Target Engine + Confluence Score overhaul:
+  - USE_NEW_SCORING feature flag (env var toggle)
+  - Bucket B real breadth wiring (index_breadth for NIFTY/BANKNIFTY, sector_sentiment for stocks)
+  - Bucket D full MFE data (t2_p_hit, rr_to_best_exit, hard_veto, penalties, bonuses)
+  - select_targets_v2() consolidated target selection
+  - should_suppress signal gating (suppressed signals return None, logged)
+  - 9 new V2 fields in FNOSignalResponse
 
 ## Master Spec v2.0 Implementation Progress
 | Batch | Description | Status |
 |---|---|---|
 | Batch 1 | Data Layer: Constituent Engine, Regime Engine, Liquidity/PCR | DONE (28/28 tests) |
 | Batch 2 | MFE/MAE Library, Theta Curves, Forward MFE persistence | DONE (23/23 tests) |
-| Batch 3 | Target Engine + Confluence Score overhaul | NOT STARTED |
+| Batch 3 | Target Engine + Confluence Score overhaul (6 items) | DONE (20/20 tests) |
 | Batch 4 | News Sentiment + Sticky Card Monitoring | NOT STARTED |
 
 ## Testing Status
+- Iteration 46: 20/20 backend pass (Batch 3 verification, 100%)
 - Iteration 45: 23/23 backend pass (Batch 2 verification, 100%)
 - Iteration 44: 28/28 backend pass (Batch 1 verification, 100%)
-- Previous: iterations 37-43 all passing
 
 ## Backlog (Priority Order)
-- **P0:** Master Spec v2.0 Batch 3 (Target Engine + Confluence Score)
-- **P0:** Master Spec v2.0 Batch 4 (News Sentiment + Monitoring)
+- **P0:** Master Spec v2.0 Batch 4 (News Sentiment + Sticky Card Monitoring)
 - **P2:** App.js componentization (~3,237 lines)
 - **P2:** Budget Entry Trigger Alert UI
 - **P2:** Position Sizing Calculator enhancements
