@@ -540,19 +540,21 @@ class TestStrategyThresholdEnforcement:
 
     def test_fno_generate_works_when_db_empty(self, auth_headers):
         """With empty/insufficient backtest data, signal generation should NOT return 422."""
-        resp = requests.post(
-            f"{BASE_URL}/api/fno/generate",
-            json={"symbols": ["NIFTY"]},
+        resp = safe_streaming_post(
+            f"http://localhost:8001/api/fno/generate",
+            json_body={"symbols": ["NIFTY"]},
             headers=auth_headers,
-            timeout=60,
+            timeout=240,
+            skip_msg="Streaming fno/generate timed out (Kite API may be unavailable)",
         )
+        if resp is None:
+            pytest.skip("Streaming endpoint returned None / timed out")
         # Should not be 422 (unless DB has >= 10 trades AND no strategy passes — unlikely in test env)
         assert resp.status_code != 422 or resp.status_code == 200, \
             f"Unexpected 422 when backtest DB should be empty/insufficient: {resp.text[:300]}"
         if resp.status_code == 200:
             print("PASS: fno/generate returns 200 (no 422 with insufficient backtest data)")
         elif resp.status_code == 422:
-            # This means DB has >= 10 trades and no strategy qualifies — valid but unexpected
             print(f"NOTE: 422 returned — DB may have >= 10 trades but no strategy passes threshold: {resp.text[:300]}")
         else:
             print(f"NOTE: Got {resp.status_code} — {resp.text[:200]}")

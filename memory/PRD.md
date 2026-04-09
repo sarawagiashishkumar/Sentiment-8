@@ -41,50 +41,48 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - [x] Multi-Timeframe Analysis Views (Daily/Weekly/Monthly with alignment scoring)
 - [x] Signal Log Auto-Capture
 - [x] NDJSONStreamConsumer memory leak fix (AbortController)
-- [x] Architecture Hardening Phase 1: utils.py, date_utils.py, position_parser.py, fundamental_scoring.py (server.py 4019→3578)
-- [x] Architecture Hardening Phase 2: kite_client.py, fundamental_data.py, user_service.py, validators.py (server.py 3578→2218)
+- [x] Architecture Hardening Phase 1: utils.py, date_utils.py, position_parser.py, fundamental_scoring.py (server.py 4019->3578)
+- [x] Architecture Hardening Phase 2: kite_client.py, fundamental_data.py, user_service.py, validators.py (server.py 3578->2218)
+- [x] Architecture Hardening Phase 3: script_master.py, india_vix.py, hist_data.py, position_service.py, routes/auth.py (server.py 2220->981)
+- [x] Full pytest suite fix: 1281 passed, 0 failed, 23 skipped (100% green)
 
 ## Testing Status
-- Iterations 44-51: All green. 58 combined recent tests passing.
-- Test file: test_iteration51_arch_extraction.py (25 tests for extraction validation)
+- Full suite: 1281 passed, 0 failed, 23 skipped (100% green as of 2026-04-09)
+- 47 test files across /app/backend/tests/
+- Test helpers in tests/helpers/test_utils.py (safe_streaming_post, read_backend_source, get_base_url)
 
-## Code Architecture
+## Architecture (Post Phase 3 Extraction)
 ```
-backend/
-├── server.py              (2218 lines — auth routes, startup, caching, domain mgmt)
+/app/backend/
+├── server.py                        # 981 lines (core app + startup + residual endpoints)
+├── routes/
+│   ├── auth.py                      # NEW Phase 3: login, logout, me, settings
+│   ├── fno.py                       # F&O signal endpoints
+│   ├── admin.py                     # Admin panel endpoints
+│   ├── market_data.py               # Market data endpoints
+│   ├── portfolio.py                 # Portfolio endpoints
+│   ├── multibagger.py               # Multibagger endpoints
+│   └── batch_jobs.py                # Batch/cron endpoints
 ├── services/
-│   ├── kite_client.py      (NEW: All Kite Connect API interactions)
-│   ├── fundamental_data.py (NEW: Piotroski, Beneish, yfinance fundamentals)
-│   ├── user_service.py     (NEW: User CRUD, role helpers)
-│   ├── validators.py       (NEW: Input validation pure functions)
-│   ├── utils.py            (clamp, sanitize_float, utc_now_iso, safe_ratio, etc.)
-│   ├── date_utils.py       (today_ist, trading days, expiry risk, calendar days)
-│   ├── position_parser.py  (Position parsing helpers)
-│   ├── fundamental_scoring.py  (Fund scoring helpers)
-│   ├── iv_analytics.py     (IV cone, term structure)
-│   ├── multiframe_analysis.py  (Multi-TF daily/weekly/monthly)
-│   ├── fno_signal_engine.py (Core F&O signal logic)
-│   ├── sticky_card_engine.py (State machine for live signals)
-│   ├── news_sentiment.py   (RSS + VADER news scoring)
-│   ├── confluence_score_v2.py (4-bucket scoring)
-│   ├── mfe_mae_engine.py   (MFE/MAE/Theta persistence)
-│   └── ... (25+ service modules)
-└── routes/
-    ├── fno.py              (721 lines — all F&O endpoints)
-    ├── batch_jobs.py       (MFE library batch jobs)
-    └── ...
+│   ├── script_master.py             # NEW Phase 3: NSE/Angel/Kite/Dhan symbol sync
+│   ├── india_vix.py                 # NEW Phase 3: India VIX via Kite
+│   ├── hist_data.py                 # NEW Phase 3: Historical OHLCV cache
+│   ├── position_service.py          # NEW Phase 3: Position refresh/monitoring/response
+│   ├── kite_client.py               # Phase 2: Kite API interactions
+│   ├── fundamental_data.py          # Phase 2: Piotroski/Beneish scoring
+│   ├── user_service.py              # Phase 2: User CRUD
+│   ├── validators.py                # Phase 2: Input validation
+│   ├── utils.py                     # Phase 1: Utility functions
+│   ├── date_utils.py                # Phase 1: Trading day calculations
+│   ├── fno_signal_engine.py         # F&O signal generation
+│   ├── research_engine.py           # Regime classification, sentiment
+│   ├── position_monitor.py          # Monitoring alerts
+│   └── ... (other services)
+└── tests/
+    ├── helpers/test_utils.py        # Shared test utilities
+    └── test_*.py                    # 47 test files
 ```
 
-## DB Collections
-sticky_fno_cards, fno_popup_events, fno_signal_history, fno_signal_log,
-mfe_library, theta_curves, fwd_mfe, iv_history, iv_term_structure,
-regime_history, index_constituents, fundamental_cache
-
-## Backlog (P2)
-- Continue server.py modularization: Extract script_master, india_vix, hist_ohlcv, auth routes (target: <1500 lines)
-- Advanced IV analytics: IV cone + IV term structure chart (wait for 30+ days of iv_history data)
-- Historical signal performance tracking enhancements
-- Multi-timeframe analysis views enhancements
-
-## Kite Connect Postback URL
-https://backend-refactor-p2.preview.emergentagent.com/api/kite/postback
+## Backlog
+- P2: Advanced IV analytics (IV cone + term structure chart — wait for iv_history 30+ days)
+- P2: Historical signal performance tracking enhancements

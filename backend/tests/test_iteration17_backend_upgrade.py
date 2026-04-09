@@ -139,20 +139,17 @@ class TestDataVerifierImports:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestNseHolidays:
-    """Verify NSE_HOLIDAYS list corrections in server.py."""
+    """Verify NSE_HOLIDAYS list corrections across backend source (server.py + services/)."""
 
     def _get_nse_holidays(self):
-        """Extract NSE_HOLIDAYS from server.py via grep rather than importing."""
-        server_path = os.path.join(BACKEND_DIR, "server.py")
-        with open(server_path, "r") as f:
-            content = f.read()
-        return content
+        """Read all backend source files (holidays may live in holiday_manager.py)."""
+        return read_backend_source()
 
     def test_2026_04_06_not_in_nse_holidays(self):
         """2026-04-06 must NOT be in NSE_HOLIDAYS (it was a wrong addition and has been removed)."""
         content = self._get_nse_holidays()
         assert '"2026-04-06"' not in content and "'2026-04-06'" not in content, (
-            "FAIL: '2026-04-06' found in server.py NSE_HOLIDAYS — must be removed"
+            "FAIL: '2026-04-06' found in backend source NSE_HOLIDAYS — must be removed"
         )
         print("PASS: '2026-04-06' is NOT in NSE_HOLIDAYS")
 
@@ -160,22 +157,16 @@ class TestNseHolidays:
         """2026-04-14 (Dr. Ambedkar Jayanti) must be in NSE_HOLIDAYS."""
         content = self._get_nse_holidays()
         assert '"2026-04-14"' in content or "'2026-04-14'" in content, (
-            "FAIL: '2026-04-14' not found in NSE_HOLIDAYS"
+            "FAIL: '2026-04-14' not found in backend source"
         )
         print("PASS: '2026-04-14' IS in NSE_HOLIDAYS")
 
     def test_nse_holidays_set_import(self):
-        """NSE_HOLIDAYS must be importable as a set from server module context."""
-        import importlib.util
-        server_path = os.path.join(BACKEND_DIR, "server.py")
-        # Read the NSE_HOLIDAYS literal directly from the file source
-        with open(server_path) as f:
-            content = f.read()
-        # Verify set literal is present and contains the date
-        assert "NSE_HOLIDAYS" in content, "NSE_HOLIDAYS not found in server.py"
-        # Verify 2026-04-06 is not present
+        """NSE_HOLIDAYS must be present in backend source."""
+        content = self._get_nse_holidays()
+        assert "NSE_HOLIDAYS" in content, "NSE_HOLIDAYS not found in backend source"
         assert "2026-04-06" not in content, (
-            "2026-04-06 found in server.py - should have been removed"
+            "2026-04-06 found in backend source - should have been removed"
         )
         print("PASS: NSE_HOLIDAYS code verified via source inspection")
 
@@ -184,16 +175,11 @@ class TestNseHolidays:
         get_remaining_trading_days should NOT count 2026-04-06 as a holiday.
         Verify by checking the function treats April 6 2026 as a regular trading day.
         """
-        from services.data_verifier import is_market_open
-        # The real test: NSE_HOLIDAYS in server.py must not contain 2026-04-06.
-        # We verify via source code.
-        server_path = os.path.join(BACKEND_DIR, "server.py")
-        with open(server_path) as f:
-            content = f.read()
+        content = self._get_nse_holidays()
         assert "2026-04-06" not in content, (
-            "2026-04-06 is in server.py — it should have been removed from NSE_HOLIDAYS"
+            "2026-04-06 is in backend source — it should have been removed from NSE_HOLIDAYS"
         )
-        print("PASS: 2026-04-06 not found in server.py, get_remaining_trading_days won't skip it")
+        print("PASS: 2026-04-06 not found in backend source, get_remaining_trading_days won't skip it")
 
     def test_get_remaining_trading_days_counts_2026_04_14_as_holiday(self):
         """

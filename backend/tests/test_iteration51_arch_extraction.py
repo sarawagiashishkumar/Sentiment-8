@@ -255,8 +255,8 @@ class TestAPIEndpointsAfterExtraction:
         assert resp.status_code == 200
 
     def test_server_line_count(self):
-        """Verify server.py has been reduced by the extraction."""
+        """Verify server.py has been significantly reduced by the extraction."""
         with open('/app/backend/server.py') as f:
             lines = len(f.readlines())
-        assert lines < 2400, f"server.py should be < 2400 lines after extraction, got {lines}"
-        assert lines > 1500, f"server.py should be > 1500 lines (not over-extracted), got {lines}"
+        assert lines < 1500, f"server.py should be < 1500 lines after full extraction, got {lines}"
+        assert lines > 500, f"server.py should be > 500 lines (core still present), got {lines}"

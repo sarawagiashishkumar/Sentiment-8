@@ -24,7 +24,7 @@ import pytest
 import requests
 from unittest.mock import patch, MagicMock
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, read_backend_source
 
 # Add backend directory to path for direct imports
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
@@ -561,23 +561,19 @@ class TestAtrBasedStopLossInServer:
         print("PASS: near_expiry_badge set based on remaining_trading_days")
 
     def test_theta_decay_uses_calendar_days_in_server(self):
-        """server.py must call compute_vix_theta_decay with calendar_days_to_expiry/calendar_best_exit_days."""
-        server_path = os.path.join(BACKEND_DIR, "server.py")
-        with open(server_path, "r") as f:
-            content = f.read()
+        """Backend must call compute_vix_theta_decay with calendar_days_to_expiry/calendar_best_exit_days."""
+        content = read_backend_source()
         assert "calendar_days_to_expiry=_cal_to_expiry" in content or \
                "calendar_days_to_expiry=" in content, \
             "calendar_days_to_expiry not passed in theta decay call"
         assert "calendar_best_exit_days=_cal_to_best_exit" in content or \
                "calendar_best_exit_days=" in content, \
             "calendar_best_exit_days not passed in theta decay call"
-        print("PASS: server.py calls compute_vix_theta_decay with calendar day params")
+        print("PASS: backend calls compute_vix_theta_decay with calendar day params")
 
     def test_optimal_advised_price_is_tier_based_not_fixed_3pct(self):
         """optimal_advised_price uses tier-based increments, not fixed 3% of LTP."""
-        server_path = os.path.join(BACKEND_DIR, "server.py")
-        with open(server_path, "r") as f:
-            content = f.read()
+        content = read_backend_source()
         # Must have tiered _increment_60s pattern
         assert "_increment_60s" in content, "_increment_60s tiered increment not found"
         # Must NOT have fixed * 1.03 or * 0.03 for optimal_advised_price

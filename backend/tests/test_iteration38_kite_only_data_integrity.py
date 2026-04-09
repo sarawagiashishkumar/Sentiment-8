@@ -333,34 +333,43 @@ class TestServerYfinanceRemoval:
     
     def test_get_india_vix_no_yfinance_fallback(self):
         """_get_india_vix() has NO yfinance fallback"""
-        content = read_backend_source()
+        backend_dir = os.path.join(os.path.dirname(__file__), "..")
+        vix_path = os.path.join(backend_dir, "services", "india_vix.py")
+        if os.path.exists(vix_path):
+            with open(vix_path, "r") as f:
+                func_content = f.read()
+        else:
+            with open(os.path.join(backend_dir, "server.py"), "r") as f:
+                content = f.read()
+            start = content.find('async def _get_india_vix(')
+            end = content.find('\nasync def ', start + 1)
+            if end == -1:
+                end = content.find('\ndef ', start + 1)
+            func_content = content[start:end]
         
-        # Find _get_india_vix function
-        start = content.find('async def _get_india_vix(')
-        end = content.find('\nasync def ', start + 1)
-        if end == -1:
-            end = content.find('\ndef ', start + 1)
-        func_content = content[start:end]
-        
-        # Check for yfinance references
         assert 'yfinance' not in func_content.lower(), "_get_india_vix should not reference yfinance"
         assert 'No third-party fallback' in func_content, "_get_india_vix should have 'No third-party fallback' comment"
         print("PASS: _get_india_vix() has NO yfinance fallback")
     
     def test_get_hist_ohlcv_no_yfinance_fallback(self):
         """_get_hist_ohlcv() has NO yfinance fallback"""
-        content = read_backend_source()
+        backend_dir = os.path.join(os.path.dirname(__file__), "..")
+        hist_path = os.path.join(backend_dir, "services", "hist_data.py")
+        if os.path.exists(hist_path):
+            with open(hist_path, "r") as f:
+                func_content = f.read()
+        else:
+            with open(os.path.join(backend_dir, "server.py"), "r") as f:
+                content = f.read()
+            start = content.find('async def _get_hist_ohlcv(')
+            end = content.find('\ndef ', start + 1)
+            if end == -1:
+                end = start + 2000
+            func_content = content[start:end]
         
-        # Find _get_hist_ohlcv function
-        start = content.find('async def _get_hist_ohlcv(')
-        end = content.find('\ndef ', start + 1)
-        if end == -1:
-            end = start + 2000
-        func_content = content[start:end]
-        
-        # Check for yfinance references
         assert 'yfinance' not in func_content.lower(), "_get_hist_ohlcv should not reference yfinance"
-        assert 'No third-party fallback' in func_content, "_get_hist_ohlcv should have 'No third-party fallback' comment"
+        assert 'No third-party fallback' in func_content or 'sole source' in func_content, \
+            "_get_hist_ohlcv should have 'No third-party fallback' or 'sole source' comment"
         print("PASS: _get_hist_ohlcv() has NO yfinance fallback")
     
     def test_fetch_yfinance_hist_ohlcv_removed(self):

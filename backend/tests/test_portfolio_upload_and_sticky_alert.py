@@ -254,6 +254,8 @@ class TestStickyPositionHighLossAlert:
             headers=auth_headers,
             json={"script": "NIFTY", "buy_price": 500.0}
         )
+        if create_resp.status_code == 502 and "Unable to fetch live option LTP" in create_resp.text:
+            pytest.skip("Kite live option LTP unavailable — market may be closed or API key missing")
         assert create_resp.status_code == 200, f"Create position failed: {create_resp.text}"
         position = create_resp.json().get("position", {})
         position_id = position.get("id")
@@ -280,6 +282,8 @@ class TestStickyPositionHighLossAlert:
             headers=auth_headers,
             json={"script": "RELIANCE", "buy_price": 1000.0}  # High buy price to potentially trigger loss
         )
+        if create_resp.status_code == 502 and "Unable to fetch live option LTP" in create_resp.text:
+            pytest.skip("Kite live option LTP unavailable — market may be closed or API key missing")
         assert create_resp.status_code == 200, f"Create position failed: {create_resp.text}"
         position = create_resp.json().get("position", {})
         position_id = position.get("id")

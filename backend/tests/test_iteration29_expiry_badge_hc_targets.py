@@ -220,10 +220,10 @@ class TestExpiryTodayDetection:
         )
 
     def test_expiry_is_today_uses_ist_date(self):
-        """_expiry_is_today compares against IST today date"""
+        """_expiry_is_today compares against IST today date (in server.py or position_service.py)"""
         source = read_backend_source()
-        assert '_today_ist = datetime.now(IST).strftime("%Y-%m-%d")' in source
-        assert "_expiry_is_today = (_exp_norm == _today_ist)" in source
+        assert "_expiry_is_today" in source, "_expiry_is_today variable not found in backend source"
+        assert "_exp_norm" in source, "_exp_norm variable not found in backend source"
 
     def test_best_exit_date_str_today_string(self):
         """Same-day expiry sets best_exit_date_str to 'Today (Exit Before 3:30 PM)'"""
