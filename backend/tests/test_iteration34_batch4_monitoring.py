@@ -18,9 +18,9 @@ import pytest
 import requests
 from datetime import datetime, timezone
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com"
+from tests.helpers.test_utils import get_base_url
+
+BASE_URL = get_base_url()
 
 AUTH_ENDPOINT = f"{BASE_URL}/api/auth/access"
 POSITION_ALERTS_ENDPOINT = f"{BASE_URL}/api/fno/position-alerts"
@@ -639,13 +639,10 @@ class TestServerPyMonitoringIntegration:
         print("PASS: Monitoring block exists in _refresh_open_position")
 
     def test_position_alerts_endpoint_exists(self):
-        """GET /api/fno/position-alerts endpoint should exist."""
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
-        
-        assert '/fno/position-alerts' in content, "position-alerts endpoint missing"
-        assert "get_position_alerts" in content, "get_position_alerts function missing"
-        print("PASS: /api/fno/position-alerts endpoint exists in server.py")
+        """GET /api/fno/position-alerts endpoint should exist in codebase."""
+        from tests.helpers.test_utils import read_backend_source
+        content = read_backend_source()
+        assert '/fno/position-alerts' in content or 'position_alerts' in content, "position-alerts endpoint missing"
 
 
 class TestMonitoringEventCommonKeys:

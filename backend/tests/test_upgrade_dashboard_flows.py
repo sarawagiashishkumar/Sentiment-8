@@ -6,6 +6,8 @@ import pytest
 import requests
 from dotenv import load_dotenv
 
+from tests.helpers.test_utils import get_ndjson_complete_data
+
 # Regression tests for upgraded trading dashboard flows: username auth, RBAC/quota, credits, multibagger and F&O generation
 load_dotenv(Path('/app/frontend/.env'))
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL')
@@ -92,7 +94,7 @@ def test_multibagger_generate_has_rsi_gtt_and_duration_targets(api_client, api_b
         timeout=180,
     )
     assert response.status_code == 200
-    data = response.json()
+    data = get_ndjson_complete_data(response)
     assert isinstance(data['candidates'], list) and len(data['candidates']) > 0
 
     first = data['candidates'][0]
@@ -114,7 +116,7 @@ def test_fno_generate_returns_dual_pane_reports_top4_and_stock_panel(api_client,
         timeout=240,
     )
     assert response.status_code == 200
-    data = response.json()
+    data = get_ndjson_complete_data(response)
 
     assert 'nifty_projection' in data and 'banknifty_projection' in data
     nifty = data['nifty_projection']

@@ -68,11 +68,13 @@ def test_pricing_contracts_for_basic_user(api_client, api_base_url):
 
         mb = api_client.post(f"{api_base_url}/multibagger/generate", json={}, headers=user_headers, timeout=240)
         assert mb.status_code == 200
-        assert mb.json()["cost_charged"] == 2
+        mb_data = get_ndjson_complete_data(mb)
+        assert mb_data["cost_charged"] == 2
 
         fno = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=user_headers, timeout=240)
         assert fno.status_code == 200
-        assert fno.json()["cost_charged"] == 2
+        fno_data = get_ndjson_complete_data(fno)
+        assert fno_data["cost_charged"] == 2
 
         custom = api_client.post(
             f"{api_base_url}/fno/custom-position",
@@ -104,8 +106,8 @@ def test_pricing_contracts_for_basic_user(api_client, api_base_url):
         after_credits = float(me_after.json()["credits"])
 
         expected_spend = float(
-            mb.json()["cost_charged"]
-            + fno.json()["cost_charged"]
+            mb_data["cost_charged"]
+            + fno_data["cost_charged"]
             + custom.json()["cost_charged"]
             + pdata["cost_charged"]
         )
@@ -154,7 +156,7 @@ def test_fno_stock_signals_not_capped_to_three_when_available(api_client, api_ba
 
     response = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=headers, timeout=240)
     assert response.status_code == 200
-    data = response.json()
+    data = get_ndjson_complete_data(response)
     assert isinstance(data.get("stock_signals"), list)
 
     # API-level sanity: no forced front-end style cap field and payload can exceed 3 items.

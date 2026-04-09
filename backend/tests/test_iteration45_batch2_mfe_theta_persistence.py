@@ -15,12 +15,12 @@ import requests
 import os
 import sys
 
+from tests.helpers.test_utils import get_base_url
+
 # Add backend to path for direct imports
 sys.path.insert(0, "/app/backend")
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com"
+BASE_URL = get_base_url()
 
 # Test credentials from test_credentials.md
 TEST_USERNAME = "@shish123"

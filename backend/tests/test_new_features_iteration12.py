@@ -13,7 +13,9 @@ import pytest
 import requests
 import json
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
+BASE_URL = get_base_url()
 
 
 @pytest.fixture(scope="module")
@@ -381,7 +383,7 @@ class TestMultibaggerFields:
             timeout=60,  # might be slow for yfinance fetching
         )
         assert resp.status_code == 200, f"Multibagger candidates failed: {resp.status_code} - {resp.text[:200]}"
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         assert isinstance(data, list), f"Expected list, got {type(data)}"
         assert len(data) > 0, "Multibagger candidates returned empty list"
         print(f"✓ Multibagger candidates returned {len(data)} entries")
@@ -394,7 +396,7 @@ class TestMultibaggerFields:
             timeout=90,  # might be slow for yfinance fetching
         )
         assert resp.status_code == 200, f"Multibagger failed: {resp.status_code} - {resp.text[:200]}"
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         assert "candidates" in data, "No candidates field in multibagger response"
         candidates = data["candidates"]
         assert isinstance(candidates, list), f"Expected list, got {type(candidates)}"
@@ -409,7 +411,7 @@ class TestMultibaggerFields:
             timeout=90,
         )
         assert resp.status_code == 200
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         candidates = data.get("candidates", [])
 
         for row in candidates[:5]:
@@ -428,7 +430,7 @@ class TestMultibaggerFields:
             timeout=90,
         )
         assert resp.status_code == 200
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         candidates = data.get("candidates", [])
 
         fundamental_fields = ["roe", "roce", "piotroski_score", "beneish_m_score"]
@@ -446,7 +448,7 @@ class TestMultibaggerFields:
             timeout=90,
         )
         assert resp.status_code == 200
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         candidates = data.get("candidates", [])
 
         detailed_count = 0

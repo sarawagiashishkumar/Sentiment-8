@@ -1995,6 +1995,7 @@ async def _build_contract(
     underlying: str,
     strike: float,
     option_type: Literal["CE", "PE"],
+    prefer_monthly: bool = False,
 ) -> FNOContract:
     _s = _srv()
     LOT_SIZE_MAP = _s.LOT_SIZE_MAP
@@ -2351,7 +2352,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     directional_candidates = [
         item
         for item in rows
-        if item.direction != "NEUTRAL" and item.confluence_score >= 78 and item.risk_reward_target2 >= 1.3
+        if item is not None and item.direction != "NEUTRAL" and item.confluence_score >= 78 and item.risk_reward_target2 >= 1.3
     ]
     by_strike: dict[float, list[FNOSignalResponse]] = defaultdict(list)
     for row in directional_candidates:
@@ -2409,6 +2410,9 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     without_report = _compute_report_from_rows(index_name, weight_source, normalized_report_rows, weighted=False)
 
     expected_direction: Literal["BULLISH", "BEARISH", "NEUTRAL"] = with_report.bias
+
+    # Filter out None items first (may occur if a signal build fails for an individual strike)
+    rows = [r for r in rows if r is not None]
 
     assured_signals = [
         item
@@ -2690,6 +2694,9 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
                         oi_buildup=_stock_analytics.get("oi_buildup"),
                         gex=_stock_analytics.get("gex"),
                     )
+                    if signal is None:
+                        logger.warning(f"{symbol} {option_type}: build_fno_signal returned None")
+                        continue
                     logger.info(f"{symbol} {option_type}: Signal generated - Direction={signal.direction}, Confluence={signal.confluence_score}, Conviction={signal.conviction_level}")
                 except HTTPException as exc:
                     logger.warning(f"{symbol} {option_type}: Signal generation failed: {exc.detail}")

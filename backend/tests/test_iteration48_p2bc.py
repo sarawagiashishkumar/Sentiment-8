@@ -13,9 +13,10 @@ Tests:
 import pytest
 import httpx
 
+from tests.helpers.test_utils import get_base_url
 from services.position_sizing import compute_position_size
 
-BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com/api"
+BASE_URL = get_base_url() + "/api"
 
 
 # ── Unit Tests ─────────────────────────────────────────────────────────────

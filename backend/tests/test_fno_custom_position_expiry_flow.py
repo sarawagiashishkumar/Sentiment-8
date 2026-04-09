@@ -6,6 +6,8 @@ import pytest
 import requests
 from dotenv import load_dotenv
 
+from tests.helpers.test_utils import get_ndjson_complete_data
+
 # Regression tests for expiry-aware F&O responses and sticky custom-position lifecycle
 load_dotenv(Path('/app/frontend/.env'))
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL')
@@ -60,7 +62,7 @@ def test_fno_generate_dynamic_script_parse_not_supported_regression(api_client, 
     )
 
     if response.status_code == 200:
-        data = response.json()
+        data = get_ndjson_complete_data(response)
         assert data['custom_signal'] is not None
         signal = data['custom_signal']
         assert isinstance(signal['minutes_to_expiry'], int)

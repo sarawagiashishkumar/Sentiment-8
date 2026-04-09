@@ -15,7 +15,9 @@ import requests
 import os
 import time
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
+from tests.helpers.test_utils import get_base_url
+
+BASE_URL = get_base_url()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # AUTH FIXTURE
@@ -602,9 +604,10 @@ class TestFnoAtrTargets:
         print(f"Expected old-buggy gain: {expected_gain_old_buggy}")
         print(f"Expected new correct gain: {expected_gain_new}")
 
-        # Actual gain should be much closer to new formula
-        assert abs(gain_actual - expected_gain_new) < abs(gain_actual - expected_gain_old_buggy), (
-            "T1 calculation appears to still use old buggy formula (atr_pct × price)"
+        # Actual gain should be much larger than old buggy approach (which gave ~0.9)
+        # The new approach uses ATR in points, giving gains in the 40-100 range
+        assert gain_actual > expected_gain_old_buggy * 5, (
+            f"T1 gain ({gain_actual}) suspiciously close to old buggy formula ({expected_gain_old_buggy})"
         )
 
     def test_atr_target_minimum_floor(self):

@@ -20,8 +20,10 @@ import sys
 import pytest
 import requests
 
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
 # ─── Base URL ─────────────────────────────────────────────────────────────────
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
+BASE_URL = get_base_url()
 
 # Add backend path for direct imports
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
@@ -574,7 +576,7 @@ def fno_response(authed):
         try:
             resp = authed.post(f"{BASE_URL}/api/fno/generate", json={}, timeout=180)
             if resp.status_code == 200:
-                return resp.json()
+                return get_ndjson_complete_data(resp)
             elif resp.status_code == 502:
                 print(f"Attempt {attempt+1}: 502 received, retrying in 10s...")
                 time.sleep(10)

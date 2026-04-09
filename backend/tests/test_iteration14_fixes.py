@@ -7,17 +7,9 @@ import requests
 import os
 import sys
 
-# Get base URL from environment
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    # Fallback to reading from .env file
-    env_file = os.path.join(os.path.dirname(__file__), "../../frontend/.env")
-    if os.path.exists(env_file):
-        with open(env_file) as f:
-            for line in f:
-                if line.startswith("REACT_APP_BACKEND_URL="):
-                    BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
-                    break
+from tests.helpers.test_utils import get_base_url
+
+BASE_URL = get_base_url()
 
 
 @pytest.fixture(scope="session")

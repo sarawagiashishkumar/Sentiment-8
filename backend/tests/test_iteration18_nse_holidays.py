@@ -17,9 +17,9 @@ import pytest
 import requests
 from datetime import datetime, timedelta
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com"
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
+BASE_URL = get_base_url()
 
 # Test credentials from test_credentials.md
 ADMIN_USERNAME = "@shish123"
@@ -298,7 +298,7 @@ class TestTradingDayCalculation(TestAuthSetup):
         )
         # Even if no signals, the endpoint should work
         if response.status_code == 200:
-            data = response.json()
+            data = get_ndjson_complete_data(response)
             # Check if any signals have remaining_trading_days field
             signals = data.get("signals", []) + data.get("potential_signals", []) + data.get("top_trades", [])
             if signals:

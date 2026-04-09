@@ -12,20 +12,9 @@ import os
 import pytest
 import requests
 
-def _resolve_base_url():
-    url = os.environ.get('REACT_APP_BACKEND_URL', '').strip().rstrip('/')
-    if url:
-        return url
-    try:
-        with open('/app/frontend/.env') as f:
-            for line in f:
-                if line.startswith('REACT_APP_BACKEND_URL='):
-                    return line.split('=', 1)[1].strip().rstrip('/')
-    except FileNotFoundError:
-        pass
-    return 'https://backend-refactor-p2.preview.emergentagent.com'
+from tests.helpers.test_utils import get_base_url
 
-BASE_URL = _resolve_base_url()
+BASE_URL = get_base_url()
 
 
 @pytest.fixture(scope="module")

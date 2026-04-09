@@ -23,11 +23,13 @@ import requests
 import os
 import sys
 
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
 # Add backend to path for direct module imports
 sys.path.insert(0, "/app/backend")
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-LOCAL_URL = "http://localhost:8001"  # Use local for FNO generate to avoid gateway timeout
+BASE_URL = get_base_url()
+LOCAL_URL = BASE_URL  # Use same URL for consistency
 
 
 class TestFOUniverseModule:
@@ -169,7 +171,7 @@ class TestFNOGenerateEndpoint:
             timeout=120  # FNO generate takes ~58s
         )
         assert response.status_code == 200, f"FNO generate failed: {response.status_code} - {response.text}"
-        return response.json()
+        return get_ndjson_complete_data(response)
 
     def test_fno_generate_returns_200(self, auth_token):
         """POST /api/fno/generate should return 200"""
@@ -258,7 +260,7 @@ class TestV2ConfluenceScore:
             json={},
             timeout=120
         )
-        return response.json()
+        return get_ndjson_complete_data(response)
 
     def test_v2_confluence_score_in_trigger_factors(self, fno_response):
         """V2 Confluence Score should be computed for all signals (check trigger_factors for V2Score)"""

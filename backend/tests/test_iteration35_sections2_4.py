@@ -11,9 +11,9 @@ import pytest
 import requests
 import re
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    BASE_URL = "https://backend-refactor-p2.preview.emergentagent.com"
+from tests.helpers.test_utils import get_base_url
+
+BASE_URL = get_base_url()
 
 
 # ============================================================================

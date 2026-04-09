@@ -11,16 +11,10 @@ import pytest
 import requests
 import os
 
-# Get base URL from environment
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    env_file = os.path.join(os.path.dirname(__file__), "../../frontend/.env")
-    if os.path.exists(env_file):
-        with open(env_file) as f:
-            for line in f:
-                if line.startswith("REACT_APP_BACKEND_URL="):
-                    BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
-                    break
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
+# Get base URL
+BASE_URL = get_base_url()
 
 
 @pytest.fixture(scope="session")
@@ -462,7 +456,7 @@ class TestFnoGenerateResponse:
             print(f"NOTE: F&O generate failed: {resp.status_code}: {resp.text[:200]}")
             pytest.skip(f"F&O generate unavailable: {resp.status_code}")
         
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         
         # Check top-level fields
         assert "nifty_projection" in data, "Missing nifty_projection"
@@ -521,7 +515,7 @@ class TestMultibaggerEndpoints:
             print(f"NOTE: Multibagger generate failed: {resp.status_code}: {resp.text[:200]}")
             pytest.skip(f"Multibagger generate unavailable")
         
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         assert "candidates" in data, f"Missing candidates: {data.keys()}"
         assert "cost_charged" in data
         assert "credits_remaining" in data

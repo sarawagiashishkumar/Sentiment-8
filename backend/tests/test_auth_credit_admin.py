@@ -6,6 +6,8 @@ import pytest
 import requests
 from dotenv import load_dotenv
 
+from tests.helpers.test_utils import get_ndjson_complete_data
+
 load_dotenv(Path("/app/frontend/.env"))
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
 
@@ -55,12 +57,12 @@ def test_owner_generation_is_credit_exempt(api_client, api_base_url):
 
     mb = api_client.post(f"{api_base_url}/multibagger/generate", json={}, headers=headers, timeout=120)
     assert mb.status_code == 200
-    mb_data = mb.json()
+    mb_data = get_ndjson_complete_data(mb)
     assert mb_data["cost_charged"] == 0
 
     fno = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=headers, timeout=180)
     assert fno.status_code == 200
-    fno_data = fno.json()
+    fno_data = get_ndjson_complete_data(fno)
     assert fno_data["cost_charged"] == 0
 
     after = api_client.get(f"{api_base_url}/auth/me", headers=headers, timeout=30).json()["credits"]
@@ -171,8 +173,9 @@ def test_basic_user_credit_deduction_and_insufficient_flow(api_client, api_base_
 
         fno_ok = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=user_headers, timeout=180)
         assert fno_ok.status_code == 200
-        assert fno_ok.json()["cost_charged"] == 2
-        assert fno_ok.json()["credits_remaining"] == 0
+        fno_ok_data = get_ndjson_complete_data(fno_ok)
+        assert fno_ok_data["cost_charged"] == 2
+        assert fno_ok_data["credits_remaining"] == 0
 
         fno_fail = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=user_headers, timeout=180)
         assert fno_fail.status_code == 402

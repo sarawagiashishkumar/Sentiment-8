@@ -26,8 +26,10 @@ import os
 import inspect
 import sys
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-assert BASE_URL, "REACT_APP_BACKEND_URL must be set"
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
+BASE_URL = get_base_url()
+assert BASE_URL, "BASE_URL must be resolvable"
 
 # ------- Auth fixture -------
 
@@ -137,7 +139,7 @@ class TestFnoGenerateApiResponse:
         except requests.exceptions.ReadTimeout:
             pytest.skip("fno/generate timed out — signal computation too slow in test env")
         assert resp.status_code == 200
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         # Could be list or dict with 'signals'
         if isinstance(data, list):
             signals = data
@@ -163,7 +165,7 @@ class TestFnoGenerateApiResponse:
         except requests.exceptions.ReadTimeout:
             pytest.skip("fno/generate timed out — signal computation too slow in test env")
         assert resp.status_code == 200
-        data = resp.json()
+        data = get_ndjson_complete_data(resp)
         if isinstance(data, list):
             signals = data
         elif isinstance(data, dict):

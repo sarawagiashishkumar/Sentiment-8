@@ -10,13 +10,13 @@ import sys
 import pytest
 import requests
 
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
 # Add backend dir to path for import tests
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, BACKEND_DIR)
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    raise ValueError("REACT_APP_BACKEND_URL env var not set")
+BASE_URL = get_base_url()
 
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -158,21 +158,21 @@ class TestFnoSignals:
         """FNO generate response contains nifty_projection"""
         if fno_response.status_code != 200:
             pytest.skip(f"FNO generate returned {fno_response.status_code}")
-        data = fno_response.json()
+        data = get_ndjson_complete_data(fno_response)
         assert "nifty_projection" in data
 
     def test_fno_generate_has_banknifty_projection(self, fno_response):
         """FNO generate response contains banknifty_projection"""
         if fno_response.status_code != 200:
             pytest.skip(f"FNO generate returned {fno_response.status_code}")
-        data = fno_response.json()
+        data = get_ndjson_complete_data(fno_response)
         assert "banknifty_projection" in data
 
     def test_fno_generate_nifty_projection_is_dict(self, fno_response):
         """nifty_projection is a dict"""
         if fno_response.status_code != 200:
             pytest.skip(f"FNO generate returned {fno_response.status_code}")
-        data = fno_response.json()
+        data = get_ndjson_complete_data(fno_response)
         nifty = data.get("nifty_projection")
         assert isinstance(nifty, dict)
 
@@ -180,7 +180,7 @@ class TestFnoSignals:
         """banknifty_projection is a dict"""
         if fno_response.status_code != 200:
             pytest.skip(f"FNO generate returned {fno_response.status_code}")
-        data = fno_response.json()
+        data = get_ndjson_complete_data(fno_response)
         bnf = data.get("banknifty_projection")
         assert isinstance(bnf, dict)
 
@@ -218,7 +218,7 @@ class TestMultibagger:
         """POST /api/multibagger/generate response has candidates list"""
         response = auth_client.post(f"{BASE_URL}/api/multibagger/generate")
         if response.status_code == 200:
-            data = response.json()
+            data = get_ndjson_complete_data(response)
             assert "candidates" in data
             assert isinstance(data["candidates"], list)
 

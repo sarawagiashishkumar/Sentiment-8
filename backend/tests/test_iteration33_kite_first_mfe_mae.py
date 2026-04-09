@@ -27,9 +27,11 @@ import os
 import sys
 import time
 
-# Use localhost:8001 for FNO generate (long-running) to avoid gateway timeout
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://backend-refactor-p2.preview.emergentagent.com").rstrip("/")
-LOCAL_URL = "http://localhost:8001"  # For long-running endpoints
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+
+# Use resolved base URL
+BASE_URL = get_base_url()
+LOCAL_URL = BASE_URL
 
 
 def get_auth_token():
@@ -152,7 +154,7 @@ class TestFNOGenerateEndpoint:
             timeout=120  # Long timeout for FNO generate
         )
         assert response.status_code == 200, f"FNO generate failed: {response.status_code} - {response.text[:500]}"
-        return response.json()
+        return get_ndjson_complete_data(response)
     
     def test_fno_generate_returns_200(self, fno_response):
         """FNO generate should return valid JSON"""

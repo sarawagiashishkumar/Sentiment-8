@@ -8,16 +8,9 @@ import pytest
 import requests
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-if not BASE_URL:
-    try:
-        with open('/app/frontend/.env') as f:
-            for line in f:
-                if line.startswith('REACT_APP_BACKEND_URL='):
-                    BASE_URL = line.split('=', 1)[1].strip().rstrip('/')
-                    break
-    except FileNotFoundError:
-        pass
+from tests.helpers.test_utils import get_base_url
+
+BASE_URL = get_base_url()
 OWNER_USERNAME = "@shish123"
 OWNER_PIN = "1234"
 

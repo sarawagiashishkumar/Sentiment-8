@@ -19,9 +19,11 @@ import pytest
 import requests
 from dotenv import load_dotenv
 
+from tests.helpers.test_utils import get_base_url
+
 # Load env
 load_dotenv(Path("/app/frontend/.env"))
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
+BASE_URL = get_base_url()
 
 # Import research engine directly
 sys.path.insert(0, "/app/backend")

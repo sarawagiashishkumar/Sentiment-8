@@ -32,9 +32,11 @@ import pandas as pd
 from pathlib import Path
 from dotenv import load_dotenv
 
+from tests.helpers.test_utils import get_base_url
+
 # Load env
 load_dotenv(Path("/app/frontend/.env"))
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
+BASE_URL = get_base_url()
 
 # Import research engine directly
 sys.path.insert(0, "/app/backend")
@@ -716,9 +718,9 @@ class TestMacroContextWiring:
         actual_bias = result["macro_bias"]
         print(f"BUG DOCUMENTED: IT + USD_STRENGTHENING -> macro_bias={actual_bias} (expected TAILWIND)")
         print(f"  Root cause: 'it' in 'capital goods (imports)' = True (substring match too broad)")
-        # Assert actual behavior to track the bug
-        assert actual_bias == "NEUTRAL", \
-            f"Bug regression: expected NEUTRAL (due to substring bug), got {actual_bias}"
+        # The substring bug has been fixed — IT + USD_STRENGTHENING now correctly returns TAILWIND
+        assert actual_bias == "TAILWIND", \
+            f"IT + USD_STRENGTHENING should be TAILWIND, got {actual_bias}"
 
     def test_returns_regime_and_macro_bias(self):
         """compute_macro_context returns regime and macro_bias fields."""

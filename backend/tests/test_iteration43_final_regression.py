@@ -22,10 +22,12 @@ import requests
 import json
 import time
 
+from tests.helpers.test_utils import get_base_url
+
 # Add backend to path for module imports
 sys.path.insert(0, "/app/backend")
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://backend-refactor-p2.preview.emergentagent.com")
+BASE_URL = get_base_url()
 AUTH_TOKEN = None
 
 
