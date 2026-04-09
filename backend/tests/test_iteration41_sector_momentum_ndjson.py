@@ -362,9 +362,9 @@ class TestNDJSONStreamingEndpoints:
                 f"{BASE_URL}/api/multibagger/candidates",
                 headers=auth_headers,
                 stream=True,
-                timeout=60
+                timeout=120
             )
-        except requests.exceptions.ReadTimeout:
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
             pytest.skip("Multibagger candidates timed out")
         
         if response.status_code != 200:

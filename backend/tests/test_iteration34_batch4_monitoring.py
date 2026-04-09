@@ -18,7 +18,7 @@ import pytest
 import requests
 from datetime import datetime, timezone
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, read_backend_source
 
 BASE_URL = get_base_url()
 
@@ -621,8 +621,7 @@ class TestServerPyMonitoringIntegration:
 
     def test_build_monitoring_events_helper_exists(self):
         """_build_monitoring_events helper should exist in server.py."""
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
+        content = read_backend_source()
         
         assert "_build_monitoring_events" in content, "_build_monitoring_events helper missing"
         assert "def _build_monitoring_events" in content, "_build_monitoring_events function missing"
@@ -630,8 +629,7 @@ class TestServerPyMonitoringIntegration:
 
     def test_monitoring_block_in_refresh_open_position(self):
         """_refresh_open_position should have monitoring block."""
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
+        content = read_backend_source()
         
         assert "Batch 4: Position Monitoring" in content, "Monitoring block comment missing"
         assert "generate_monitoring_alerts" in content, "generate_monitoring_alerts call missing"
@@ -640,7 +638,6 @@ class TestServerPyMonitoringIntegration:
 
     def test_position_alerts_endpoint_exists(self):
         """GET /api/fno/position-alerts endpoint should exist in codebase."""
-        from tests.helpers.test_utils import read_backend_source
         content = read_backend_source()
         assert '/fno/position-alerts' in content or 'position_alerts' in content, "position-alerts endpoint missing"
 
@@ -650,8 +647,7 @@ class TestMonitoringEventCommonKeys:
 
     def test_common_keys_constant_exists(self):
         """_MONITORING_EVENT_COMMON_KEYS should exist in server.py."""
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
+        content = read_backend_source()
         
         assert "_MONITORING_EVENT_COMMON_KEYS" in content
         assert "type" in content

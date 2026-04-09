@@ -27,7 +27,7 @@ import os
 import sys
 import inspect
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, read_backend_source
 
 # Add backend to path for direct imports
 sys.path.insert(0, '/app/backend')
@@ -333,8 +333,7 @@ class TestServerYfinanceRemoval:
     
     def test_get_india_vix_no_yfinance_fallback(self):
         """_get_india_vix() has NO yfinance fallback"""
-        with open('/app/backend/server.py', 'r') as f:
-            content = f.read()
+        content = read_backend_source()
         
         # Find _get_india_vix function
         start = content.find('async def _get_india_vix(')
@@ -350,8 +349,7 @@ class TestServerYfinanceRemoval:
     
     def test_get_hist_ohlcv_no_yfinance_fallback(self):
         """_get_hist_ohlcv() has NO yfinance fallback"""
-        with open('/app/backend/server.py', 'r') as f:
-            content = f.read()
+        content = read_backend_source()
         
         # Find _get_hist_ohlcv function
         start = content.find('async def _get_hist_ohlcv(')
@@ -367,8 +365,7 @@ class TestServerYfinanceRemoval:
     
     def test_fetch_yfinance_hist_ohlcv_removed(self):
         """_fetch_yfinance_hist_ohlcv() is REMOVED (dead code cleanup)"""
-        with open('/app/backend/server.py', 'r') as f:
-            content = f.read()
+        content = read_backend_source()
         
         assert '_fetch_yfinance_hist_ohlcv' not in content, "_fetch_yfinance_hist_ohlcv should be removed"
         print("PASS: _fetch_yfinance_hist_ohlcv() is REMOVED")

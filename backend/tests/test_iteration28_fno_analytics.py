@@ -26,7 +26,7 @@ import os
 import inspect
 import sys
 
-from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, read_backend_source, safe_streaming_post
 
 BASE_URL = get_base_url()
 assert BASE_URL, "BASE_URL must be resolvable"
@@ -115,29 +115,21 @@ class TestFnoGenerateApiResponse:
 
     def test_fno_generate_returns_200(self, auth_headers):
         """POST /api/fno/generate with NIFTY must return 200. (allow 5min for heavy computation)"""
-        try:
-            resp = requests.post(
-                f"{BASE_URL}/api/fno/generate",
-                json={"symbols": ["NIFTY"]},
-                headers=auth_headers,
-                timeout=300,
-            )
-        except requests.exceptions.ReadTimeout:
-            pytest.skip("fno/generate timed out after 5min — signal computation too slow in test env")
+        resp = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={"symbols": ["NIFTY"]},
+            headers=auth_headers,
+        )
         assert resp.status_code == 200, f"Expected 200 got {resp.status_code}: {resp.text[:500]}"
         print(f"PASS: /api/fno/generate returned 200")
 
     def test_fno_generate_response_has_signals_key(self, auth_headers):
         """Response should have a 'signals' key (list)."""
-        try:
-            resp = requests.post(
-                f"{BASE_URL}/api/fno/generate",
-                json={"symbols": ["NIFTY"]},
-                headers=auth_headers,
-                timeout=300,
-            )
-        except requests.exceptions.ReadTimeout:
-            pytest.skip("fno/generate timed out — signal computation too slow in test env")
+        resp = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={"symbols": ["NIFTY"]},
+            headers=auth_headers,
+        )
         assert resp.status_code == 200
         data = get_ndjson_complete_data(resp)
         # Could be list or dict with 'signals'
@@ -155,15 +147,11 @@ class TestFnoGenerateApiResponse:
 
     def test_fno_generate_signal_has_new_analytics_fields(self, auth_headers):
         """Each signal in response must contain max_pain, iv_rank, oi_buildup, gex keys."""
-        try:
-            resp = requests.post(
-                f"{BASE_URL}/api/fno/generate",
-                json={"symbols": ["NIFTY"]},
-                headers=auth_headers,
-                timeout=300,
-            )
-        except requests.exceptions.ReadTimeout:
-            pytest.skip("fno/generate timed out — signal computation too slow in test env")
+        resp = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={"symbols": ["NIFTY"]},
+            headers=auth_headers,
+        )
         assert resp.status_code == 200
         data = get_ndjson_complete_data(resp)
         if isinstance(data, list):
@@ -347,19 +335,16 @@ class TestKiteHistOhlcvFirst:
         print("PASS: _fetch_kite_hist_ohlcv_for_equity exists")
 
     def test_get_hist_ohlcv_calls_kite_first(self):
-        """_get_hist_ohlcv must call _fetch_kite_hist_ohlcv_for_equity before yfinance fallback."""
+        """_get_hist_ohlcv must call _fetch_kite_hist_ohlcv_for_equity as sole data source (Kite Supremacy)."""
         sys.path.insert(0, "/app/backend")
         import server
         src = inspect.getsource(server._get_hist_ohlcv)
         assert "_fetch_kite_hist_ohlcv_for_equity" in src, \
             "_get_hist_ohlcv does not call Kite hist function"
-        assert "yfinance" in src or "_fetch_yfinance" in src, \
-            "_get_hist_ohlcv does not have yfinance fallback"
-        kite_pos = src.find("_fetch_kite_hist_ohlcv_for_equity")
-        yf_pos = max(src.find("yfinance"), src.find("_fetch_yfinance"))
-        assert kite_pos < yf_pos, \
-            f"Kite hist call (pos {kite_pos}) must come BEFORE yfinance fallback (pos {yf_pos})"
-        print("PASS: _get_hist_ohlcv calls Kite FIRST, yfinance as fallback")
+        # Kite Supremacy: yfinance must NOT be present as fallback
+        assert "yfinance" not in src and "_fetch_yfinance" not in src, \
+            "_get_hist_ohlcv still references yfinance — violates Kite Supremacy rule"
+        print("PASS: _get_hist_ohlcv uses Kite as sole data source (no yfinance)")
 
     def test_fetch_kite_hist_ohlcv_returns_dict_format(self):
         """_fetch_kite_hist_ohlcv_for_equity should return dict with 'records' key or None."""
@@ -381,8 +366,7 @@ class TestLiveLtpUnavailablePath:
 
     def test_unavailable_path_corrects_best_exit_in_source(self):
         """Source code must enforce best_exit >= max(_current_be, _last_known_ltp, _entry_floor)."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         # Check that LIVE_LTP_UNAVAILABLE alert is present
         assert "LIVE_LTP_UNAVAILABLE" in src, "LIVE_LTP_UNAVAILABLE alert not found in server.py"
         # Check the correction formula: max(..._last_known_ltp..._entry_floor...)
@@ -393,15 +377,13 @@ class TestLiveLtpUnavailablePath:
 
     def test_entry_floor_is_1_percent_above_entry(self):
         """_entry_floor must be entry * 1.01 (1% above entry)."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         assert "* 1.01" in src, "_entry_floor calculation (entry * 1.01) not found"
         print("PASS: entry_floor uses * 1.01 (1% floor)")
 
     def test_corrected_be_uses_max_of_three_values(self):
         """_corrected_be must be max(_current_be, _last_known_ltp, _entry_floor)."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         # The fix should use max() with all three values
         assert "max(_current_be, _last_known_ltp, _entry_floor)" in src, \
             "max(_current_be, _last_known_ltp, _entry_floor) not found — correction may be incomplete"
@@ -536,8 +518,7 @@ class TestStrategyThresholdEnforcement:
 
     def test_strategy_threshold_code_exists_in_server(self):
         """Server must have the 422 guard for strategy selection."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         assert "status_code=422" in src or "422" in src, \
             "No 422 status code found in server.py"
         assert "75% win-rate" in src or "75%.*win" in src or "win-rate" in src.lower(), \
@@ -548,8 +529,7 @@ class TestStrategyThresholdEnforcement:
 
     def test_strategy_threshold_only_fires_with_sufficient_data(self):
         """Guard must only activate when >= 10 backtested trades exist."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         # Check >= 10 trades condition
         assert ">= 10" in src or ">=10" in src or "10" in src, \
             "Strategy threshold requires >= 10 trades condition — not found"
@@ -587,8 +567,7 @@ class TestMultibaggerRsiFix:
 
     def test_rsi_uses_fundamental_get_rsi(self):
         """compute_multibagger_analysis must use fundamental.get('rsi') not 30+position*40."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         # Must use fundamental.get('rsi')
         assert "fundamental.get(\"rsi\")" in src or "fundamental.get('rsi')" in src, \
             "fundamental.get('rsi') not found — RSI fix missing"
@@ -596,8 +575,7 @@ class TestMultibaggerRsiFix:
 
     def test_rsi_real_takes_priority_over_proxy(self):
         """When real RSI is available, it must be used instead of the 30+position*40 proxy."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         # Find the RSI section in compute_multibagger_analysis
         # Check that real RSI assignment comes before the proxy formula
         real_rsi_pos = src.find("_real_rsi = fundamental.get(\"rsi\")")
@@ -613,8 +591,7 @@ class TestMultibaggerRsiFix:
 
     def test_rsi_fallback_proxy_still_exists(self):
         """Fallback proxy (30 + position * 40) should still exist for when hist data unavailable."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         assert "30 + (position" in src, \
             "Fallback RSI proxy not found — may have been fully removed instead of conditionally used"
         print("PASS: Fallback RSI proxy (30 + position*40) still present as fallback")
@@ -690,15 +667,13 @@ class TestFetchHistOneReturnsDict:
 
     def test_fetch_hist_one_is_local_function_in_multibagger_candidates(self):
         """_fetch_hist_one must be defined as a local async function (inside _build_multibagger_candidates)."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         assert "_fetch_hist_one" in src, "_fetch_hist_one function not found in server.py"
         print("PASS: _fetch_hist_one found in server.py")
 
     def test_fetch_hist_one_returns_dict_with_hist_vol(self):
         """_fetch_hist_one must return a dict containing 'hist_vol' key."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         # Find the _fetch_hist_one function body
         start = src.find("async def _fetch_hist_one(")
         assert start >= 0, "_fetch_hist_one not found"
@@ -712,8 +687,7 @@ class TestFetchHistOneReturnsDict:
 
     def test_fetch_hist_one_returns_dict_with_rsi(self):
         """_fetch_hist_one must return a dict containing 'rsi' key."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         start = src.find("async def _fetch_hist_one(")
         assert start >= 0, "_fetch_hist_one not found"
         end = src.find("\n    fetched = ", start + 1)
@@ -724,8 +698,7 @@ class TestFetchHistOneReturnsDict:
 
     def test_fetch_hist_one_returns_dict_with_trend_alignment(self):
         """_fetch_hist_one must return a dict containing 'trend_alignment' key."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         start = src.find("async def _fetch_hist_one(")
         assert start >= 0, "_fetch_hist_one not found"
         end = src.find("\n    fetched = ", start + 1)
@@ -744,8 +717,7 @@ class TestStartupGarbagePurge:
 
     def test_startup_tasks_has_purge_logic(self):
         """startup_tasks must contain purge logic for garbage positions."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         assert "999000" in src or "999999" in src, \
             "Garbage purge threshold (999000/999999) not found in startup_tasks"
         assert "expiry_date" in src and ("None" in src or "null" in src), \
@@ -841,16 +813,14 @@ class TestBestExitPriceEnforcement:
 
     def test_best_exit_enforces_ltp_floor_in_source(self):
         """Source code around best_exit must use max(_raw_best, latest_option_ltp, ...)."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         assert "max(_raw_best, latest_option_ltp" in src, \
             "best_exit floor enforcement 'max(_raw_best, latest_option_ltp, ...)' not found in server.py"
         print("PASS: best_exit_price uses max(_raw_best, latest_option_ltp, ...) enforcement")
 
     def test_best_exit_comment_mentions_never_below_ltp(self):
         """Code comment must mention 'never below live market price' or similar."""
-        with open("/app/backend/server.py") as f:
-            src = f.read()
+        src = read_backend_source()
         # Check for the intent comment
         assert (
             "never" in src.lower() and "ltp" in src.lower()

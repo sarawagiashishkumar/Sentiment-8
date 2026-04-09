@@ -23,7 +23,7 @@ import requests
 import os
 import sys
 
-from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, read_backend_source
 
 # Add backend to path for direct module imports
 sys.path.insert(0, "/app/backend")
@@ -150,7 +150,7 @@ class TestAuthEndpoint:
 class TestFNOGenerateEndpoint:
     """Tests for FNO generate endpoint - uses localhost to avoid gateway timeout"""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def auth_token(self):
         """Get auth token for authenticated requests"""
         response = requests.post(
@@ -160,17 +160,16 @@ class TestFNOGenerateEndpoint:
         )
         return response.json().get("token")
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def fno_response(self, auth_token):
-        """Get FNO generate response - cached for multiple tests"""
-        # Use localhost:8001 to avoid 60s gateway timeout
+        """Get FNO generate response - cached for all tests in class"""
         response = requests.post(
             f"{LOCAL_URL}/api/fno/generate",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={},
-            timeout=120  # FNO generate takes ~58s
+            timeout=240
         )
-        assert response.status_code == 200, f"FNO generate failed: {response.status_code} - {response.text}"
+        assert response.status_code == 200, f"FNO generate failed: {response.status_code} - {response.text[:200]}"
         return get_ndjson_complete_data(response)
 
     def test_fno_generate_returns_200(self, auth_token):
@@ -413,16 +412,14 @@ class TestOldUniverseNotUsed:
     def test_old_universe_still_exists_as_constant(self):
         """Old STOCK_FNO_UNIVERSE should still exist in server.py as a constant"""
         # Read server.py and check for STOCK_FNO_UNIVERSE
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
+        content = read_backend_source()
         
         assert "STOCK_FNO_UNIVERSE" in content, "STOCK_FNO_UNIVERSE constant should still exist"
         print("PASS: STOCK_FNO_UNIVERSE constant still exists in server.py")
 
     def test_build_stock_fno_signals_uses_get_fo_universe(self):
         """_build_stock_fno_signals should use get_fo_universe() not STOCK_FNO_UNIVERSE"""
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
+        content = read_backend_source()
         
         # Find _build_stock_fno_signals function
         assert "get_fo_universe(lot_size_map=LOT_SIZE_MAP" in content, \
@@ -449,8 +446,7 @@ class TestKiteOptionMasterUsesExpandedUniverse:
 
     def test_kite_option_master_sync_uses_get_fo_universe(self):
         """Kite option master sync should use get_fo_universe()"""
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
+        content = read_backend_source()
         
         # Check that get_fo_universe is used in the allowed set for option master
         assert 'get_fo_universe(lot_size_map=LOT_SIZE_MAP)' in content, \

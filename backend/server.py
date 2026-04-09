@@ -2033,6 +2033,7 @@ async def get_status_checks():
 
 # ── Endpoints extracted to routes/ ── (removed 92 lines) ──
 
+@api_router.get("/fno/contracts")
 async def get_fno_contracts():
     return [FNOContract(**row) for row in FNO_CONTRACTS]
 

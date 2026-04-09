@@ -6,10 +6,10 @@ import pytest
 import requests
 from dotenv import load_dotenv
 
-from tests.helpers.test_utils import get_ndjson_complete_data
+from tests.helpers.test_utils import get_ndjson_complete_data, safe_streaming_post
 
 load_dotenv(Path("/app/frontend/.env"))
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
+BASE_URL = "http://localhost:8001"
 
 OWNER_USERNAME = "@shish123"
 
@@ -55,12 +55,12 @@ def test_owner_generation_is_credit_exempt(api_client, api_base_url):
     headers = _auth_headers(login["token"])
     before = api_client.get(f"{api_base_url}/auth/me", headers=headers, timeout=30).json()["credits"]
 
-    mb = api_client.post(f"{api_base_url}/multibagger/generate", json={}, headers=headers, timeout=120)
+    mb = safe_streaming_post(f"{api_base_url}/multibagger/generate", json_body={}, headers=headers)
     assert mb.status_code == 200
     mb_data = get_ndjson_complete_data(mb)
     assert mb_data["cost_charged"] == 0
 
-    fno = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=headers, timeout=180)
+    fno = safe_streaming_post(f"{api_base_url}/fno/generate", json_body={}, headers=headers)
     assert fno.status_code == 200
     fno_data = get_ndjson_complete_data(fno)
     assert fno_data["cost_charged"] == 0
@@ -171,13 +171,13 @@ def test_basic_user_credit_deduction_and_insufficient_flow(api_client, api_base_
         user_login = _login(api_client, api_base_url, username)
         user_headers = _auth_headers(user_login["token"])
 
-        fno_ok = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=user_headers, timeout=180)
+        fno_ok = safe_streaming_post(f"{api_base_url}/fno/generate", json_body={}, headers=user_headers)
         assert fno_ok.status_code == 200
         fno_ok_data = get_ndjson_complete_data(fno_ok)
         assert fno_ok_data["cost_charged"] == 2
         assert fno_ok_data["credits_remaining"] == 0
 
-        fno_fail = api_client.post(f"{api_base_url}/fno/generate", json={}, headers=user_headers, timeout=180)
+        fno_fail = safe_streaming_post(f"{api_base_url}/fno/generate", json_body={}, headers=user_headers)
         assert fno_fail.status_code == 402
         assert "Insufficient credits" in fno_fail.json().get("detail", "")
     finally:

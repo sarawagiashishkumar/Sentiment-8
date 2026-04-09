@@ -19,7 +19,7 @@ import re
 import pytest
 import requests
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, read_backend_source
 
 BASE_URL = get_base_url()
 
@@ -163,8 +163,7 @@ class TestServerImport:
 
     def test_imports_both_constants_from_data_policy(self):
         """server.py must import KITE_IS_SOURCE_OF_TRUTH and USE_YFINANCE from data_policy."""
-        with open("/app/backend/server.py", "r") as f:
-            content = f.read()
+        content = read_backend_source()
         
         # Check for import of both constants
         pattern = r"from\s+services\.data_policy\s+import\s+.*KITE_IS_SOURCE_OF_TRUTH.*USE_YFINANCE|from\s+services\.data_policy\s+import\s+.*USE_YFINANCE.*KITE_IS_SOURCE_OF_TRUTH"
@@ -173,18 +172,17 @@ class TestServerImport:
 
     def test_no_local_use_yfinance_definition(self):
         """server.py must NOT have local USE_YFINANCE definition (only import)."""
-        with open("/app/backend/server.py", "r") as f:
+        # Only check server.py, not all backend source (data_policy.py is the canonical definition)
+        with open("/app/backend/server.py") as f:
             content = f.read()
         
         lines = content.split("\n")
         for i, line in enumerate(lines):
             stripped = line.strip()
-            # Skip import lines and comments
             if "from services.data_policy import" in line:
                 continue
             if stripped.startswith("#"):
                 continue
-            # Check for local definition
             if re.match(r"^USE_YFINANCE\s*[:=]", stripped):
                 pytest.fail(f"server.py has local USE_YFINANCE definition at line {i+1}: {line}")
         print("PASS: server.py has no local USE_YFINANCE definition")

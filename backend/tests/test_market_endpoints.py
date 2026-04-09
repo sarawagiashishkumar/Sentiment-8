@@ -5,11 +5,11 @@ import pytest
 import requests
 from dotenv import load_dotenv
 
-from tests.helpers.test_utils import get_ndjson_complete_data
+from tests.helpers.test_utils import get_ndjson_complete_data, safe_streaming_get
 
 # Core market API regression tests for multibagger + F&O endpoints
 load_dotenv(Path('/app/frontend/.env'))
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL')
+BASE_URL = "http://localhost:8001"
 
 
 @pytest.fixture(scope='session')
@@ -27,7 +27,7 @@ def session_client():
 
 
 def test_multibagger_candidates_top_30(session_client, api_base_url):
-    response = session_client.get(f'{api_base_url}/multibagger/candidates', timeout=90)
+    response = safe_streaming_get(f'{api_base_url}/multibagger/candidates')
     assert response.status_code == 200
 
     data = get_ndjson_complete_data(response)
@@ -128,10 +128,9 @@ def test_custom_script_refresh_nonce_returns_fresh_timestamp(session_client, api
 
 
 def test_multibagger_rows_include_tier_and_potential_flags(session_client, api_base_url):
-    response = session_client.get(
+    response = safe_streaming_get(
         f'{api_base_url}/multibagger/candidates',
         params={'refresh_nonce': 'pytest-multi-refresh'},
-        timeout=120,
     )
     assert response.status_code == 200
 

@@ -13,7 +13,7 @@ import pytest
 import requests
 import json
 
-from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, safe_streaming_post, safe_streaming_get
 
 BASE_URL = get_base_url()
 
@@ -378,10 +378,7 @@ class TestMultibaggerFields:
 
     def test_multibagger_candidates_get(self):
         """GET /api/multibagger/candidates — no auth required, returns list"""
-        resp = requests.get(
-            f"{BASE_URL}/api/multibagger/candidates",
-            timeout=60,  # might be slow for yfinance fetching
-        )
+        resp = safe_streaming_get(f"{BASE_URL}/api/multibagger/candidates")
         assert resp.status_code == 200, f"Multibagger candidates failed: {resp.status_code} - {resp.text[:200]}"
         data = get_ndjson_complete_data(resp)
         assert isinstance(data, list), f"Expected list, got {type(data)}"
@@ -405,10 +402,9 @@ class TestMultibaggerFields:
 
     def test_multibagger_has_thesis_field(self, auth_headers):
         """Each multibagger entry has a 'thesis' field"""
-        resp = requests.post(
+        resp = safe_streaming_post(
             f"{BASE_URL}/api/multibagger/generate",
             headers=auth_headers,
-            timeout=90,
         )
         assert resp.status_code == 200
         data = get_ndjson_complete_data(resp)
@@ -424,10 +420,9 @@ class TestMultibaggerFields:
 
     def test_multibagger_has_fundamental_fields(self, auth_headers):
         """Multibagger entries have roe, roce, piotroski_score, beneish_m_score"""
-        resp = requests.post(
+        resp = safe_streaming_post(
             f"{BASE_URL}/api/multibagger/generate",
             headers=auth_headers,
-            timeout=90,
         )
         assert resp.status_code == 200
         data = get_ndjson_complete_data(resp)
@@ -442,10 +437,9 @@ class TestMultibaggerFields:
 
     def test_multibagger_thesis_is_detailed(self, auth_headers):
         """Thesis is detailed - should include score breakdown and metrics"""
-        resp = requests.post(
+        resp = safe_streaming_post(
             f"{BASE_URL}/api/multibagger/generate",
             headers=auth_headers,
-            timeout=90,
         )
         assert resp.status_code == 200
         data = get_ndjson_complete_data(resp)
