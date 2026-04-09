@@ -127,6 +127,7 @@ def test_sub_admin_quota_enforcement(api_client, api_base_url):
     assert sub_create.status_code == 200
     sub_user_key = sub_create.json()["user_key"]
 
+    first_user_key = None
     try:
         sub_login = _login(api_client, api_base_url, sub_username)
         sub_headers = _auth_headers(sub_login["token"])
@@ -139,6 +140,7 @@ def test_sub_admin_quota_enforcement(api_client, api_base_url):
             timeout=30,
         )
         assert first_create.status_code == 200
+        first_user_key = first_create.json()["user_key"]
 
         second_user = f"u{uuid.uuid4().hex[:8]}2"
         second_create = api_client.post(
@@ -150,6 +152,8 @@ def test_sub_admin_quota_enforcement(api_client, api_base_url):
         assert second_create.status_code == 403
         assert "quota" in second_create.json().get("detail", "").lower()
     finally:
+        if first_user_key:
+            api_client.delete(f"{api_base_url}/admin/users/{first_user_key}", headers=owner_headers, timeout=30)
         api_client.delete(f"{api_base_url}/admin/users/{sub_user_key}", headers=owner_headers, timeout=30)
 
 
