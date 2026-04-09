@@ -275,19 +275,27 @@ class TestServerUseYfinanceFlag:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestDataVerifierYfinanceGuard:
-    """Test that _yfinance_ltp_sync returns None when USE_YFINANCE=False"""
+    """Kite Supremacy: _yfinance_ltp_sync must NOT be usable for live data.
+    If removed entirely → PASS (even stricter than disabled).
+    If still exists → must return None when USE_YFINANCE=False.
+    """
 
     def test_yfinance_ltp_sync_returns_none_when_disabled(self):
-        """_yfinance_ltp_sync should return None when USE_YFINANCE=False"""
+        """_yfinance_ltp_sync must be either removed or gated by USE_YFINANCE=False"""
         try:
             from services.data_verifier import _yfinance_ltp_sync
         except ImportError:
-            pytest.skip("_yfinance_ltp_sync removed/refactored — function no longer exists")
+            # Function fully removed — Kite supremacy enforced at code level. PASS.
+            return
         
         old_val = os.environ.pop("USE_YFINANCE", None)
         try:
             result = _yfinance_ltp_sync("RELIANCE")
-            assert result is None, f"Expected None when USE_YFINANCE=False, got {result}"
+            assert result is None, (
+                f"KITE SUPREMACY VIOLATION: _yfinance_ltp_sync returned {result} "
+                f"instead of None when USE_YFINANCE is not set. "
+                f"yfinance provides 15-min delayed data — Kite API is the only source of truth."
+            )
         finally:
             if old_val is not None:
                 os.environ["USE_YFINANCE"] = old_val
@@ -298,19 +306,28 @@ class TestDataVerifierYfinanceGuard:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestSectorMomentumYfinanceGuard:
-    """Test that _fetch_sector_data_sync returns None when USE_YFINANCE=False"""
+    """Kite Supremacy: _fetch_sector_data_sync must NOT use yfinance for sector data.
+    Sector momentum MUST use Kite Connect index tokens exclusively.
+    If function removed → PASS (Kite-only pipeline confirmed).
+    If still exists → must return None when USE_YFINANCE=False.
+    """
 
     def test_fetch_sector_data_sync_returns_none_when_disabled(self):
-        """_fetch_sector_data_sync should return None when USE_YFINANCE=False"""
+        """_fetch_sector_data_sync must be either removed or gated by USE_YFINANCE=False"""
         try:
             from services.sector_momentum import _fetch_sector_data_sync
         except ImportError:
-            pytest.skip("_fetch_sector_data_sync removed/refactored — function no longer exists")
+            # Function fully removed — sector momentum uses Kite index tokens only. PASS.
+            return
         
         old_val = os.environ.pop("USE_YFINANCE", None)
         try:
             result = _fetch_sector_data_sync(["TCS", "INFY"])
-            assert result is None, f"Expected None when USE_YFINANCE=False, got {result}"
+            assert result is None, (
+                f"KITE SUPREMACY VIOLATION: _fetch_sector_data_sync returned {result} "
+                f"instead of None when USE_YFINANCE is not set. "
+                f"Sector momentum must use Kite Connect SECTOR_INDEX_TOKENS exclusively."
+            )
         finally:
             if old_val is not None:
                 os.environ["USE_YFINANCE"] = old_val
