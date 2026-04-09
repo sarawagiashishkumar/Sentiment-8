@@ -199,3 +199,20 @@ async def api_batch_status(user=Depends(get_owner_user)):
         "theta_curve_entries": theta_count,
         "fwd_mfe_entries": fwd_count,
     }
+
+
+@batch_router.post("/refresh-equity-cache")
+async def api_refresh_equity_cache(user=Depends(get_owner_user)):
+    """Refresh equity_master_cache for the F&O + multibagger universe."""
+    s = _srv()
+    from services import equity_master_cache
+    from data.symbols import MULTIBAGGER_UNIVERSE
+    from services.research_engine import get_fo_universe
+
+    symbols = list(set(
+        list(MULTIBAGGER_UNIVERSE) +
+        list(get_fo_universe(lot_size_map=s.LOT_SIZE_MAP))
+    ))
+    count = await equity_master_cache.refresh_universe(symbols, concurrency=3)
+    return {"refreshed": count, "total": len(symbols)}
+

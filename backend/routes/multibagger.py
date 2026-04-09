@@ -62,8 +62,19 @@ async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
 
 
 @multibagger_router.get("/multibagger/candidates")
-async def get_multibagger_candidates(refresh_nonce: str | None = Query(default=None)):
-    """Stream multibagger candidates as NDJSON."""
+async def get_multibagger_candidates(
+    refresh_nonce: str | None = Query(default=None),
+    # Phase 5: Screener filters
+    min_piotroski: int = Query(default=0, ge=0, le=9),
+    max_beneish: float = Query(default=10.0),
+    min_altman: float = Query(default=0.0),
+    min_roic_vs_wacc: float = Query(default=-99.0),
+    sf2_only: bool = Query(default=False),
+    macro_tailwind_only: bool = Query(default=False),
+    regime_label: str | None = Query(default=None),
+    sort_by: str = Query(default="multibagger_score_desc"),
+):
+    """Stream multibagger candidates as NDJSON with optional screener filters."""
     import server as _srv
 
     _ = refresh_nonce
@@ -71,7 +82,40 @@ async def get_multibagger_candidates(refresh_nonce: str | None = Query(default=N
     async def _stream() -> AsyncGenerator[str, None]:
         yield _ndjson_line({"type": "progress", "phase": "start", "message": "Scanning candidates..."})
         candidates = await _srv._build_multibagger_candidates(_srv._utc_now_iso())
-        data = [json.loads(c.model_dump_json()) for c in candidates]
+
+        # Apply screener filters
+        filtered = []
+        for c in candidates:
+            if min_piotroski > 0 and (c.piotroski_score is None or c.piotroski_score < min_piotroski):
+                continue
+            if max_beneish < 10 and c.beneish_m_score is not None and c.beneish_m_score > max_beneish:
+                continue
+            if min_altman > 0:
+                # altman_z not directly on model; skip filter if not available
+                pass
+            if min_roic_vs_wacc > -99 and (c.roic_vs_wacc is None or c.roic_vs_wacc < min_roic_vs_wacc):
+                continue
+            if sf2_only and not c.sf2_high_conviction:
+                continue
+            if macro_tailwind_only and not c.macro_tailwind:
+                continue
+            if regime_label and c.regime_label != regime_label:
+                continue
+            filtered.append(c)
+
+        # Apply sort
+        sort_map = {
+            "multibagger_score_desc": lambda x: -(x.multibagger_score or 0),
+            "piotroski_desc": lambda x: -(x.piotroski_score or 0),
+            "roic_vs_wacc_desc": lambda x: -(x.roic_vs_wacc or -999),
+            "fcf_yield_desc": lambda x: -(x.fcf_yield_val or -999),
+            "eps_cagr_3y_desc": lambda x: -(x.eps_cagr_3y or -999),
+            "pct_below_ath_asc": lambda x: (x.pct_below_ath or 999),
+        }
+        sort_fn = sort_map.get(sort_by, sort_map["multibagger_score_desc"])
+        filtered.sort(key=sort_fn)
+
+        data = [json.loads(c.model_dump_json()) for c in filtered]
         yield _ndjson_line({"type": "complete", "data": data})
 
     return StreamingResponse(_stream(), media_type="application/x-ndjson")

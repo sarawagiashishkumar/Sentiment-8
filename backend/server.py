@@ -155,7 +155,6 @@ from services.iv_history import (
     get_iv_stats_52w,
 )
 
-# ── Extracted service modules (Phase 2: kite_client, fundamental_data, user, validators) ──
 from services.kite_client import (  # noqa: F401
     _get_kite_access_token,
     _fetch_kite_equity_core,
@@ -527,8 +526,6 @@ BANKNIFTY_WEIGHT_PROXY = [
     ("BANKBARODA", 1.0),
 ]
 
-
-
 # ─── Models (extracted to /app/backend/models/__init__.py) ────────────────────
 from models import (
     StatusCheck, StatusCheckCreate, AccessRequest, AccessResponse, MeResponse,
@@ -563,8 +560,6 @@ from services.date_utils import (  # noqa: F401
     get_calendar_days_for_nth_trading_day as _get_calendar_days_for_nth_trading_day,
 )
 
-
-# ── Position parser extracted to services/position_parser.py ──
 from services.position_parser import (  # noqa: F401
     SYMBOL_HEADERS, AVG_HEADERS, QTY_HEADERS,
     normalize_positions_from_rows as _normalize_positions_from_rows,
@@ -577,8 +572,6 @@ from services.position_parser import (  # noqa: F401
     _is_tesseract_ready, _find_column, _detect_qty_avg_orientation,
     _pick_avg_and_qty, _pil_image_to_bytes,
 )
-
-
 
 async def _get_api_controls(force_refresh: bool = False) -> dict[str, bool]:
     global API_CONTROL_CACHE_TS
@@ -606,7 +599,6 @@ async def _get_api_controls(force_refresh: bool = False) -> dict[str, bool]:
         "strict_live_only": bool(API_CONTROL_CACHE.get("strict_live_only", True)),
     }
 
-
 async def _get_stock_core_cached(symbol: str) -> dict:
     key = _normalize_symbol_key(symbol)
     now = datetime.now(timezone.utc).timestamp()
@@ -621,60 +613,14 @@ async def _get_stock_core_cached(symbol: str) -> dict:
     STOCK_CORE_CACHE[key] = {"ts": now, "data": data}
     return data
 
-
-# _fetch_kite_equity_core — extracted to services/kite_client.py
-
-
-# _sync_kite_option_master_daily — extracted to services/kite_client.py
-
-
-# _resolve_kite_lot_size_for_script, _resolve_verified_lot_size — extracted to services/kite_client.py
-
-
-# _get_kite_access_token — extracted to services/kite_client.py
-
-
-# _resolve_kite_instrument_for_contract — extracted to services/kite_client.py
-
-
-# _fetch_option_snapshot_from_kite, _fetch_option_ltp_from_kite — extracted to services/kite_client.py
-
-
-# _fetch_option_ltps_from_kite — extracted to services/kite_client.py
-
-
-# _fetch_option_snapshots_from_kite — extracted to services/kite_client.py
-
-
 # compute_option_chain_analytics — extracted to services/kite_client.py
 
-
-# _fetch_kite_hist_ohlcv_for_equity — extracted to services/kite_client.py
-
-
-# _fetch_live_option_snapshot, _fetch_live_option_ltp — extracted to services/kite_client.py
-
-
-# _fetch_historical_candles_from_kite — extracted to services/kite_client.py
-
-
-# ── _analyze_micro_dip_prediction — extracted to services/ ──
-
-# ── _portfolio_horizon_ranges — extracted to services/ ──
-
-
-# ── _analyze_portfolio_positions — extracted to services/ ──
 # _position_in_range, get_minutes_to_expiry, _expiry_risk_bucket,
 # get_remaining_trading_days, get_nth_trading_day_from_today
 # extracted to services/date_utils.py (re-imported above)
 
-
-# _validate_expiry_guard .. _resolve_ipv4 — extracted to services/validators.py
-
-
 def _normalize_symbol_key(value: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
-
 
 # ── Script Master: extracted to services/script_master.py ──
 from services.script_master import (  # noqa: F401
@@ -682,14 +628,11 @@ from services.script_master import (  # noqa: F401
     _resolve_symbol_input,
 )
 
-
 # Auth dependencies are now in deps.py (shared with route modules)
 from deps import get_current_user, get_admin_user, get_owner_user
 
-
 # ── India VIX: extracted to services/india_vix.py ──
 from services.india_vix import _get_india_vix  # noqa: F401
-
 
 # ── Batch A: Active Macro Events helper ──────────────────────────────────────
 
@@ -708,7 +651,6 @@ async def _get_active_macro_events() -> list[str]:
     except Exception as exc:
         logger.warning("Failed to read active macro events from DB: %s", exc)
     return []
-
 
 # ── Batch C: Strategy Stats helper for threshold enforcement ─────────────────
 
@@ -745,10 +687,8 @@ async def _get_strategy_stats_for_selection() -> dict[str, dict]:
         logger.warning("Failed to load strategy stats for selection: %s", exc)
         return {}
 
-
 # ── Hist OHLCV: extracted to services/hist_data.py ──
 from services.hist_data import _get_hist_ohlcv  # noqa: F401
-
 
 # ── Position Service: extracted to services/position_service.py ──
 from services.position_service import (  # noqa: F401
@@ -757,14 +697,11 @@ from services.position_service import (  # noqa: F401
     _refresh_open_position,
 )
 
-
 @api_router.get("/")
 async def root():
     return {"message": "AI Stock Research API"}
 
-
 # ── Auth routes: extracted to routes/auth.py ──
-
 
 @api_router.get("/strategy-library")
 async def get_strategy_library(current_user: dict = Depends(get_current_user)):
@@ -777,9 +714,6 @@ async def get_strategy_library(current_user: dict = Depends(get_current_user)):
         "total": len(STRATEGY_LIBRARY),
     }
 
-
-
-
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
     status_dict = input.model_dump()
@@ -789,7 +723,6 @@ async def create_status_check(input: StatusCheckCreate):
     _ = await db.status_checks.insert_one(doc)
     return status_obj
 
-
 @api_router.get("/status", response_model=List[StatusCheck])
 async def get_status_checks():
     status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
@@ -798,11 +731,9 @@ async def get_status_checks():
             check["timestamp"] = datetime.fromisoformat(check["timestamp"])
     return status_checks
 
-
 @api_router.get("/fno/contracts")
 async def get_fno_contracts():
     return [FNOContract(**row) for row in FNO_CONTRACTS]
-
 
 # ── Include extracted route modules ───────────────────────────────────────────
 from routes.fno import fno_router
@@ -829,7 +760,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.on_event("startup")
 async def startup_tasks():
@@ -968,7 +898,6 @@ async def startup_tasks():
         logger.info("News continuous monitor background task started")
     except Exception as exc:
         logger.warning("News continuous monitor start failed (non-fatal): %s", exc)
-
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

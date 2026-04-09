@@ -151,6 +151,24 @@ class MultibaggerCandidate(BaseModel):
     current_ratio: float | None = None
     gross_margin: float | None = None
     vol_bands: dict | None = None
+    # Phase 3: Multibagger Screener + Price Band Upgrade fields
+    price_bands: dict | None = None
+    band_computation_status: str | None = None
+    forensic_flag: str | None = None
+    conviction_penalty: int = 0
+    sf2_high_conviction: bool = False
+    macro_tailwind: bool = False
+    pli_beneficiary: bool = False
+    govt_capex_beneficiary: bool = False
+    trend_alignment: str | None = None
+    regime_label: str | None = None
+    pct_below_ath: float | None = None
+    roic_vs_wacc: float | None = None
+    fcf_yield_val: float | None = None
+    eps_cagr_3y: float | None = None
+    ebitda_margin_trend: str | None = None
+    data_source: str | None = None
+    cache_as_of: str | None = None
 
     from pydantic import model_validator
 
@@ -164,6 +182,7 @@ class MultibaggerCandidate(BaseModel):
             "current_rsi_level", "gtt_buy_price",
             "roe", "roce", "beneish_m_score", "eps_growth_pct",
             "debt_to_equity", "current_ratio", "gross_margin",
+            "pct_below_ath", "roic_vs_wacc", "fcf_yield_val", "eps_cagr_3y",
         }
         if isinstance(values, dict):
             for field in _float_fields:
@@ -372,6 +391,10 @@ class PortfolioStockAnalysis(BaseModel):
     roic_wacc_spread: float | None = None
     piotroski_score: int | None = None
     beneish_m_score: float | None = None
+    # Phase 4: Price Band + Verdict Integration
+    price_bands: dict | None = None
+    band_error: str | None = None
+    holding_verdict: str | None = None
 
 
 class PortfolioAnalyzeResponse(BaseModel):

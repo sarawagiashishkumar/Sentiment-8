@@ -20,6 +20,8 @@ from services.indicators import (
     check_stock_eligibility,
 )
 from services.macro_context import compute_macro_context
+from services.price_band_engine import compute_price_bands as compute_new_price_bands
+from services import equity_master_cache
 
 logger = logging.getLogger(__name__)
 
@@ -467,6 +469,19 @@ def compute_multibagger_analysis(
         "ebitda_margin_latest": fundamental.get("ebitda_margin_latest") if fundamental else None,
         "ebitda_margin_trend": fundamental.get("ebitda_margin_trend") if fundamental else None,
         "vol_bands": vol_bands,  # volatility-based realistic price bands for all horizons
+        # ── Phase 3: New price band engine fields (from equity_master_cache) ──
+        "price_bands": None,            # Populated by caller from price_band_engine
+        "band_computation_status": None, # Populated by caller
+        "forensic_flag": None,
+        "conviction_penalty": 0,
+        "sf2_high_conviction": False,
+        "macro_tailwind": False,
+        "pli_beneficiary": False,
+        "govt_capex_beneficiary": False,
+        "trend_alignment": fundamental.get("trend_alignment") if fundamental else None,
+        "regime_label": "",
+        "data_source": "equity_master_cache",
+        "cache_as_of": None,
     }
 
 
@@ -591,6 +606,85 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
             analysis["is_potential_multibagger"] = False
             analysis["thesis"] = f"[ELIGIBILITY FLAGS: {'; '.join(eligibility['flags'])}] " + analysis.get("thesis", "")
 
+        # ── Phase 3: Equity Master Cache + Price Band Integration ─────
+        conviction_penalty = 0
+        forensic_flag = None
+        sf2_high_conviction = False
+        price_bands = None
+        band_status = "PENDING"
+        cache_as_of = None
+
+        try:
+            cache_doc = await equity_master_cache.get_symbol(stock.symbol)
+            if cache_doc and not await equity_master_cache.is_stale(stock.symbol):
+                cache_as_of = cache_doc.get("as_of_timestamp")
+
+                # Forensic quality gates (additive penalties)
+                _beneish = cache_doc.get("beneish_m_score")
+                _piotroski = cache_doc.get("piotroski_f_score")
+                _pledging = cache_doc.get("pledging_pct", 0)
+                _debt_mcap = cache_doc.get("debt_to_mcap_pct")
+
+                if _beneish is not None and _beneish > -1.78:
+                    forensic_flag = "BENEISH_RISK"
+                    conviction_penalty -= 15
+                if _piotroski is not None and _piotroski < 4:
+                    forensic_flag = forensic_flag or "WEAK_PIOTROSKI"
+                    conviction_penalty -= 10
+                if _pledging and float(_pledging) > 20:
+                    forensic_flag = forensic_flag or "HIGH_PLEDGING"
+                    conviction_penalty -= 10
+                if _debt_mcap is not None and float(_debt_mcap) >= 30:
+                    # Skip candidate — too leveraged
+                    continue
+
+                # Compute new price bands
+                bands_result = await compute_new_price_bands(stock.symbol)
+                if bands_result.get("error"):
+                    band_status = bands_result["error"].upper()
+                else:
+                    price_bands = bands_result.get("bands")
+                    band_status = "OK"
+
+                # SF2 high-conviction tag
+                sf2_high_conviction = bool(
+                    _piotroski is not None and _piotroski >= 7
+                    and _beneish is not None and _beneish < -1.78
+                    and cache_doc.get("supertrend_signal") == "buy"
+                    and cache_doc.get("ltp", 0) > (cache_doc.get("ema_50_daily") or 0)
+                    and cache_doc.get("trend_alignment") == "bullish"
+                )
+
+                # Macro tagging
+                analysis["macro_tailwind"] = bool(cache_doc.get("sector") in (cache_doc.get("macro_tailwind_sectors") or []))
+                analysis["pli_beneficiary"] = bool(cache_doc.get("pli_beneficiary"))
+                analysis["govt_capex_beneficiary"] = bool(cache_doc.get("govt_capex_beneficiary"))
+                analysis["trend_alignment"] = cache_doc.get("trend_alignment")
+                analysis["regime_label"] = cache_doc.get("regime_label", "")
+                analysis["week_52_high"] = cache_doc.get("week_52_high")
+                analysis["week_52_low"] = cache_doc.get("week_52_low")
+                analysis["pct_below_ath"] = cache_doc.get("pct_below_ath")
+                analysis["roic_vs_wacc"] = cache_doc.get("roic_vs_wacc")
+                analysis["fcf_yield"] = cache_doc.get("fcf_yield")
+                analysis["eps_cagr_3y"] = cache_doc.get("eps_cagr_3y")
+                analysis["ebitda_margin_trend"] = cache_doc.get("ebitda_margin_trend")
+            else:
+                band_status = "CACHE_MISS" if not cache_doc else "STALE"
+        except Exception as exc:
+            logger.debug("Cache/band integration failed for %s: %s", stock.symbol, exc)
+            band_status = "ERROR"
+
+        # Apply conviction penalty
+        if conviction_penalty != 0:
+            analysis["multibagger_score"] = max(0, analysis["multibagger_score"] + conviction_penalty)
+
+        analysis["price_bands"] = price_bands
+        analysis["band_computation_status"] = band_status
+        analysis["forensic_flag"] = forensic_flag
+        analysis["conviction_penalty"] = conviction_penalty
+        analysis["sf2_high_conviction"] = sf2_high_conviction
+        analysis["cache_as_of"] = cache_as_of
+
         candidates.append(
             MultibaggerCandidate(
                 symbol=stock.symbol,
@@ -623,6 +717,24 @@ async def _build_multibagger_candidates(refreshed_at: str) -> list[MultibaggerCa
                 current_ratio=analysis.get("current_ratio"),
                 gross_margin=analysis.get("gross_margin"),
                 vol_bands=analysis.get("vol_bands"),
+                # Phase 3: New fields
+                price_bands=price_bands,
+                band_computation_status=band_status,
+                forensic_flag=forensic_flag,
+                conviction_penalty=conviction_penalty,
+                sf2_high_conviction=sf2_high_conviction,
+                macro_tailwind=analysis.get("macro_tailwind", False),
+                pli_beneficiary=analysis.get("pli_beneficiary", False),
+                govt_capex_beneficiary=analysis.get("govt_capex_beneficiary", False),
+                trend_alignment=analysis.get("trend_alignment"),
+                regime_label=analysis.get("regime_label", ""),
+                pct_below_ath=analysis.get("pct_below_ath"),
+                roic_vs_wacc=analysis.get("roic_vs_wacc"),
+                fcf_yield_val=analysis.get("fcf_yield"),
+                eps_cagr_3y=analysis.get("eps_cagr_3y"),
+                ebitda_margin_trend=analysis.get("ebitda_margin_trend"),
+                data_source="equity_master_cache",
+                cache_as_of=cache_as_of,
             )
         )
 

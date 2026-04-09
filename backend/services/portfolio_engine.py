@@ -135,6 +135,8 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
     )
     from services.indicators import compute_portfolio_risk_metrics
     from services.technical_core import compute_portfolio_verdict
+    from services.price_band_engine import compute_price_bands as compute_new_price_bands
+    from services import equity_master_cache
     # ── Batch 4: Merge duplicate holdings first ───────────────────────────
     positions = merge_duplicate_holdings(positions)
 
@@ -348,6 +350,30 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
             comments_list.append(f"ROIC < WACC by {abs(_roic_spread):.1f}% — value destructive")
         comments = "; ".join(comments_list) if comments_list else comments
 
+        # ── Phase 4: Price Band + Master Verdict Integration ─────────
+        _holding_price_bands = None
+        _holding_band_error = None
+        _holding_verdict = None
+        try:
+            _cache_doc = await equity_master_cache.get_symbol(stock.symbol)
+            if _cache_doc and not await equity_master_cache.is_stale(stock.symbol):
+                _band_result = await compute_new_price_bands(stock.symbol)
+                if _band_result.get("error"):
+                    _holding_band_error = _band_result["error"]
+                else:
+                    _holding_price_bands = _band_result.get("bands")
+                _holding_verdict = _compute_holding_verdict(
+                    unrealised_pnl_pct=row["pnl_pct"],
+                    doc=_cache_doc,
+                    band_error=_holding_band_error,
+                )
+            else:
+                _holding_band_error = "cache_miss_or_stale"
+                _holding_verdict = "WAIT_AND_WATCH"
+        except Exception as _hv_exc:
+            logger.debug("Portfolio holding verdict failed for %s: %s", stock.symbol, _hv_exc)
+            _holding_verdict = "WAIT_AND_WATCH"
+
         analyses.append(
             PortfolioStockAnalysis(
                 symbol=stock.symbol,
@@ -376,6 +402,9 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
                 roic_wacc_spread=_roic_spread,
                 piotroski_score=_piotroski,
                 beneish_m_score=_beneish,
+                price_bands=_holding_price_bands,
+                band_error=_holding_band_error,
+                holding_verdict=_holding_verdict,
             )
         )
 
@@ -439,6 +468,72 @@ async def _analyze_portfolio_positions(positions: list[dict]) -> PortfolioAnalyz
         portfolio_risk_metrics=portfolio_risk,
         enhanced_analytics=enhanced_risk,
     )
+
+
+def _compute_holding_verdict(unrealised_pnl_pct: float, doc: dict, band_error: str | None = None) -> str:
+    """
+    Rule-based verdict engine for portfolio holdings.
+    Uses equity_master_cache data — no API calls.
+    Returns first matching verdict in priority order.
+    """
+    altman_z = doc.get("altman_z_score")
+    debt_mcap = doc.get("debt_to_mcap_pct") or 0
+    beneish = doc.get("beneish_m_score")
+    piotroski = doc.get("piotroski_f_score")
+    margin_trend = doc.get("ebitda_margin_trend", "stable")
+    trend_align = doc.get("trend_alignment", "mixed")
+    adx = doc.get("adx_14_daily")
+    rsi = doc.get("rsi_14_daily")
+    roic_spread = doc.get("roic_vs_wacc")
+    pct_below_ath = doc.get("pct_below_ath") or 100
+
+    # EXIT_IMMEDIATELY
+    if altman_z is not None and altman_z < 1.23 and debt_mcap > 40:
+        return "EXIT_IMMEDIATELY"
+    if beneish is not None and beneish > -1.00:
+        return "EXIT_IMMEDIATELY"
+    if piotroski is not None and piotroski <= 2 and unrealised_pnl_pct < -15:
+        return "EXIT_IMMEDIATELY"
+
+    # PARTIAL_EXIT
+    if unrealised_pnl_pct > 80 and pct_below_ath < 5:
+        return "PARTIAL_EXIT"
+    if beneish is not None and beneish > -1.78:
+        return "PARTIAL_EXIT"
+    if margin_trend == "contracting" and unrealised_pnl_pct > 30:
+        return "PARTIAL_EXIT"
+
+    # WAIT_AND_WATCH
+    if trend_align == "mixed":
+        return "WAIT_AND_WATCH"
+    if adx is not None and adx < 18:
+        return "WAIT_AND_WATCH"
+    if band_error is not None:
+        return "WAIT_AND_WATCH"
+
+    # BUY_MORE_NOW
+    if (piotroski is not None and piotroski >= 7
+            and beneish is not None and beneish < -1.78
+            and roic_spread is not None and roic_spread > 5
+            and trend_align == "bullish"
+            and rsi is not None and rsi < 55
+            and unrealised_pnl_pct > -10):
+        return "BUY_MORE_NOW"
+
+    # ACCUMULATE_ON_DIPS
+    if (piotroski is not None and piotroski >= 6
+            and trend_align in ("bullish", "mixed")
+            and rsi is not None and 40 <= rsi <= 65
+            and -20 <= unrealised_pnl_pct <= 40):
+        return "ACCUMULATE_ON_DIPS"
+
+    # STRONG_HOLD
+    if (piotroski is not None and piotroski >= 7
+            and trend_align == "bullish"
+            and unrealised_pnl_pct > 15):
+        return "STRONG_HOLD"
+
+    return "WAIT_AND_WATCH"
 
 
 
