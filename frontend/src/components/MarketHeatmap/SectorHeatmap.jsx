@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { TrendingUp, TrendingDown } from "lucide-react";
+import { SectorDrillDown } from "@/components/Shared/SectorDrillDown";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -17,6 +18,7 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
   const [sectorData, setSectorData] = useState(null);
   const [industryData, setIndustryData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [selectedSector, setSelectedSector] = useState(null);
   const intervalRef = useRef(null);
 
   const loadData = useCallback(async (silent = false) => {
@@ -71,7 +73,10 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
               <div
                 key={s.sector}
                 data-testid={`heatmap-sector-${s.sector.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
-                className="rounded-lg border border-emerald-500/30 bg-gradient-to-br from-emerald-900/60 to-teal-900/40 p-3 transition-all hover:brightness-110 hover:scale-[1.02]"
+                className={`rounded-lg border border-emerald-500/30 bg-gradient-to-br from-emerald-900/60 to-teal-900/40 p-3 transition-all hover:brightness-110 hover:scale-[1.02] cursor-pointer ${
+                  selectedSector === s.sector ? "ring-2 ring-cyan-400" : ""
+                }`}
+                onClick={() => setSelectedSector(selectedSector === s.sector ? null : s.sector)}
               >
                 <div className="font-semibold text-xs text-emerald-100 truncate mb-1">{s.sector}</div>
                 <div className="text-2xl font-bold font-mono text-white">{Math.round(s.momentum_score)}</div>
@@ -81,6 +86,13 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
               </div>
             ))}
           </div>
+          {selectedSector && sectors.some(s => s.sector === selectedSector) && (
+            <SectorDrillDown
+              sector={selectedSector}
+              authHeaders={authHeaders}
+              onClose={() => setSelectedSector(null)}
+            />
+          )}
         </div>
       )}
 
@@ -97,11 +109,14 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
                 <div
                   key={s.sector}
                   data-testid={`industry-sector-${s.sector.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
-                  className={`rounded-lg border p-3 transition-all hover:brightness-110 ${
+                  className={`rounded-lg border p-3 transition-all hover:brightness-110 cursor-pointer ${
+                    selectedSector === s.sector ? "ring-2 ring-cyan-400" : ""
+                  } ${
                     isPositive
                       ? "border-emerald-500/30 bg-gradient-to-br from-emerald-900/60 to-teal-900/40"
                       : "border-rose-500/30 bg-gradient-to-br from-rose-900/60 to-red-900/40"
                   }`}
+                  onClick={() => setSelectedSector(selectedSector === s.sector ? null : s.sector)}
                 >
                   <div className="font-semibold text-xs text-slate-100 truncate mb-1">{s.sector}</div>
                   <div className={`text-xl font-bold font-mono ${isPositive ? "text-emerald-200" : "text-rose-200"}`}>
@@ -116,6 +131,13 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
               );
             })}
           </div>
+          {selectedSector && industrySectors.some(s => s.sector === selectedSector) && (
+            <SectorDrillDown
+              sector={selectedSector}
+              authHeaders={authHeaders}
+              onClose={() => setSelectedSector(null)}
+            />
+          )}
         </div>
       )}
     </div>

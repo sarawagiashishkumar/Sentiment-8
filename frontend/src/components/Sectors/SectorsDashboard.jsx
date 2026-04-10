@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { GaugeCircle, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectorDrillDown } from "@/components/Shared/SectorDrillDown";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -18,6 +19,7 @@ export function SectorsDashboard({ authHeaders, initialData }) {
   const [sectorMomentumData, setSectorMomentumData] = useState(initialData || null);
   const [sectorMomentumLoading, setSectorMomentumLoading] = useState(false);
   const [sectorMomentumError, setSectorMomentumError] = useState("");
+  const [selectedSector, setSelectedSector] = useState(null);
   const intervalRef = useRef(null);
 
   const loadSectorMomentum = useCallback(async (forceRefresh = false, silent = false) => {
@@ -98,7 +100,11 @@ export function SectorsDashboard({ authHeaders, initialData }) {
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="sector-momentum-grid">
                 {(sectorMomentumData.sectors || []).map((s) => (
-                  <div key={s.sector} className="rounded-lg border border-slate-700 bg-slate-900/60 p-3" data-testid={`sector-card-${s.sector.toLowerCase().replace(/[^a-z]/g, '-')}`}>
+                  <div key={s.sector} className={`rounded-lg border border-slate-700 bg-slate-900/60 p-3 cursor-pointer transition-all hover:border-cyan-500/50 ${
+                    selectedSector === s.sector ? "ring-2 ring-cyan-400 border-cyan-500/50" : ""
+                  }`} data-testid={`sector-card-${s.sector.toLowerCase().replace(/[^a-z]/g, '-')}`}
+                  onClick={() => setSelectedSector(selectedSector === s.sector ? null : s.sector)}
+                  >
                     <div className="mb-2 flex items-center justify-between">
                       <span className="font-semibold text-slate-100 text-sm">{s.sector}</span>
                       <div className="flex items-center gap-2">
@@ -153,6 +159,13 @@ export function SectorsDashboard({ authHeaders, initialData }) {
                   </div>
                 ))}
               </div>
+              {selectedSector && (
+                <SectorDrillDown
+                  sector={selectedSector}
+                  authHeaders={authHeaders}
+                  onClose={() => setSelectedSector(null)}
+                />
+              )}
             </>
           ) : null}
         </CardContent>
