@@ -407,6 +407,13 @@ from services.position_service import (  # noqa: F401
 async def root():
     return {"message": "AI Stock Research API"}
 
+
+@api_router.get("/heartbeat")
+async def heartbeat():
+    """Lightweight keep-alive endpoint. Frontend pings every 60s to prevent
+    Kubernetes pod eviction and maintain session warmth during market hours."""
+    return {"status": "alive", "ts": datetime.now(IST).isoformat()}
+
 # ── Auth routes: extracted to routes/auth.py ──
 
 @api_router.get("/strategy-library")

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { UserCog, Shield, Settings, Globe, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,11 +13,11 @@ const roles = [
 ];
 
 const ADMIN_TABS = [
-  { id: "users", label: "User Management & Security", icon: UserCog },
-  { id: "controls", label: "Advanced Controls", icon: Settings },
-  { id: "macro", label: "Active Macro Events", icon: Calendar },
-  { id: "kite", label: "API Connect Integration", icon: Globe },
-  { id: "csv", label: "OHLCV CSV Seed Management", icon: Shield },
+  { id: "users", label: "User Management & Security" },
+  { id: "controls", label: "Advanced Controls" },
+  { id: "macro", label: "Active Macro Events" },
+  { id: "kite", label: "API Connect Integration" },
+  { id: "csv", label: "OHLCV CSV Seed Management" },
 ];
 
 export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydrateMe }) {

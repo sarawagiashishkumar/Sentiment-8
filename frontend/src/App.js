@@ -77,6 +77,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // ── Keep-alive heartbeat ──────────────────────────────────────────
+  // Pings /api/heartbeat every 60s to prevent server/pod sleep during
+  // market hours. Also keeps Kite session warm and prevents user logout
+  // while idle (watching heatmap, tracking prices etc).
+  useEffect(() => {
+    if (!token) return undefined;
+    const ping = () => {
+      axios.get(`${API}/heartbeat`, { headers: authHeaders, timeout: 5000 }).catch(() => {});
+    };
+    ping(); // immediate first ping
+    const timer = setInterval(ping, 60000); // every 60s
+    return () => clearInterval(timer);
+  }, [token, authHeaders]);
+
   // ── Rich alert sound engine ──────────────────────────────────────
   const playAlertSound = (type = "urgent") => {
     try {

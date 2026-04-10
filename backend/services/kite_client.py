@@ -74,7 +74,7 @@ async def _fetch_kite_equity_core(symbol: str) -> dict | None:
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=10,
+                timeout=(5, 10),
             )
             if resp.status_code != 200:
                 return None
@@ -135,7 +135,7 @@ async def fetch_kite_batch_quotes(symbols: list[str], exchange: str = "NSE") -> 
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=8,
+                timeout=(5, 8),
             )
             if resp.status_code != 200:
                 logger.warning("Kite batch quote HTTP %s: %s", resp.status_code, resp.text[:200])
@@ -206,7 +206,7 @@ async def fetch_kite_batch_option_quotes(tradingsymbols: list[str]) -> dict[str,
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=15,
+                timeout=(5, 8),
             )
             if resp.status_code != 200:
                 return {}
@@ -238,8 +238,6 @@ async def fetch_kite_batch_option_quotes(tradingsymbols: list[str]) -> dict[str,
         result.update(rows)
 
     return result
-
-
 
 
 # ── Kite Option Master Sync ──────────────────────────────────────────────────
@@ -444,7 +442,7 @@ async def _fetch_option_snapshot_from_kite(contract: FNOContract) -> dict | None
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=12,
+                timeout=(5, 12),
             )
             if response.status_code != 200:
                 return None
@@ -502,7 +500,7 @@ async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=15,
+                timeout=(5, 15),
             )
             if response.status_code != 200:
                 return {}
@@ -559,7 +557,7 @@ async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dic
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=15,
+                timeout=(5, 15),
             )
             if response.status_code != 200:
                 return {}
@@ -747,7 +745,7 @@ async def _fetch_kite_hist_ohlcv_for_equity(symbol: str, period: str = "1y") -> 
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=15,
+                timeout=(5, 15),
             )
             if resp.status_code != 200:
                 return None
@@ -831,7 +829,7 @@ async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: s
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=15,
+                timeout=(3, 5),
             )
             if response.status_code != 200:
                 logger.warning(

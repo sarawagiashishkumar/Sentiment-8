@@ -109,15 +109,35 @@ async def generate_fno_signals(
             nifty_projection = _empty_index_pane("NIFTY", "NIFTY projection temporarily unavailable")
         yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals"})
 
+        # Send partial NIFTY results immediately so frontend can display them
+        nifty_partial = {
+            "nifty_projection": json.loads(nifty_projection.model_dump_json()) if hasattr(nifty_projection, 'model_dump_json') else {},
+            "signals_so_far": len(nifty_projection.assured_signals),
+        }
+        yield _ndjson_line({"type": "partial", "phase": "nifty", "data": nifty_partial})
+
         # ── Phase 2: BANKNIFTY projection ─────────────────────────────────
         yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY projection..."})
+        _bn_task = asyncio.ensure_future(
+            _srv._build_index_projection("BANKNIFTY", refreshed_at)
+        )
+        while not _bn_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(_bn_task), timeout=10)
+            except asyncio.TimeoutError:
+                yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY options..."})
         try:
-            banknifty_projection = await asyncio.wait_for(
-                _srv._build_index_projection("BANKNIFTY", refreshed_at), timeout=120
-            )
+            banknifty_projection = _bn_task.result()
         except Exception:
             banknifty_projection = _empty_index_pane("BANKNIFTY", "BANKNIFTY projection temporarily unavailable")
         yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals"})
+
+        # Send partial BANKNIFTY results
+        banknifty_partial = {
+            "banknifty_projection": json.loads(banknifty_projection.model_dump_json()) if hasattr(banknifty_projection, 'model_dump_json') else {},
+            "signals_so_far": len(nifty_projection.assured_signals) + len(banknifty_projection.assured_signals),
+        }
+        yield _ndjson_line({"type": "partial", "phase": "banknifty", "data": banknifty_partial})
 
         # ── Phase 3: Stock F&O signals ────────────────────────────────────
         yield _ndjson_line({"type": "progress", "phase": "stocks", "message": "Scanning stock F&O universe..."})

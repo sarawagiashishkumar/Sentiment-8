@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
-import { Download, RefreshCw, Settings, TrendingUp, BarChart3, Activity } from "lucide-react";
+import { Download, RefreshCw, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,9 +20,9 @@ import { SubTabs } from "@/components/Layout/SubTabs";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const FNO_TABS = [
-  { id: "signals", label: "Custom Script & F&O Generation", icon: TrendingUp },
-  { id: "performance", label: "Signal Performance Tracking", icon: BarChart3 },
-  { id: "analytics", label: "IV Analytics & Multi-Timeframe", icon: Activity },
+  { id: "signals", label: "Custom Script & F&O Generation" },
+  { id: "performance", label: "Signal Performance Tracking" },
+  { id: "analytics", label: "IV Analytics & Multi-Timeframe" },
 ];
 
 export function FNODashboard({
@@ -97,7 +97,36 @@ export function FNODashboard({
         const err = await response.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${response.status}`);
       }
-      const data = await readNDJSONStream(response, (evt) => setFnoProgress(evt.message || ""), controller.signal);
+      const data = await readNDJSONStream(
+        response,
+        (evt) => setFnoProgress(evt.message || ""),
+        controller.signal,
+        // onPartial: merge partial results into fnoData as they arrive
+        (evt) => {
+          if (evt.data) {
+            setFnoData((prev) => {
+              const merged = prev ? { ...prev } : {};
+              if (evt.phase === "nifty" && evt.data.nifty_projection) {
+                merged.nifty_projection = evt.data.nifty_projection;
+                // Build interim signals from NIFTY
+                merged.signals = evt.data.nifty_projection.assured_signals || [];
+                merged.potential_signals = (evt.data.nifty_projection.assured_signals || []).filter(s => s.is_potential_trade);
+                merged.top_trades = merged.potential_signals.slice(0, 4);
+              }
+              if (evt.phase === "banknifty" && evt.data.banknifty_projection) {
+                merged.banknifty_projection = evt.data.banknifty_projection;
+                // Merge BANKNIFTY signals
+                const niftySigs = merged.nifty_projection?.assured_signals || [];
+                const bnSigs = evt.data.banknifty_projection.assured_signals || [];
+                merged.signals = [...niftySigs, ...bnSigs].sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0));
+                merged.potential_signals = merged.signals.filter(s => s.is_potential_trade);
+                merged.top_trades = merged.potential_signals.slice(0, 4);
+              }
+              return merged;
+            });
+          }
+        },
+      );
       if (data) {
         setFnoData(data);
         syncCredits(data.credits_remaining);
@@ -217,12 +246,20 @@ export function FNODashboard({
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-testid="fno-3col-layout">
                 {/* Column 1: NIFTY — Sticky */}
                 <div className="lg:sticky lg:top-4 lg:self-start">
-                  <IndexPane pane={fnoData.nifty_projection} />
+                  {fnoData.nifty_projection ? (
+                    <IndexPane pane={fnoData.nifty_projection} />
+                  ) : (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400 animate-pulse">Computing NIFTY...</div>
+                  )}
                 </div>
 
                 {/* Column 2: BANKNIFTY */}
                 <div>
-                  <IndexPane pane={fnoData.banknifty_projection} />
+                  {fnoData.banknifty_projection ? (
+                    <IndexPane pane={fnoData.banknifty_projection} />
+                  ) : (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400 animate-pulse">Computing BANKNIFTY...</div>
+                  )}
                 </div>
 
                 {/* Column 3: Top 4 Trades + Custom Script */}

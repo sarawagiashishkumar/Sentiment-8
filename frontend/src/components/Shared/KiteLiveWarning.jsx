@@ -1,106 +1,147 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { AlertTriangle, X, Volume2 } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
+import { AlertTriangle, X, Volume2 } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const ALARM_URL = "https://cdn.pixabay.com/download/audio/2022/03/25/audio_25c0b2671e.mp3?filename=freesound_community-alarm-106447.mp3";
+const ALARM_URL = "https://cdn.pixabay.com/download/audio/2022/03/25/audio_25c0b2671e.mp3";
+const POLL_INTERVAL_MS = 60000; // 60 seconds
+const ALARM_DURATION_MS = 5000; // 5 seconds loud alarm
 
 /**
- * Kite Session Health Monitor + "No Live Data" warning.
- * - Checks /api/kite/status every 60s
- * - Does NOT mention "Kite" by name — only "API"
- * - Non-sticky: only shows when API is down, auto-dismisses on reconnect
- * - Plays 5s loud alarm when connection drops
+ * Play the alarm sound at MAXIMUM volume for exactly 5 seconds.
+ * Used for critical warnings only (API disconnection, network errors).
+ * NOT used for success events (target achievements).
  */
+function playAlarmSound() {
+  try {
+    const audio = new Audio(ALARM_URL);
+    audio.volume = 1.0; // Maximum volume
+    audio.loop = true;   // Loop during the 5-second window
+    audio.play().catch(() => {});
+    // Stop after 5 seconds
+    setTimeout(() => {
+      audio.loop = false;
+      audio.pause();
+      audio.currentTime = 0;
+    }, ALARM_DURATION_MS);
+  } catch {
+    // Audio blocked by browser policy — ignore silently
+  }
+}
+
+/**
+ * Request browser notification permission (called once on mount).
+ */
+function requestNotificationPermission() {
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+/**
+ * Show a browser notification for critical warnings.
+ */
+function showBrowserNotification(title, body) {
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      new Notification(title, { body, icon: "/favicon.ico" });
+    } catch { /* ignore */ }
+  }
+}
+
+
+// ── Main Component: Background API Health Polling ────────────────────────────
+
 export function KiteLiveWarning({ authHeaders }) {
-  const [kiteStatus, setKiteStatus] = useState(null);
+  const [disconnected, setDisconnected] = useState(false);
   const [dismissed, setDismissed] = useState(false);
-  const prevConnected = useRef(null);
-  const audioRef = useRef(null);
+  const [lastDisconnectTime, setLastDisconnectTime] = useState(null);
   const intervalRef = useRef(null);
+  const alarmPlayedRef = useRef(false);
 
-  const playAlarm = useCallback(() => {
+  const checkHealth = useCallback(async () => {
     try {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(ALARM_URL);
-      }
-      audioRef.current.volume = 1.0;
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {});
-      // Stop after 5 seconds
-      setTimeout(() => {
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.currentTime = 0;
-        }
-      }, 5000);
-    } catch {}
-  }, []);
+      const resp = await axios.get(`${API}/kite/status`, {
+        headers: authHeaders,
+        timeout: 8000,
+      });
+      const isConnected = resp.data?.connected === true;
 
-  const checkStatus = useCallback(async () => {
-    try {
-      const r = await axios.get(`${API}/kite/status`, { headers: authHeaders, timeout: 10000 });
-      const newStatus = r.data;
-      setKiteStatus(newStatus);
-
-      // If was connected and now disconnected → play alarm + show warning + browser notification
-      if (prevConnected.current === true && !newStatus.connected) {
-        setDismissed(false);
-        playAlarm();
-        // Browser notification
-        if ("Notification" in window && Notification.permission === "granted") {
-          new Notification("API Session Expired", {
-            body: "Market data API authentication has expired. Please contact Admin to re-authenticate.",
-            icon: "/favicon.ico",
-          });
+      if (!isConnected) {
+        // Newly disconnected — trigger alarm
+        if (!disconnected && !alarmPlayedRef.current) {
+          playAlarmSound();
+          showBrowserNotification(
+            "API Authentication Failed",
+            "Market data connection lost. Please re-authenticate immediately."
+          );
+          alarmPlayedRef.current = true;
+          setLastDisconnectTime(new Date());
         }
+        setDisconnected(true);
+        setDismissed(false); // re-show on each detection
+      } else {
+        // Reconnected — reset state
+        setDisconnected(false);
+        alarmPlayedRef.current = false;
       }
-      // If reconnected, auto-dismiss warning
-      if (newStatus.connected && !prevConnected.current) {
-        setDismissed(true);
-      }
-      prevConnected.current = newStatus.connected;
     } catch {
-      setKiteStatus({ connected: false, reason: "api_error" });
-      if (prevConnected.current === true) {
-        setDismissed(false);
-        playAlarm();
+      // Network error to our own backend — also a disconnect
+      if (!disconnected && !alarmPlayedRef.current) {
+        playAlarmSound();
+        showBrowserNotification(
+          "Network Connection Lost",
+          "Unable to reach the server. Check your internet connection."
+        );
+        alarmPlayedRef.current = true;
+        setLastDisconnectTime(new Date());
       }
-      prevConnected.current = false;
+      setDisconnected(true);
+      setDismissed(false);
     }
-  }, [authHeaders, playAlarm]);
+  }, [authHeaders, disconnected]);
 
   useEffect(() => {
-    // Request notification permission
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-    checkStatus();
-    intervalRef.current = setInterval(checkStatus, 60000); // Check every 60s
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    };
-  }, [checkStatus]);
+    requestNotificationPermission();
+    checkHealth(); // immediate check
+    intervalRef.current = setInterval(checkHealth, POLL_INTERVAL_MS);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [checkHealth]);
 
-  if (dismissed || !kiteStatus || kiteStatus.connected) return null;
+  // Don't render if not disconnected or user dismissed it
+  if (!disconnected || dismissed) return null;
 
   return (
-    <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-600/50 bg-amber-950/50 p-3 animate-pulse" data-testid="api-live-warning">
-      <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
-      <div className="flex-1">
-        <p className="text-sm font-semibold text-amber-300">No Live Data Available</p>
-        <p className="text-xs text-amber-400/80 mt-0.5">
-          Market data API authentication required. Live data, signals, and heatmaps are
-          unavailable until the API session is re-authenticated.
-          <strong className="text-amber-300"> Contact Admin.</strong>
-        </p>
-      </div>
-      <div className="flex gap-1.5 shrink-0">
-        <button onClick={playAlarm} className="text-amber-500 hover:text-amber-300 p-1" title="Test alarm" data-testid="api-warning-alarm">
-          <Volume2 size={14} />
-        </button>
-        <button onClick={() => setDismissed(true)} className="text-amber-500 hover:text-amber-300 p-1" data-testid="api-warning-dismiss">
+    <div
+      className="mb-4 rounded-lg border border-rose-500/60 bg-rose-950/80 p-4 shadow-lg shadow-rose-500/10"
+      data-testid="api-disconnect-warning"
+      role="alert"
+    >
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 rounded-full bg-rose-500/20 p-2">
+          <AlertTriangle size={18} className="text-rose-400" />
+        </div>
+        <div className="flex-1">
+          <h3 className="font-semibold text-rose-200 text-sm flex items-center gap-2">
+            <Volume2 size={14} className="text-rose-400 animate-pulse" />
+            API Authentication Failed
+          </h3>
+          <p className="text-xs text-rose-300/80 mt-1">
+            Live market data feed is disconnected. Your signals and heatmaps may show stale data.
+            Please re-authenticate from the <strong>Admin panel</strong> immediately.
+          </p>
+          {lastDisconnectTime && (
+            <p className="text-[10px] text-rose-400/60 mt-1 font-mono">
+              Detected: {lastDisconnectTime.toLocaleTimeString("en-IN")}
+            </p>
+          )}
+        </div>
+        <button
+          onClick={() => setDismissed(true)}
+          className="text-rose-400 hover:text-rose-200 p-1 transition-colors"
+          data-testid="dismiss-warning"
+          title="Dismiss (will re-appear if still disconnected)"
+        >
           <X size={16} />
         </button>
       </div>
@@ -108,51 +149,51 @@ export function KiteLiveWarning({ authHeaders }) {
   );
 }
 
-/**
- * Popup notification for when a data fetch fails.
- * Shows modal overlay with alarm sound.
- */
-export function DataFetchErrorPopup({ show, onClose }) {
-  const audioRef = useRef(null);
 
+// ── Exportable alarm function for use in other components ─────────────────────
+
+/**
+ * Call this from any component that needs to trigger the warning alarm.
+ * Only for WARNING events (not success events like target achievements).
+ */
+export function triggerWarningAlarm(title, message) {
+  playAlarmSound();
+  showBrowserNotification(title || "Warning", message || "An issue requires your attention.");
+}
+
+
+// ── DataFetchErrorPopup: Generic error popup for heatmaps etc ────────────────
+
+export function DataFetchErrorPopup({ show, onClose }) {
   useEffect(() => {
     if (show) {
-      try {
-        audioRef.current = new Audio(ALARM_URL);
-        audioRef.current.volume = 1.0;
-        audioRef.current.play().catch(() => {});
-        setTimeout(() => {
-          if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
-        }, 5000);
-      } catch {}
+      playAlarmSound();
+      showBrowserNotification("Data Fetch Failed", "Unable to load live market data.");
     }
-    return () => {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    };
   }, [show]);
 
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm" data-testid="data-fetch-error-popup">
-      <div className="w-full max-w-md rounded-xl border-2 border-red-600 bg-slate-950 p-6 shadow-2xl">
-        <div className="flex items-center gap-3 mb-4">
-          <AlertTriangle size={28} className="text-red-400" />
-          <h3 className="text-lg font-bold text-red-300">No Live Data Fetched</h3>
+    <div
+      className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-amber-500/60 bg-amber-950/95 p-4 shadow-xl"
+      data-testid="data-fetch-error-popup"
+      role="alert"
+    >
+      <div className="flex items-start gap-3">
+        <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-amber-200">Data Fetch Failed</p>
+          <p className="text-xs text-amber-300/80 mt-1">
+            Unable to fetch live market data. Check API authentication in Admin panel.
+          </p>
         </div>
-        <p className="text-sm text-slate-300 mb-2">
-          <strong className="text-red-400">Error:</strong> API Authentication Failed.
-        </p>
-        <p className="text-xs text-slate-400 mb-6">
-          The market data API session has expired or is not connected. No live results can be generated.
-          Please contact Admin to re-authenticate the API connection.
-        </p>
         <button
           onClick={onClose}
-          className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-500 transition-colors"
-          data-testid="data-fetch-error-close"
+          className="text-amber-400 hover:text-amber-200 p-0.5"
+          data-testid="dismiss-fetch-error"
         >
-          Understood
+          <X size={14} />
         </button>
       </div>
     </div>

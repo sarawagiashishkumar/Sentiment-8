@@ -954,15 +954,24 @@ async def build_fno_signal(
 
     entry_price = round(option_ltp, 2)
     
-    try:
-        candles = await asyncio.wait_for(
-            _fetch_historical_candles_from_kite(contract, interval="minute", candles=10),
-            timeout=5.0
-        )
-    except asyncio.TimeoutError:
-        candles = None
-    except Exception:
-        candles = None
+    # Skip historical candle fetch after market hours (saves 100s+ due to Kite timeouts)
+    _now_check = datetime.now(_s.IST)
+    _is_live_market = (
+        _now_check.weekday() < 5
+        and (_now_check.hour > 9 or (_now_check.hour == 9 and _now_check.minute >= 15))
+        and (_now_check.hour < 15 or (_now_check.hour == 15 and _now_check.minute <= 30))
+    )
+    candles = None
+    if _is_live_market:
+        try:
+            candles = await asyncio.wait_for(
+                _fetch_historical_candles_from_kite(contract, interval="minute", candles=10),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            candles = None
+        except Exception:
+            candles = None
     
     if candles and len(candles) >= 5:
         dip_analysis = _analyze_micro_dip_prediction(candles, option_ltp)
