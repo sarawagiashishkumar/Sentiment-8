@@ -1,0 +1,116 @@
+{
+  "summary": "Iteration 51: P0 and P1 Fixes Testing - All tests PASS. Backend: 13/13 API tests pass. Frontend: Market HeatMap page with sub-tabs (Sector/Stocks/Options) verified, F&O page with sub-tabs (Signals & Custom/Signal Performance/IV Analytics & Multi-TF) verified. Fixed missing routing for Market HeatMap page in App.js.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "test_results": {
+    "TestKiteStatus::test_kite_status_returns_connected_false_with_reason": "PASS - Returns connected=false with reason='token_invalid_or_expired'",
+    "TestMarketHeatmapEndpoints::test_stock_heatmap_nifty50_returns_50_stocks": "PASS - Returns 50 stocks for nifty50 filter",
+    "TestMarketHeatmapEndpoints::test_stock_heatmap_fno_returns_fno_universe": "PASS - Returns FNO universe stocks",
+    "TestMarketHeatmapEndpoints::test_options_heatmap_nifty_returns_valid_response": "PASS - Returns valid structure with chains and summary",
+    "TestMarketHeatmapEndpoints::test_options_heatmap_banknifty_returns_valid_response": "PASS - Returns valid structure",
+    "TestMarketHeatmapEndpoints::test_sector_stocks_banking_returns_valid_response": "PASS - Returns stocks for BANKING sector",
+    "TestMarketHeatmapEndpoints::test_sector_stocks_requires_sector_param": "PASS - Returns 400 for missing sector",
+    "TestSectorMomentum::test_sector_momentum_returns_sectors": "PASS - Returns sectors array",
+    "TestAuthFlow::test_login_with_valid_credentials": "PASS - Returns token and user data",
+    "TestAuthFlow::test_login_with_invalid_credentials": "PASS - Returns 400 for invalid user",
+    "TestRegressionEndpoints::test_health_check": "PASS - Health check returns success",
+    "TestRegressionEndpoints::test_fno_performance_stats": "PASS - Returns performance stats",
+    "TestRegressionEndpoints::test_fno_signal_history": "PASS - Returns signal history"
+  },
+
+  "frontend_verification": {
+    "login_flow": "PASS - Login with @shish123 works correctly",
+    "nav_heatmap_button": "PASS - Market HeatMap button found (data-testid='nav-heatmap')",
+    "market_heatmap_page": "PASS - Market HeatMap page loads (data-testid='market-heatmap-page')",
+    "heatmap_sub_tabs": "PASS - Sub-tabs component found with Sector/Stocks/Options tabs",
+    "sector_heatmap_tab": "PASS - data-testid='sub-tab-sectors' visible",
+    "stocks_heatmap_tab": "PASS - data-testid='sub-tab-stocks' visible",
+    "options_heatmap_tab": "PASS - data-testid='sub-tab-options' visible",
+    "sector_heatmap_load_btn": "PASS - data-testid='sector-heatmap-load' visible",
+    "stocks_filter_nifty50": "PASS - data-testid='stocks-filter-nifty50' visible",
+    "stocks_filter_fno": "PASS - data-testid='stocks-filter-fno' visible",
+    "options_filter_nifty": "PASS - data-testid='options-filter-nifty' visible",
+    "options_filter_banknifty": "PASS - data-testid='options-filter-banknifty' visible",
+    "fno_page": "PASS - F&O page loads (data-testid='fno-page')",
+    "fno_sub_tabs": "PASS - Sub-tabs component found on F&O page",
+    "fno_signals_tab": "PASS - 'Signals & Custom' tab found (data-testid='sub-tab-signals')",
+    "fno_performance_tab": "PASS - 'Signal Performance' tab found (data-testid='sub-tab-performance')",
+    "fno_analytics_tab": "PASS - 'IV Analytics & Multi-TF' tab found (data-testid='sub-tab-analytics')",
+    "fno_generate_button": "PASS - Generate F&O Projections button found"
+  },
+
+  "features_verified": {
+    "P0_kite_token_validation": "PASS - GET /api/kite/status returns connected:false with reason field when token is expired",
+    "P1_market_heatmap_nav": "PASS - Market HeatMap button visible in navigation bar",
+    "P1_market_heatmap_page": "PASS - Market HeatMap page with sub-tabs (Sector/Stocks/Options)",
+    "P1_sector_heatmap": "PASS - Sector Heatmap tab with Load Heatmap button",
+    "P1_stocks_heatmap": "PASS - Stocks Heatmap tab with filter buttons (All/Nifty50/BankNifty/+5%/+3%/-3%/-5%/FNO)",
+    "P1_options_heatmap": "PASS - Options Heatmap tab with filter buttons (NIFTY/BANKNIFTY/Stocks)",
+    "P1_fno_sub_tabs": "PASS - F&O page has sub-tabs: Signals & Custom, Signal Performance, IV Analytics & Multi-TF",
+    "GET /api/market/stock-heatmap?filter=nifty50": "PASS - Returns 50 stocks",
+    "GET /api/market/stock-heatmap?filter=fno": "PASS - Returns FNO universe stocks",
+    "GET /api/market/options-heatmap?filter=nifty": "PASS - Returns valid response",
+    "GET /api/market/sector-stocks?sector=BANKING": "PASS - Returns valid response"
+  },
+
+  "bugs_fixed_by_testing_agent": [
+    {
+      "file": "/app/frontend/src/App.js",
+      "issue": "Missing routing for Market HeatMap page - MarketHeatmapDashboard was imported but never rendered",
+      "fix": "Added conditional rendering for currentPage === 'heatmap'"
+    }
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration51_p0p1.py",
+    "/app/test_reports/pytest/iteration51_results.xml",
+    "/app/test_reports/it51_heatmap_page2.jpeg",
+    "/app/test_reports/it51_stocks_tab2.jpeg",
+    "/app/test_reports/it51_options_tab2.jpeg",
+    "/app/test_reports/it51_fno_page.jpeg",
+    "/app/test_reports/it51_fno_performance.jpeg",
+    "/app/test_reports/it51_fno_analytics.jpeg"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "P0 Kite token validation fix verified - /api/kite/status now makes real API call to validate token",
+    "P1 Market HeatMap section implemented correctly with all sub-tabs and filter buttons",
+    "P1 F&O sub-tabs implemented correctly (Signals & Custom, Signal Performance, IV Analytics & Multi-TF)",
+    "All data-testid attributes present for testing",
+    "Stock heatmap correctly returns 50 stocks for nifty50 filter"
+  ],
+
+  "updated_files": [
+    "/app/frontend/src/App.js",
+    "/app/backend/tests/test_iteration51_p0p1.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (13/13 tests pass)",
+    "frontend": "100% (all P0/P1 UI features verified)"
+  },
+
+  "test_credentials": "@shish123 (owner, no PIN required)",
+
+  "seed_data_creation": "None",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 51: P0 and P1 fixes verified. Key features: (1) Kite token validation now makes real API call - returns connected:false with reason when token is expired, (2) Market HeatMap page added with 3 sub-tabs (Sector/Stocks/Options Heatmap), (3) F&O page has 3 sub-tabs (Signals & Custom/Signal Performance/IV Analytics & Multi-TF), (4) Stock heatmap returns 50 stocks for nifty50 filter, (5) All filter buttons have proper data-testid attributes. Fixed missing routing for Market HeatMap page in App.js. Test file: test_iteration51_p0p1.py. All 13 backend tests pass.",
+
+  "mocked_api_note": "No mocked APIs. Heatmap endpoints return real data from MongoDB (LTPs may be 0 if Kite is not connected)."
+}

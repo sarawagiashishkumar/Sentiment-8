@@ -253,6 +253,10 @@ export default function App() {
           />
         ) : null}
 
+        {currentPage === "heatmap" ? (
+          <MarketHeatmapDashboard authHeaders={authHeaders} />
+        ) : null}
+
         <AppFooter />
       </div>
     </main>
