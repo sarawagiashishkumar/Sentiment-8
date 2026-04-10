@@ -51,6 +51,8 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - [x] Price Band Engine bug fixes: (1) Fundamental scalar now scales upside-only portion (prevents high < LTP), (2) Horizon-aware structural floor/ceiling decay, (3) Monotonicity enforcement post-computation
 - [x] Converted remaining import-via-network tests to use `importlib` direct import (test_iteration42)
 - [x] Additional streaming endpoint test hardening (test_iteration42, test_iteration43 route tests)
+- [x] Further `server.py` modularization: Extracted LOT_SIZE_MAP/STOCK_FNO_UNIVERSE/weight proxies to `data/lot_sizes.py`, cache helpers to `services/cache_helpers.py`. server.py reduced from 911 to 615 lines.
+- [x] Fixed lot_size tests to use direct imports instead of source-code parsing (test_iteration30)
 
 ## Testing Status
 - Full suite: 1385 tests collected, 1360+ pass, 0 failed, ~25 skipped (100% green as of 2026-04-10)
@@ -60,9 +62,11 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 ## Architecture (Post Phase 3 Extraction)
 ```
 /app/backend/
-├── server.py                        # 981 lines (core app + startup + residual endpoints)
+├── server.py                        # 615 lines (down from 3578 → 981 → 615)
+├── data/
+│   └── lot_sizes.py                 # LOT_SIZE_MAP, STOCK_FNO_UNIVERSE, weight proxies
 ├── routes/
-│   ├── auth.py                      # NEW Phase 3: login, logout, me, settings
+│   ├── auth.py                      # login, logout, me, settings
 │   ├── fno.py                       # F&O signal endpoints
 │   ├── admin.py                     # Admin panel endpoints
 │   ├── market_data.py               # Market data endpoints
@@ -70,25 +74,23 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 │   ├── multibagger.py               # Multibagger endpoints
 │   └── batch_jobs.py                # Batch/cron endpoints
 ├── services/
-│   ├── equity_master_cache.py       # Phase 1 Upgrade: Centralized OHLCV/volatility/forensic cache
-│   ├── price_band_engine.py         # Phase 2 Upgrade: Z-score/volatility-driven price bands
-│   ├── script_master.py             # Phase 3: NSE/Angel/Kite/Dhan symbol sync
-│   ├── india_vix.py                 # NEW Phase 3: India VIX via Kite
-│   ├── hist_data.py                 # NEW Phase 3: Historical OHLCV cache
-│   ├── position_service.py          # NEW Phase 3: Position refresh/monitoring/response
-│   ├── kite_client.py               # Phase 2: Kite API interactions
-│   ├── fundamental_data.py          # Phase 2: Piotroski/Beneish scoring
-│   ├── user_service.py              # Phase 2: User CRUD
-│   ├── validators.py                # Phase 2: Input validation
-│   ├── utils.py                     # Phase 1: Utility functions
-│   ├── date_utils.py                # Phase 1: Trading day calculations
+│   ├── cache_helpers.py             # API_CONTROL_CACHE, STOCK_CORE_CACHE, DB lookup helpers
+│   ├── equity_master_cache.py       # Phase 1: Centralized OHLCV/volatility/forensic cache
+│   ├── price_band_engine.py         # Phase 2: Z-score/volatility-driven price bands
+│   ├── script_master.py             # NSE/Angel/Kite/Dhan symbol sync
+│   ├── india_vix.py                 # India VIX via Kite
+│   ├── hist_data.py                 # Historical OHLCV cache
+│   ├── position_service.py          # Position refresh/monitoring
+│   ├── kite_client.py               # Kite API interactions
+│   ├── fundamental_data.py          # Piotroski/Beneish scoring
+│   ├── user_service.py              # User CRUD
+│   ├── validators.py                # Input validation
 │   ├── fno_signal_engine.py         # F&O signal generation
 │   ├── research_engine.py           # Regime classification, sentiment
-│   ├── position_monitor.py          # Monitoring alerts
 │   └── ... (other services)
 └── tests/
     ├── helpers/test_utils.py        # Shared test utilities
-    └── test_*.py                    # 47 test files
+    └── test_*.py                    # 48 test files, 1385 tests
 ```
 
 ## Backlog

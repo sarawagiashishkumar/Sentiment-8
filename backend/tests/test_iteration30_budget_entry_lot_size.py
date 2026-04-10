@@ -48,28 +48,24 @@ class TestNiftyLotSize:
     """Verify NIFTY lot size is 65 (changed from 75)"""
 
     def test_lot_size_map_nifty_is_65_in_server_code(self):
-        """Read server.py and check LOT_SIZE_MAP['NIFTY'] == 65"""
-        content = read_backend_source()
-        # Find the LOT_SIZE_MAP block and check NIFTY value
-        match = re.search(r'"NIFTY"\s*:\s*(\d+)', content)
-        assert match is not None, "Could not find NIFTY entry in LOT_SIZE_MAP"
-        nifty_lot = int(match.group(1))
+        """Check LOT_SIZE_MAP['NIFTY'] == 65 in data/lot_sizes.py"""
+        from data.lot_sizes import LOT_SIZE_MAP
+        nifty_lot = LOT_SIZE_MAP.get("NIFTY")
+        assert nifty_lot is not None, "Could not find NIFTY entry in LOT_SIZE_MAP"
         assert nifty_lot == 65, f"NIFTY lot size should be 65, found {nifty_lot}"
 
     def test_nifty_not_75(self):
         """Confirm 75 is NOT the NIFTY lot size"""
-        content = read_backend_source()
-        match = re.search(r'"NIFTY"\s*:\s*(\d+)', content)
-        assert match is not None, "Could not find NIFTY entry in LOT_SIZE_MAP"
-        nifty_lot = int(match.group(1))
+        from data.lot_sizes import LOT_SIZE_MAP
+        nifty_lot = LOT_SIZE_MAP.get("NIFTY")
+        assert nifty_lot is not None, "Could not find NIFTY entry in LOT_SIZE_MAP"
         assert nifty_lot != 75, f"NIFTY lot size is still 75, should have been updated to 65"
 
     def test_lot_size_map_banknifty_still_30(self):
         """Ensure BANKNIFTY lot size wasn't accidentally changed"""
-        content = read_backend_source()
-        match = re.search(r'"BANKNIFTY"\s*:\s*(\d+)', content)
-        assert match is not None, "Could not find BANKNIFTY entry in LOT_SIZE_MAP"
-        bn_lot = int(match.group(1))
+        from data.lot_sizes import LOT_SIZE_MAP
+        bn_lot = LOT_SIZE_MAP.get("BANKNIFTY")
+        assert bn_lot is not None, "Could not find BANKNIFTY entry in LOT_SIZE_MAP"
         assert bn_lot == 30, f"BANKNIFTY lot size should remain 30, found {bn_lot}"
 
 

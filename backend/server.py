@@ -247,181 +247,7 @@ MONTH_MAP = {
     "DEC": 12,
 }
 
-LOT_SIZE_MAP = {
-    # Index — VERIFIED NSE lot sizes (updated Apr 2026)
-    "NIFTY":       65,   # NSE revised: was 75, now 65 as of Apr 2026
-    "BANKNIFTY":   30,
-    "FINNIFTY": 65,
-    "MIDCPNIFTY": 120,
-    "SENSEX": 20,
-    # Large Cap / Blue Chip
-    "RELIANCE": 250,
-    "TCS": 175,
-    "SBIN": 750,
-    "BDL": 1350,
-    "HDFCBANK": 550,
-    "ICICIBANK": 700,
-    "INFY": 300,
-    "LT": 50,
-    "ITC": 2400,
-    "AXISBANK": 1200,
-    "KOTAKBANK": 800,
-    "HDFCLIFE": 1000,
-    "SBILIFE": 750,
-    "ULTRACEMCO": 100,
-    "BAJFINANCE": 250,
-    "WIPRO": 1500,
-    "HINDUNILVR": 300,
-    "BHARTIARTL": 950,
-    "ADANIPORTS": 1250,
-    "TATAMOTORS": 1425,
-    "ONGC": 3850,
-    "COALINDIA": 4200,
-    "NTPC": 6000,
-    "POWERGRID": 4600,
-    "TATASTEEL": 5500,
-    "JSWSTEEL": 2500,
-    "HINDALCO": 2150,
-    "VEDL": 3250,
-    "GRASIM": 375,
-    "ASIANPAINT": 300,
-    "BAJAJFINSV": 125,
-    "SUNPHARMA": 350,
-    "CIPLA": 650,
-    "DRREDDY": 125,
-    "DIVISLAB": 200,
-    "HCLTECH": 350,
-    "TECHM": 600,
-    "NESTLEIND": 40,
-    "TITAN": 375,
-    "MARUTI": 50,
-    "M&M": 700,
-    "TATACONSUM": 1375,
-    "APOLLOHOSP": 125,
-    "HEROMOTOCO": 300,
-    "EICHERMOT": 175,
-    "BPCL": 4375,
-    "IOCL": 5750,
-    "HPCL": 5400,
-    "INDUSINDBK": 500,
-    "SHRIRAMFIN": 200,
-    "DMART": 75,
-    "PIDILITIND": 250,
-    "SIEMENS": 175,
-    "HAVELLS": 500,
-    "ABB": 125,
-    "BERGEPAINT": 1100,
-    "TRENT": 350,
-    "NAUKRI": 75,
-    "PAGEIND": 15,
-    "MPHASIS": 175,
-    "PERSISTENT": 125,
-    "COFORGE": 75,
-    "LTIM": 75,
-    "OFSS": 50,
-    "BAJAJ-AUTO": 250,
-    "SYNGENE": 650,
-    "CHOLAFIN": 500,
-    "MUTHOOTFIN": 375,
-    "PFC": 5000,
-    "RECLTD": 4000,
-    "IRFC": 6000,
-    "HAL": 150,
-    "BEL": 5000,
-    "BHEL": 7000,
-    "SAIL": 10000,
-    "NMDC": 7500,
-    "GAIL": 6250,
-    "IOC": 5750,
-    "OIL": 2300,
-    "MOTHERSON": 3500,
-    "BOSCHLTD": 25,
-    "MRF": 10,
-    "BALKRISIND": 250,
-    "OBEROIRLTY": 500,
-    "DLF": 1650,
-    "GODREJPROP": 400,
-    "PRESTIGE": 1000,
-    "SOBHA": 500,
-    "BANDHANBNK": 2500,
-    "FEDERALBNK": 5000,
-    "IDFCFIRSTB": 5000,
-    "RBLBANK": 5000,
-    "YESBANK": 40000,
-    "AUBANK": 500,
-    "SBICARD": 800,
-    "MANAPPURAM": 3000,
-    "CANBK": 2700,
-    "UCOBANK": 10000,
-    "PNB": 10000,
-    "BANKBARODA": 4350,
-    "IDBI": 5500,
-    "ZOMATO": 4500,
-    "PAYTM": 2000,
-    "POLICYBZR": 700,
-    "NYKAA": 2000,
-    "IRCTC": 875,
-    "LUXIND": 150,
-    "ABFRL": 2000,
-    "ADITIMKT": 200,
-    "JUBLFOOD": 500,
-    "DEVYANI": 4000,
-    "DEVIT": 800,
-    "WEBELSOLAR": 625,
-    "ADANIENT": 400,
-    "ADANIPOWER": 2000,
-    "ADANIGREEN": 500,
-    "ADANITRANS": 300,
-    "ADANIWILMAR": 2000,
-    "AMBUJACEM": 2000,
-    "ACCIND": 300,
-    "SHREECEM": 25,
-    "RAMCOCEM": 600,
-    "TORNTPOWER": 500,
-    "TATAPOWER": 3375,
-    "CESC": 1300,
-    "GIPCL": 2500,
-    "TORNTPHARM": 500,
-    "AUROPHARMA": 1000,
-    "LUPIN": 700,
-    "BIOCON": 2200,
-    "GLENMARK": 1200,
-    "IPCALAB": 500,
-    "ALEMBICPHARMA": 600,
-    "ATUL": 100,
-    "PIIND": 200,
-    "UPL": 1300,
-    "DEEPAKNTR": 300,
-    "CHLAA": 600,
-    "CUMMINSIND": 300,
-    "THERMAX": 250,
-    "VOLTAS": 500,
-    "BLUESTARCO": 300,
-    "WHIRLPOOL": 225,
-    "CROMPTON": 2000,
-    "POLYCAB": 200,
-    "KEI": 300,
-    "DIXON": 75,
-    "AAPLLTD": 500,
-    "AMBER": 200,
-}
-
-STOCK_FNO_UNIVERSE = [
-    "RELIANCE",
-    "TCS",
-    "SBIN",
-    "HDFCBANK",
-    "ICICIBANK",
-    "INFY",
-    "LT",
-    "ITC",
-    "AXISBANK",
-    "KOTAKBANK",
-    "HDFCLIFE",
-    "SBILIFE",
-    "ULTRACEMCO",
-    "BAJFINANCE",
-]
+from data.lot_sizes import LOT_SIZE_MAP, STOCK_FNO_UNIVERSE, NIFTY_WEIGHT_PROXY, BANKNIFTY_WEIGHT_PROXY
 
 SCRIPT_MASTER_LAST_SYNC_DATE: str | None = None
 KITE_OPTION_MASTER_LAST_SYNC_DATE: str | None = None
@@ -465,66 +291,21 @@ from services.portfolio_engine import (
     _portfolio_horizon_ranges,
 )
 
-KITE_ALLOWED_DATA_ENDPOINTS = [
-    "/quote/ltp",
-    "/instruments",
-    "/instruments/historical",
-]
-
-API_CONTROL_CACHE: dict[str, object] = {
-    "kite_data_enabled": True,
-    "moneycontrol_data_enabled": True,
-    "strict_live_only": True,
-}
-API_CONTROL_CACHE_TS: datetime | None = None
-STOCK_CORE_CACHE: dict[str, dict] = {}
-STOCK_CORE_CACHE_TTL_SECONDS = 20
-
-# India VIX cache (5-minute TTL)
-INDIA_VIX_CACHE: dict = {}
-INDIA_VIX_CACHE_TTL_SECONDS = 300
-
-# Fundamental data in-memory cache (24h TTL)  
-FUNDAMENTAL_CACHE: dict[str, dict] = {}
-FUNDAMENTAL_CACHE_TTL_SECONDS = 86400
-
-# Historical OHLCV in-memory cache (6h TTL)
-HIST_OHLCV_CACHE: dict[str, dict] = {}
-HIST_OHLCV_CACHE_TTL_SECONDS = 21600  # 6 hours
-
-# Sector Momentum in-memory cache (30-min TTL)
-SECTOR_MOMENTUM_CACHE: dict = {}
-SECTOR_MOMENTUM_CACHE_TTL_SECONDS = 1800  # 30 minutes
+from services.cache_helpers import (
+    API_CONTROL_CACHE, STOCK_CORE_CACHE, INDIA_VIX_CACHE,
+    FUNDAMENTAL_CACHE, HIST_OHLCV_CACHE, SECTOR_MOMENTUM_CACHE,
+    STOCK_CORE_CACHE_TTL_SECONDS, INDIA_VIX_CACHE_TTL_SECONDS,
+    FUNDAMENTAL_CACHE_TTL_SECONDS, HIST_OHLCV_CACHE_TTL_SECONDS,
+    SECTOR_MOMENTUM_CACHE_TTL_SECONDS,
+    get_api_controls as _get_api_controls_impl,
+    get_stock_core_cached as _get_stock_core_cached_impl,
+    get_active_macro_events as _get_active_macro_events_impl,
+    get_strategy_stats_for_selection as _get_strategy_stats_impl,
+)
 
 # SYMBOL_HEADERS, AVG_HEADERS, QTY_HEADERS re-imported from services/position_parser.py above
 
-NIFTY_WEIGHT_PROXY = [
-    ("HDFCBANK", 13.0),
-    ("RELIANCE", 9.6),
-    ("ICICIBANK", 8.4),
-    ("INFY", 6.0),
-    ("TCS", 4.4),
-    ("BHARTIARTL", 4.1),
-    ("ITC", 3.8),
-    ("LT", 3.5),
-    ("AXISBANK", 3.1),
-    ("KOTAKBANK", 2.8),
-]
-
-BANKNIFTY_WEIGHT_PROXY = [
-    ("HDFCBANK", 29.0),
-    ("ICICIBANK", 23.0),
-    ("KOTAKBANK", 13.0),
-    ("AXISBANK", 11.0),
-    ("SBIN", 10.0),
-    ("INDUSINDBK", 4.0),
-    ("BANDHANBNK", 2.0),
-    ("FEDERALBNK", 2.0),
-    ("AUBANK", 2.0),
-    ("PNB", 1.5),
-    ("CANBK", 1.5),
-    ("BANKBARODA", 1.0),
-]
+# NIFTY_WEIGHT_PROXY and BANKNIFTY_WEIGHT_PROXY imported from data/lot_sizes.py
 
 # ─── Models (extracted to /app/backend/models/__init__.py) ────────────────────
 from models import (
@@ -573,54 +354,21 @@ from services.position_parser import (  # noqa: F401
     _pick_avg_and_qty, _pil_image_to_bytes,
 )
 
-async def _get_api_controls(force_refresh: bool = False) -> dict[str, bool]:
-    global API_CONTROL_CACHE_TS
-    now = datetime.now(IST)
-    if (
-        (not force_refresh)
-        and API_CONTROL_CACHE_TS is not None
-        and (now - API_CONTROL_CACHE_TS).total_seconds() < 45
-    ):
-        return {
-            "kite_data_enabled": bool(API_CONTROL_CACHE.get("kite_data_enabled", True)),
-            "moneycontrol_data_enabled": bool(API_CONTROL_CACHE.get("moneycontrol_data_enabled", True)),
-            "strict_live_only": bool(API_CONTROL_CACHE.get("strict_live_only", True)),
-        }
+KITE_ALLOWED_DATA_ENDPOINTS = [
+    "/quote/ltp",
+    "/instruments",
+    "/instruments/historical",
+]
 
-    row = await db.system_meta.find_one({"key": "api_controls"}, {"_id": 0})
-    if row:
-        API_CONTROL_CACHE["kite_data_enabled"] = bool(row.get("kite_data_enabled", True))
-        API_CONTROL_CACHE["moneycontrol_data_enabled"] = bool(row.get("moneycontrol_data_enabled", True))
-        API_CONTROL_CACHE["strict_live_only"] = bool(row.get("strict_live_only", True))
-    API_CONTROL_CACHE_TS = now
-    return {
-        "kite_data_enabled": bool(API_CONTROL_CACHE.get("kite_data_enabled", True)),
-        "moneycontrol_data_enabled": bool(API_CONTROL_CACHE.get("moneycontrol_data_enabled", True)),
-        "strict_live_only": bool(API_CONTROL_CACHE.get("strict_live_only", True)),
-    }
+async def _get_api_controls(force_refresh: bool = False) -> dict[str, bool]:
+    return await _get_api_controls_impl(db, force_refresh)
 
 async def _get_stock_core_cached(symbol: str) -> dict:
-    key = _normalize_symbol_key(symbol)
-    now = datetime.now(timezone.utc).timestamp()
-    cached = STOCK_CORE_CACHE.get(key)
-    if cached and (now - float(cached.get("ts", 0))) <= STOCK_CORE_CACHE_TTL_SECONDS:
-        return cached["data"]
-
-    # Kite equity quote is the preferred live source (per Master Spec)
-    data = await _fetch_kite_equity_core(symbol)
-    if data is None:
-        data = await get_stock_core(symbol)
-    STOCK_CORE_CACHE[key] = {"ts": now, "data": data}
-    return data
-
-# compute_option_chain_analytics — extracted to services/kite_client.py
-
-# _position_in_range, get_minutes_to_expiry, _expiry_risk_bucket,
-# get_remaining_trading_days, get_nth_trading_day_from_today
-# extracted to services/date_utils.py (re-imported above)
+    return await _get_stock_core_cached_impl(db, symbol)
 
 def _normalize_symbol_key(value: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+    import re as _re
+    return _re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 
 # ── Script Master: extracted to services/script_master.py ──
 from services.script_master import (  # noqa: F401
@@ -637,55 +385,12 @@ from services.india_vix import _get_india_vix  # noqa: F401
 # ── Batch A: Active Macro Events helper ──────────────────────────────────────
 
 async def _get_active_macro_events() -> list[str]:
-    """
-    Read the currently active macro events from MongoDB (macro_config collection).
-    Returns a list of event keys from SECTOR_MACRO_IMPACT_MAP.
-    Admin can update via POST /admin/macro-events/update.
-    """
-    try:
-        rec = await db["macro_config"].find_one({"config_id": "active_events"}, {"_id": 0})
-        if rec and isinstance(rec.get("events"), list):
-            # Filter to only valid known event keys
-            valid = set(get_all_macro_events())
-            return [e for e in rec["events"] if e in valid]
-    except Exception as exc:
-        logger.warning("Failed to read active macro events from DB: %s", exc)
-    return []
+    return await _get_active_macro_events_impl(db)
 
 # ── Batch C: Strategy Stats helper for threshold enforcement ─────────────────
 
 async def _get_strategy_stats_for_selection() -> dict[str, dict]:
-    """
-    Load aggregated strategy backtest stats from MongoDB (strategy_backtest collection).
-    Used by select_strategy_for_signal to enforce ≥75% win rate / ≥0.40R expectancy.
-    Returns dict keyed by strategy_id.
-    """
-    try:
-        records = await db.strategy_backtest.find({}, {"_id": 0}).to_list(length=500)
-        # Aggregate by strategy_id (same logic as admin endpoint)
-        agg: dict[str, dict] = {}
-        for r in records:
-            sid = r.get("strategy_id", "UNKNOWN")
-            if sid not in agg:
-                agg[sid] = {"wins": 0, "total_trades": 0, "total_r_multiple": 0.0, "disabled": False}
-            agg[sid]["total_trades"] += 1
-            if r.get("win"):
-                agg[sid]["wins"] += 1
-            agg[sid]["total_r_multiple"] += r.get("r_multiple", 0.0)
-            if r.get("disabled"):
-                agg[sid]["disabled"] = True
-        stats_map: dict[str, dict] = {}
-        for sid, s in agg.items():
-            total = s["total_trades"]
-            stats_map[sid] = {
-                "win_rate": s["wins"] / total if total > 0 else 0.0,
-                "expectancy": s["total_r_multiple"] / total if total > 0 else 0.0,
-                "disabled": s["disabled"],
-            }
-        return stats_map
-    except Exception as exc:
-        logger.warning("Failed to load strategy stats for selection: %s", exc)
-        return {}
+    return await _get_strategy_stats_impl(db)
 
 # ── Hist OHLCV: extracted to services/hist_data.py ──
 from services.hist_data import _get_hist_ohlcv  # noqa: F401
