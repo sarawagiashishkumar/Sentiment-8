@@ -23,32 +23,57 @@ logger = logging.getLogger(__name__)
 # ── NSE Sector Index Kite instrument tokens ──────────────────────────────────
 # These are official NSE indices with verified Kite Connect instrument tokens.
 # get_ohlcv_from_kite() is called with these tokens for historical data.
+# 18 NSE Sector Indices as available on Kite Connect.
 SECTOR_INDEX_TOKENS: dict[str, int] = {
-    "NIFTY BANK":       260105,
-    "NIFTY IT":         259849,
-    "NIFTY AUTO":       259593,
-    "NIFTY PHARMA":     260361,
-    "NIFTY FMCG":       260617,
-    "NIFTY METAL":      259337,
-    "NIFTY REALTY":     260873,
-    "NIFTY ENERGY":     261129,
+    "NIFTY BANK":        260105,
+    "NIFTY IT":          259849,
+    "NIFTY AUTO":        259593,
+    "NIFTY PHARMA":      260361,
+    "NIFTY FMCG":        260617,
+    "NIFTY METAL":       259337,
+    "NIFTY REALTY":      260873,
+    "NIFTY ENERGY":      261129,
+    "NIFTY INFRA":       260041,
+    "NIFTY FIN SERVICE": 257801,
+    "NIFTY MEDIA":       261385,
+    "NIFTY PSE":         261641,
+    "NIFTY PVT BANK":    262153,
+    "NIFTY PSU BANK":    261897,
+    "NIFTY COMMODITIES": 258057,
+    "NIFTY CONSUMPTION": 258313,
+    "NIFTY HEALTHCARE":  262409,
+    "NIFTY MNC":         262665,
 }
 
 # Map display name → Kite index symbol
 SECTOR_DISPLAY_MAP: dict[str, str] = {
-    "Banking":   "NIFTY BANK",
-    "IT":        "NIFTY IT",
-    "Auto":      "NIFTY AUTO",
-    "Pharma":    "NIFTY PHARMA",
-    "FMCG":      "NIFTY FMCG",
-    "Metal":     "NIFTY METAL",
-    "Realty":    "NIFTY REALTY",
-    "Energy":    "NIFTY ENERGY",
+    "Banking":         "NIFTY BANK",
+    "IT":              "NIFTY IT",
+    "Auto":            "NIFTY AUTO",
+    "Pharma":          "NIFTY PHARMA",
+    "FMCG":            "NIFTY FMCG",
+    "Metal":           "NIFTY METAL",
+    "Realty":           "NIFTY REALTY",
+    "Energy":          "NIFTY ENERGY",
+    "Infrastructure":  "NIFTY INFRA",
+    "Financial Svcs":  "NIFTY FIN SERVICE",
+    "Media":           "NIFTY MEDIA",
+    "PSE":             "NIFTY PSE",
+    "Private Bank":    "NIFTY PVT BANK",
+    "PSU Bank":        "NIFTY PSU BANK",
+    "Commodities":     "NIFTY COMMODITIES",
+    "Consumption":     "NIFTY CONSUMPTION",
+    "Healthcare":      "NIFTY HEALTHCARE",
+    "MNC":             "NIFTY MNC",
 }
 
 SECTOR_COLORS: dict[str, str] = {
     "Banking": "#10b981", "IT": "#3b82f6", "Auto": "#ef4444", "Pharma": "#8b5cf6",
     "FMCG": "#f59e0b", "Metal": "#6b7280", "Realty": "#ec4899", "Energy": "#f97316",
+    "Infrastructure": "#14b8a6", "Financial Svcs": "#22d3ee", "Media": "#d946ef",
+    "PSE": "#06b6d4", "Private Bank": "#84cc16", "PSU Bank": "#a3e635",
+    "Commodities": "#fb923c", "Consumption": "#f472b6", "Healthcare": "#a78bfa",
+    "MNC": "#38bdf8",
 }
 
 # ── Indicator helpers ─────────────────────────────────────────────────────────

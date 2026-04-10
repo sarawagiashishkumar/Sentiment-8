@@ -41,11 +41,8 @@ async def shared_technical_pipeline(
 ) -> dict[str, Any]:
     """
     Run the shared technical pipeline for a single constituent.
-    Returns a dict with all fields needed by compute_weighted_breadth:
-      symbol, weight_pct, in_uptrend, above_vwap,
-      intraday_return_pct, intraday_volatility, rsi, macd_bullish,
-      atr_14, trend_1m, trend_5m, trend_15m, trend_alignment_score,
-      vwap_position, sector_rank_today (filled later by caller)
+    Uses Kite /quote for live data + daily candles for trend analysis.
+    Returns a dict with all fields needed by compute_weighted_breadth.
     """
     _s = _srv()
 
@@ -66,89 +63,97 @@ async def shared_technical_pipeline(
         "vwap_position": "below",
     }
 
-    # Fetch OHLCV from Kite (1-minute bars for intraday)
+    # Use daily candles for trend + RSI/MACD (always available via Kite)
     try:
-        ohlcv = await _s._get_hist_ohlcv(symbol, interval="minute", candles=375)
+        ohlcv_df = await _s._get_hist_ohlcv(symbol, period="3mo")
     except Exception:
-        ohlcv = None
+        ohlcv_df = None
 
-    if not ohlcv or not ohlcv.get("closes"):
+    if ohlcv_df is None or len(ohlcv_df) < 14:
+        # Even without historical data, try Kite /quote for live intraday return
+        try:
+            from services.kite_client import fetch_kite_batch_quotes
+            quotes = await fetch_kite_batch_quotes([symbol])
+            q = quotes.get(symbol, {})
+            if q.get("ltp") and q.get("prev_close"):
+                result["available"] = True
+                result["intraday_return_pct"] = q["change_pct"]
+                result["in_uptrend"] = q["change_pct"] > 0
+                result["above_vwap"] = q["ltp"] > q["prev_close"]  # approximation
+        except Exception:
+            pass
         return result
-
-    import pandas as pd
-    closes = ohlcv["closes"]
-    highs = ohlcv.get("highs", closes)
-    lows = ohlcv.get("lows", closes)
-    opens = ohlcv.get("opens", closes)
-    volumes = ohlcv.get("volumes", [0] * len(closes))
-
-    if len(closes) < 10:
-        return result
-
-    bars_df = pd.DataFrame({
-        "Open": opens, "High": highs, "Low": lows,
-        "Close": closes, "Volume": volumes,
-    })
 
     result["available"] = True
+    closes = ohlcv_df["Close"].tolist()
+    highs = ohlcv_df["High"].tolist()
+    lows = ohlcv_df["Low"].tolist()
 
-    # Intraday technicals (RSI, MACD, stochastic, return, volatility)
-    tech = compute_intraday_technicals(bars_df)
-    result["rsi"] = tech.get("rsi_14")
-    result["intraday_return_pct"] = tech.get("intraday_return_pct", 0.0)
-    result["intraday_volatility"] = tech.get("intraday_volatility")
-    macd_data = tech.get("macd")
-    result["macd_bullish"] = macd_data.get("bullish", False) if isinstance(macd_data, dict) else False
+    import pandas as pd
+    import numpy as np
 
-    # ATR(14) from bars
-    if len(bars_df) >= 14:
+    # RSI(14)
+    if len(closes) >= 14:
+        delta = ohlcv_df["Close"].diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = (-delta.clip(upper=0)).rolling(14).mean()
+        rs = gain / loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        rsi_val = float(rsi.iloc[-1])
+        result["rsi"] = round(rsi_val, 1) if rsi_val == rsi_val else None
+
+    # MACD (12,26,9)
+    if len(closes) >= 26:
+        ema12 = ohlcv_df["Close"].ewm(span=12, adjust=False).mean()
+        ema26 = ohlcv_df["Close"].ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        result["macd_bullish"] = float(macd_line.iloc[-1]) > float(signal_line.iloc[-1])
+
+    # ATR(14)
+    if len(ohlcv_df) >= 14:
         tr = pd.concat([
-            bars_df["High"] - bars_df["Low"],
-            (bars_df["High"] - bars_df["Close"].shift(1)).abs(),
-            (bars_df["Low"] - bars_df["Close"].shift(1)).abs(),
+            ohlcv_df["High"] - ohlcv_df["Low"],
+            (ohlcv_df["High"] - ohlcv_df["Close"].shift(1)).abs(),
+            (ohlcv_df["Low"] - ohlcv_df["Close"].shift(1)).abs(),
         ], axis=1).max(axis=1)
         atr_val = float(tr.rolling(14).mean().iloc[-1])
         result["atr_14"] = round(atr_val, 2) if atr_val == atr_val else None
-    else:
-        result["atr_14"] = None
 
-    # VWAP features
-    vwap = compute_vwap_features(bars_df, current_ltp=closes[-1], atr=result["atr_14"])
-    result["above_vwap"] = vwap.get("above_vwap", False)
-    result["vwap_position"] = "above" if result["above_vwap"] else "below"
-
-    # Trend per timeframe (using EMA 9/21 cross on resampled bars)
-    def _classify_trend(df: pd.DataFrame) -> str:
-        if df is None or len(df) < 21:
+    # Trend from daily EMA(9/21)
+    def _classify_trend(close_series) -> str:
+        if len(close_series) < 21:
             return "sideways"
-        close = df["Close"]
-        ema9 = close.ewm(span=9, adjust=False).mean()
-        ema21 = close.ewm(span=21, adjust=False).mean()
+        ema9 = close_series.ewm(span=9, adjust=False).mean()
+        ema21 = close_series.ewm(span=21, adjust=False).mean()
         if float(ema9.iloc[-1]) > float(ema21.iloc[-1]) * 1.001:
             return "up"
         elif float(ema9.iloc[-1]) < float(ema21.iloc[-1]) * 0.999:
             return "down"
         return "sideways"
 
-    result["trend_1m"] = _classify_trend(bars_df)
+    trend_daily = _classify_trend(ohlcv_df["Close"])
+    result["trend_5m"] = trend_daily
+    result["trend_15m"] = trend_daily
 
-    # Resample to 5m and 15m
+    # Intraday return from Kite /quote
     try:
-        bars_5m_df = bars_df.iloc[::5].reset_index(drop=True) if len(bars_df) >= 25 else None
-        bars_15m_df = bars_df.iloc[::15].reset_index(drop=True) if len(bars_df) >= 45 else None
+        from services.kite_client import fetch_kite_batch_quotes
+        quotes = await fetch_kite_batch_quotes([symbol])
+        q = quotes.get(symbol, {})
+        if q.get("ltp") and q.get("prev_close"):
+            result["intraday_return_pct"] = q["change_pct"]
+            result["above_vwap"] = q["ltp"] > q["prev_close"]
+            result["trend_1m"] = "up" if q["change_pct"] > 0.3 else ("down" if q["change_pct"] < -0.3 else "sideways")
     except Exception:
-        bars_5m_df = None
-        bars_15m_df = None
+        pass
 
-    result["trend_5m"] = _classify_trend(bars_5m_df) if bars_5m_df is not None else "sideways"
-    result["trend_15m"] = _classify_trend(bars_15m_df) if bars_15m_df is not None else "sideways"
-
-    # Trend alignment score (0-4: count of timeframes in same direction)
+    # Trend alignment
     trends = [result["trend_1m"], result["trend_5m"], result["trend_15m"]]
     up_count = trends.count("up")
     down_count = trends.count("down")
     result["trend_alignment_score"] = max(up_count, down_count)
-    result["in_uptrend"] = up_count >= 2  # majority uptrend
+    result["in_uptrend"] = up_count >= 2
 
     return result
 

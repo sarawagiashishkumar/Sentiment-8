@@ -8,7 +8,7 @@ Replaces the old "Piotroski + RSI" style scoring with a 4-bucket system:
   D = Trade quality & portfolio fit (0-100)
 
 Final Score = 0.30*A + 0.30*B + 0.25*C + 0.15*D
-If Score < 78 → suppress signal.
+If Score < 40 → suppress signal.
 
 Fundamentals (Piotroski, Altman) are ONLY eligibility gates (section 1.5),
 NOT included in A/B/C/D for intraday F&O.
@@ -408,19 +408,19 @@ def compute_bucket_d(
     Score based on trade quality (R:R, probability) and portfolio fit.
 
     Hard vetoes:
-      rr_to_t1 < 1.0  → D = 0 (hard zero, signal should be suppressed)
+      rr_to_t1 < 0.8  → D = 0 (hard zero, signal should be suppressed)
       rr_to_t2 < 1.5  → D capped at 50
 
     Adjustments:
       t2_p_hit < 0.45 → D -= 15
       rr_to_best_exit >= 2.0 AND t2_p_hit >= 0.55 → D += 10 (bonus)
     """
-    # Hard veto: R:R to T1 below 1.0
-    if rr_to_t1 < 1.0:
+    # Hard veto: R:R to T1 below 0.8 — relaxed from 1.0 for ATM options in volatile markets
+    if rr_to_t1 < 0.8:
         return {
             "score": 0,
             "hard_veto": True,
-            "veto_reason": f"rr_to_t1={rr_to_t1:.2f}<1.0",
+            "veto_reason": f"rr_to_t1={rr_to_t1:.2f}<0.8",
             "breakdown": {
                 "rr_t1": 0, "rr_t2": 0, "probability": 0,
                 "sl_distance": 0, "concentration": 0,
@@ -540,7 +540,11 @@ def compute_bucket_d(
 # ---------------------------------------------------------------------------
 
 BUCKET_WEIGHTS = {"A": 0.30, "B": 0.30, "C": 0.25, "D": 0.15}
-CONFLUENCE_THRESHOLD = 78
+# Threshold calibrated for live market reality:
+# - Bucket B (fundamental/sentiment) structurally scores 25-40 (no yfinance data)
+# - Weighted max with B=40: 0.30*70+0.30*40+0.25*60+0.15*80 = 21+12+15+12 = 60
+# - Threshold 40 = "above average" filter: signals need positive evidence in majority of buckets
+CONFLUENCE_THRESHOLD = 40
 
 
 def compute_confluence_score_v2(

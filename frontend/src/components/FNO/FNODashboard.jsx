@@ -20,9 +20,9 @@ import { SubTabs } from "@/components/Layout/SubTabs";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const FNO_TABS = [
-  { id: "signals", label: "Signals & Custom", icon: TrendingUp },
-  { id: "performance", label: "Signal Performance", icon: BarChart3 },
-  { id: "analytics", label: "IV Analytics & Multi-TF", icon: Activity },
+  { id: "signals", label: "Custom Script & F&O Generation", icon: TrendingUp },
+  { id: "performance", label: "Signal Performance Tracking", icon: BarChart3 },
+  { id: "analytics", label: "IV Analytics & Multi-Timeframe", icon: Activity },
 ];
 
 export function FNODashboard({

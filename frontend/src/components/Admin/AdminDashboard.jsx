@@ -14,11 +14,11 @@ const roles = [
 ];
 
 const ADMIN_TABS = [
-  { id: "users", label: "User Management", icon: UserCog },
-  { id: "controls", label: "API Controls & Domains", icon: Settings },
-  { id: "macro", label: "Macro Events", icon: Calendar },
-  { id: "kite", label: "Kite Connect", icon: Globe },
-  { id: "csv", label: "CSV Seeds", icon: Shield },
+  { id: "users", label: "User Management & Security", icon: UserCog },
+  { id: "controls", label: "Advanced Controls", icon: Settings },
+  { id: "macro", label: "Active Macro Events", icon: Calendar },
+  { id: "kite", label: "API Connect Integration", icon: Globe },
+  { id: "csv", label: "OHLCV CSV Seed Management", icon: Shield },
 ];
 
 export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydrateMe }) {

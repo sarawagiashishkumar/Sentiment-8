@@ -59,6 +59,7 @@ from services.confluence_score_v2 import (
     compute_bucket_c,
     compute_bucket_d,
     compute_confluence_score_v2,
+    CONFLUENCE_THRESHOLD,
 )
 from services.position_sizing import compute_position_size
 from services.macro_context import (
@@ -672,7 +673,7 @@ def _calculate_confluence_score_master_spec(
 
 
 def _get_signal_quality(confluence_score: int) -> Literal["HIGH", "MEDIUM", "LOW"]:
-    if confluence_score >= 78:
+    if confluence_score >= CONFLUENCE_THRESHOLD:
         return "HIGH"
     if confluence_score >= 65:
         return "MEDIUM"
@@ -1790,10 +1791,10 @@ async def build_fno_signal(
                 _should_suppress = True
                 _v2_suppress_reason = f"BucketD_hard_veto:{_v2_bucket_d.get('veto_reason', 'rr<1')}"
             elif _should_suppress:
-                _v2_suppress_reason = f"V2_score={_v2_score}<78"
-            elif _v2_score < 78:
+                _v2_suppress_reason = f"V2_score={_v2_score}<{CONFLUENCE_THRESHOLD}"
+            elif _v2_score < CONFLUENCE_THRESHOLD:
                 _should_suppress = True
-                _v2_suppress_reason = f"V2_score={_v2_score}<78"
+                _v2_suppress_reason = f"V2_score={_v2_score}<{CONFLUENCE_THRESHOLD}"
 
             if _should_suppress:
                 logger.info(
@@ -1838,7 +1839,7 @@ async def build_fno_signal(
     
     signal_quality = _get_signal_quality(confluence_score)
 
-    is_potential_trade = direction != "NEUTRAL" and confluence_score >= 78 and risk_reward_target2 >= 1.2
+    is_potential_trade = direction != "NEUTRAL" and confluence_score >= CONFLUENCE_THRESHOLD and risk_reward_target2 >= 1.2
     if is_potential_trade:
         trigger_factors.append(f"Conviction={conviction_level}")
 
@@ -2380,7 +2381,7 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
     directional_candidates = [
         item
         for item in rows
-        if item is not None and item.direction != "NEUTRAL" and item.confluence_score >= 78 and item.risk_reward_target2 >= 1.3
+        if item is not None and item.direction != "NEUTRAL" and item.confluence_score >= CONFLUENCE_THRESHOLD and item.risk_reward_target2 >= 1.3
     ]
     by_strike: dict[float, list[FNOSignalResponse]] = defaultdict(list)
     for row in directional_candidates:
@@ -2741,11 +2742,11 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
 
             logger.info(f"{symbol}: {len(symbol_rows)} signals before filtering")
             
-            # Enforce 78% minimum confluence score per Master Spec requirement
+            # Enforce minimum confluence score per Master Spec requirement
             potential = [
                 row
                 for row in symbol_rows
-                if row.confluence_score >= 78
+                if row.confluence_score >= CONFLUENCE_THRESHOLD
                 and row.risk_reward_target2 >= 1.2
                 and row.expiry_risk != "HIGH"
             ]
@@ -2757,8 +2758,8 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
             else:
                 for row in symbol_rows:
                     reasons = []
-                    if row.confluence_score < 78:
-                        reasons.append(f"Confluence {row.confluence_score} < 78 (minimum required)")
+                    if row.confluence_score < CONFLUENCE_THRESHOLD:
+                        reasons.append(f"Confluence {row.confluence_score} < {CONFLUENCE_THRESHOLD} (minimum required)")
                     if row.risk_reward_target2 < 1.2:
                         reasons.append(f"R:R {row.risk_reward_target2:.2f} < 1.2")
                     if row.expiry_risk == "HIGH":

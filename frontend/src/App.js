@@ -13,7 +13,7 @@ import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
 import { SectorsDashboard } from "@/components/Sectors/SectorsDashboard";
 import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
-import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
+import { KiteLiveWarning, DataFetchErrorPopup } from "@/components/Shared/KiteLiveWarning";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 

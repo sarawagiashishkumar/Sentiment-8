@@ -22,7 +22,7 @@ function getReturnColor(val) {
   return "text-rose-300";
 }
 
-export function SectorHeatmap({ authHeaders }) {
+export function SectorHeatmap({ authHeaders, onFetchError }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
