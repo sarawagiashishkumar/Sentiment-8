@@ -256,6 +256,7 @@ KITE_API_KEY = os.environ.get("KITE_API_KEY")
 KITE_API_SECRET = os.environ.get("KITE_API_SECRET")
 KITE_REDIRECT_URL = os.environ.get("KITE_REDIRECT_URL")
 KITE_READ_ONLY_MODE = True
+CONFLUENCE_THRESHOLD_DISPLAY = 40  # For display in rejection messages
 
 # ── Global data-source config: imported from canonical data_policy module ───
 from services.data_policy import KITE_IS_SOURCE_OF_TRUTH, USE_YFINANCE  # noqa: F401

@@ -544,5 +544,183 @@ async def options_heatmap(
         return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
                 "warning": "Stock options heatmap: Select specific stock from F&O universe for chain view."}
 
-    return {"filter": filter, "chains": [], "summary": {}, "kite_live": False}
+    # Stock-specific option chains (e.g., filter=RELIANCE, TCS, HDFCBANK)
+    else:
+        # Try as stock symbol
+        stock_symbol = filter.upper()
+        step = 50  # default step for stock options
+        from services.kite_client import fetch_kite_batch_quotes as _fbq2, fetch_kite_batch_option_quotes as _fboq2, _get_kite_access_token as _gkat2
+        from services.date_utils import today_ist as _tist2
 
+        access_token2 = await _gkat2()
+        if not access_token2:
+            return {"filter": filter, "chains": [], "summary": {}, "kite_live": False,
+                    "warning": "API not connected."}
+
+        # Get spot from Kite
+        spot_quotes = await _fbq2([stock_symbol])
+        spot = spot_quotes.get(stock_symbol, {}).get("ltp", 0)
+
+        if spot <= 0:
+            return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
+                    "warning": f"No spot data for {stock_symbol}. Verify symbol is in F&O universe."}
+
+        # Determine step based on price
+        if spot > 5000:
+            step = 100
+        elif spot > 2000:
+            step = 50
+        elif spot > 500:
+            step = 20
+        elif spot > 100:
+            step = 10
+        else:
+            step = 5
+
+        # Find nearest expiry
+        pipeline = [
+            {"$match": {"underlying": stock_symbol}},
+            {"$group": {"_id": "$expiry"}},
+            {"$sort": {"_id": 1}},
+            {"$limit": 3},
+        ]
+        expiry_docs = await _srv.db.kite_option_master.aggregate(pipeline).to_list(3)
+        if not expiry_docs:
+            return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
+                    "warning": f"No option data for {stock_symbol}. Run Kite instrument sync."}
+
+        nearest_expiry = expiry_docs[0]["_id"]
+        available_expiries = [d["_id"] for d in expiry_docs]
+
+        atm_strike = round(spot / step) * step
+        strike_range = list(range(int(atm_strike - step * 10), int(atm_strike + step * 11), step))
+
+        option_rows = await _srv.db.kite_option_master.find(
+            {"underlying": stock_symbol, "expiry": nearest_expiry, "strike": {"$in": [float(s) for s in strike_range]}},
+            {"_id": 0, "tradingsymbol": 1, "strike": 1, "option_type": 1},
+        ).to_list(200)
+
+        if option_rows:
+            ts_list = [r["tradingsymbol"] for r in option_rows]
+            option_quotes = await _fboq2(ts_list)
+
+            strike_data = {}
+            for row in option_rows:
+                s = float(row["strike"])
+                ot = row["option_type"]
+                ts = row["tradingsymbol"]
+                q = option_quotes.get(ts, {})
+                if s not in strike_data:
+                    strike_data[s] = {"strike": s}
+                prefix = "ce" if ot == "CE" else "pe"
+                strike_data[s][f"{prefix}_ltp"] = q.get("ltp")
+                strike_data[s][f"{prefix}_oi"] = q.get("oi")
+                strike_data[s][f"{prefix}_iv"] = q.get("iv")
+                strike_data[s][f"{prefix}_ts"] = ts
+
+            sorted_strikes = sorted(strike_data.values(), key=lambda x: x["strike"])
+            chains.append({
+                "symbol": stock_symbol,
+                "spot": spot,
+                "step": step,
+                "expiry": nearest_expiry,
+                "available_expiries": available_expiries,
+                "strikes": sorted_strikes,
+            })
+
+            total_ce_oi = sum((s.get("ce_oi") or 0) for s in sorted_strikes)
+            total_pe_oi = sum((s.get("pe_oi") or 0) for s in sorted_strikes)
+            pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else None
+
+            return {"filter": filter, "chains": chains, "kite_live": True, "summary": {
+                "pcr": pcr, "oi_buildup": "SHORT_BUILDUP" if pcr and pcr < 0.7 else "LONG_BUILDUP" if pcr and pcr > 1.3 else None,
+            }}
+
+        return {"filter": filter, "chains": chains, "summary": {}, "kite_live": True,
+                "warning": f"No option chain data for {stock_symbol} at expiry {nearest_expiry}."}
+
+
+
+
+# ── Industry Sectors Heatmap ──────────────────────────────────────────────────
+
+INDUSTRY_SECTOR_MAPPING = {
+    "Agri": ["UPL", "PI", "DHANUKA", "RALLIS"],
+    "Alcohol": ["MCDOWELL-N", "RADICO", "GLOBUSSPR"],
+    "Automobile": ["TATAMOTORS", "MARUTI", "M&M", "BAJAJ-AUTO", "HEROMOTOCO", "EICHERMOT", "ASHOKLEY", "TVSMOTOR", "BALKRISIND"],
+    "Aviation": ["INDIGO", "SPICEJET"],
+    "Bank - Private": ["HDFCBANK", "ICICIBANK", "KOTAKBANK", "AXISBANK", "INDUSINDBK", "FEDERALBNK", "IDFCFIRSTB", "AUBANK", "BANDHANBNK", "RBLBANK", "IDFC", "CUB", "MANAPPURAM"],
+    "Bank - Public": ["SBIN", "BANKBARODA", "PNB", "CANBK", "INDIANB", "IOB", "CENTRALBK", "UNIONBANK", "MAHABANK", "BANKINDIA", "UCOBANK", "PSB"],
+    "Cement": ["ULTRACEMCO", "SHREECEM", "AMBUJACEM", "ACC", "DALBHARAT", "RAMCOCEM", "JKCEMENT", "BIRLASOFT"],
+    "Chemicals": ["PIDILITIND", "AARTI", "DEEPAKNTR", "NAVINFLUOR", "CLEAN", "ATUL", "SRF"],
+    "Construction": ["LT", "NBCC", "NCC", "IRCON", "KEC"],
+    "Consumer": ["HINDUNILVR", "ITC", "NESTLEIND", "BRITANNIA", "MARICO", "DABUR", "GODREJCP", "TATACONSUM", "COLPAL", "EMAMILTD"],
+    "Defence": ["HAL", "BEL", "BDL", "GRSE"],
+    "Energy": ["RELIANCE", "ONGC", "BPCL", "IOC", "GAIL", "PETRONET", "NTPC", "POWERGRID", "TATAPOWER", "ADANIGREEN", "NHPC"],
+    "Fertilizer": ["COROMANDEL", "CHAMBLFERT", "GNFC", "RCF"],
+    "Financial": ["BAJFINANCE", "BAJAJFINSV", "SBILIFE", "HDFCLIFE", "ICICIPRULI", "MFSL", "CHOLAFIN", "SHRIRAMFIN", "M&MFIN", "PEL"],
+    "Healthcare": ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "APOLLOHOSP", "LALPATHLAB", "METROPOLIS", "AUROPHARMA", "BIOCON", "LUPIN", "TORNTPHARM"],
+    "IT": ["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTIM", "MPHASIS", "PERSISTENT", "COFORGE", "LTTS"],
+    "Infrastructure": ["ADANIPORTS", "DLF", "GODREJPROP", "OBEROIRLTY", "PRESTIGE", "BRIGADE", "SOBHA", "PHOENIXLTD"],
+    "Insurance": ["SBILIFE", "HDFCLIFE", "ICICIPRULI", "NIACL", "STAR"],
+    "Logistics": ["CONCOR", "DELHIVERY", "BLUEDART"],
+    "Media": ["ZEEL", "SUNTV", "PVRINOX", "NETWORK18"],
+    "Metal": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "VEDL", "NATIONALUM", "NMDC", "COALINDIA", "SAIL", "JINDALSTEL"],
+    "Oil & Gas": ["RELIANCE", "ONGC", "BPCL", "IOC", "GAIL", "PETRONET", "HINDPETRO", "MRPL", "GUJGASLTD"],
+    "Power": ["NTPC", "POWERGRID", "TATAPOWER", "ADANIGREEN", "NHPC", "SJVN", "IREDA"],
+    "Real Estate": ["DLF", "GODREJPROP", "OBEROIRLTY", "PRESTIGE", "BRIGADE", "SOBHA", "PHOENIXLTD"],
+    "Retail": ["TRENT", "DMART", "ABFRL", "SHOPERSTOP", "VMART"],
+    "Steel": ["TATASTEEL", "JSWSTEEL", "SAIL", "JINDALSTEL", "APLAPOLLO"],
+    "Sugar": ["BALRAMCHIN", "SHREERENUKA", "DWARIKESH", "TRIVENI"],
+    "Telecom": ["BHARTIARTL", "IDEA", "TTML"],
+    "Textile": ["PAGEIND", "RAYMOND", "ARVIND"],
+}
+
+
+@market_data_router.get("/market/industry-sectors")
+async def industry_sectors(
+    current_user: dict = Depends(get_current_user),
+):
+    """Return industry sector heatmap data with aggregated live Kite quotes."""
+    from services.kite_client import fetch_kite_batch_quotes
+
+    # Collect all unique symbols
+    all_symbols = set()
+    for stocks in INDUSTRY_SECTOR_MAPPING.values():
+        all_symbols.update(stocks)
+
+    # Fetch all quotes in batch
+    quotes = await fetch_kite_batch_quotes(list(all_symbols))
+
+    sectors = []
+    for sector_name, stocks in sorted(INDUSTRY_SECTOR_MAPPING.items()):
+        gainers = 0
+        losers = 0
+        total_change = 0
+        live_count = 0
+
+        for sym in stocks:
+            q = quotes.get(sym, {})
+            pct = q.get("change_pct", 0)
+            if q.get("ltp", 0) > 0:
+                live_count += 1
+                total_change += pct
+                if pct > 0:
+                    gainers += 1
+                elif pct < 0:
+                    losers += 1
+
+        avg_change = round(total_change / max(live_count, 1), 2)
+
+        sectors.append({
+            "sector": sector_name,
+            "avg_change_pct": avg_change,
+            "stock_count": len(stocks),
+            "gainers": gainers,
+            "losers": losers,
+            "live_count": live_count,
+        })
+
+    sectors.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+    kite_live = any(q.get("ltp", 0) > 0 for q in quotes.values())
+    return {"sectors": sectors, "count": len(sectors), "kite_live": kite_live}

@@ -557,7 +557,7 @@ def compute_confluence_score_v2(
     Compute final Confluence Score from 4 buckets.
 
     Score = 0.30*A + 0.30*B + 0.25*C + 0.15*D
-    If Score < 78 → signal should be suppressed.
+    If Score < CONFLUENCE_THRESHOLD (40) → signal should be suppressed.
 
     Returns: {score, conviction, buckets, should_suppress}
     """
@@ -574,16 +574,16 @@ def compute_confluence_score_v2(
     )
     score = min(100, max(0, score))
 
-    # Conviction level
-    if score >= 90:
+    # Conviction level (calibrated for CONFLUENCE_THRESHOLD=40)
+    if score >= 75:
         conviction = "VERY_HIGH"
-    elif score >= 85:
+    elif score >= 65:
         conviction = "HIGH"
-    elif score >= 80:
+    elif score >= 55:
         conviction = "MEDIUM_HIGH"
-    elif score >= 78:
+    elif score >= 48:
         conviction = "MEDIUM"
-    elif score >= 70:
+    elif score >= 40:
         conviction = "LOW"
     else:
         conviction = "VERY_LOW"

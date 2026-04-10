@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Grid3X3, BarChart3, Layers } from "lucide-react";
 import { SubTabs } from "@/components/Layout/SubTabs";
 import { SectorHeatmap } from "./SectorHeatmap";

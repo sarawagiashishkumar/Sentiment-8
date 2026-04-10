@@ -181,7 +181,7 @@ async def generate_fno_signals(
             if banknifty_projection.rejection_note:
                 reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
             if not stock_signals:
-                reasons.append("Individual stock signals: No scripts passed 78% confluence & R:R >= 1.2 filters")
+                reasons.append(f"Individual stock signals: No scripts passed {_srv.CONFLUENCE_THRESHOLD_DISPLAY}% confluence & R:R >= 0.8 filters")
             regime = market_regime.get("regime", "UNKNOWN")
             if regime in ("LOW_VOL_RANGE",):
                 reasons.append(f"Market in {regime} — directional setups lacking conviction")
@@ -189,7 +189,7 @@ async def generate_fno_signals(
                 reasons.append(f"Market in {regime} — extreme volatility")
             if not market_session.get("is_open"):
                 reasons.append(f"Market CLOSED ({market_session.get('status', 'CLOSED')})")
-            reason_text = " | ".join(reasons) if reasons else "Current market conditions do not meet minimum 78% confluence threshold"
+            reason_text = " | ".join(reasons) if reasons else f"Current market conditions do not meet minimum {_srv.CONFLUENCE_THRESHOLD_DISPLAY}% confluence threshold"
             no_signals_alert = f"No script signals currently available. Reason: {reason_text}"
 
         response = FNOGenerateResponse(

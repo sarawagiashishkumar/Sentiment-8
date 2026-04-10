@@ -1,50 +1,78 @@
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { GaugeCircle, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const REFRESH_INTERVAL = 30000;
+
+function isMarketHours() {
+  const now = new Date();
+  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const h = ist.getHours(), m = ist.getMinutes(), day = ist.getDay();
+  if (day === 0 || day === 6) return false;
+  return (h * 60 + m) >= 555 && (h * 60 + m) <= 930;
+}
 
 export function SectorsDashboard({ authHeaders, initialData }) {
   const [sectorMomentumData, setSectorMomentumData] = useState(initialData || null);
   const [sectorMomentumLoading, setSectorMomentumLoading] = useState(false);
   const [sectorMomentumError, setSectorMomentumError] = useState("");
+  const intervalRef = useRef(null);
 
-  const loadSectorMomentum = async (forceRefresh = false) => {
-    setSectorMomentumError("");
-    setSectorMomentumLoading(true);
+  const loadSectorMomentum = useCallback(async (forceRefresh = false, silent = false) => {
+    if (!silent) {
+      setSectorMomentumError("");
+      setSectorMomentumLoading(true);
+    }
     try {
       const response = await axios.get(`${API}/sector-momentum${forceRefresh ? "?force_refresh=true" : ""}`, { headers: authHeaders });
       setSectorMomentumData(response.data);
     } catch (error) {
-      setSectorMomentumError(error?.response?.data?.detail || "Unable to load sector momentum data");
+      if (!silent) setSectorMomentumError(error?.response?.data?.detail || "Unable to load sector momentum data");
     } finally {
-      setSectorMomentumLoading(false);
+      if (!silent) setSectorMomentumLoading(false);
     }
-  };
+  }, [authHeaders]);
+
+  // Auto-fetch on mount
+  useEffect(() => {
+    if (!initialData) loadSectorMomentum(false);
+  }, [initialData, loadSectorMomentum]);
+
+  // Auto-refresh during market hours
+  useEffect(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => {
+      if (isMarketHours()) loadSectorMomentum(false, true);
+    }, REFRESH_INTERVAL);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [loadSectorMomentum]);
 
   return (
     <section className="space-y-6" data-testid="sectors-page">
       <Card className="result-card border-slate-800 bg-slate-950/70">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-white">Sector Momentum Dashboard</CardTitle>
-          <Button type="button" onClick={() => loadSectorMomentum(true)} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="sector-momentum-refresh-button" disabled={sectorMomentumLoading}>
-            <RefreshCw size={16} className={sectorMomentumLoading ? "animate-spin" : ""} />
+          <button
+            type="button"
+            onClick={() => loadSectorMomentum(true)}
+            className="flex items-center gap-1.5 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 px-3 py-1.5 text-xs font-medium hover:bg-cyan-500/25 transition-all disabled:opacity-40"
+            data-testid="sector-momentum-refresh-button"
+            disabled={sectorMomentumLoading}
+          >
+            <RefreshCw size={14} className={sectorMomentumLoading ? "animate-spin" : ""} />
             {sectorMomentumLoading ? "Loading..." : "Refresh Data"}
-          </Button>
+          </button>
         </CardHeader>
         <CardContent>
           {sectorMomentumError ? <p className="text-sm text-rose-400" data-testid="sector-momentum-error">{sectorMomentumError}</p> : null}
           {!sectorMomentumData && !sectorMomentumLoading ? (
             <div className="flex flex-col items-center gap-3 py-8 text-slate-400" data-testid="sector-momentum-empty">
               <GaugeCircle size={40} className="opacity-40" />
-              <p className="text-sm">Click <strong>Refresh Data</strong> to load live sector momentum.</p>
-              <Button type="button" onClick={() => loadSectorMomentum()} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="sector-momentum-load-button">
-                Load Sector Momentum
-              </Button>
+              <p className="text-sm">Loading sector momentum data...</p>
             </div>
-          ) : sectorMomentumLoading ? (
+          ) : sectorMomentumLoading && !sectorMomentumData ? (
             <div className="flex items-center gap-2 py-8 text-slate-400" data-testid="sector-momentum-loading">
               <RefreshCw size={20} className="animate-spin" />
               <span>Fetching live sector momentum data... (may take ~30s on first load)</span>
@@ -57,9 +85,12 @@ export function SectorsDashboard({ authHeaders, initialData }) {
                 <span className="rounded bg-emerald-900/40 px-2 py-1 text-emerald-300 font-semibold">Bullish: {sectorMomentumData.summary?.bullish_sectors ?? 0}</span>
                 <span className="rounded bg-rose-900/40 px-2 py-1 text-rose-300 font-semibold">Bearish: {sectorMomentumData.summary?.bearish_sectors ?? 0}</span>
                 <span className="rounded bg-slate-700 px-2 py-1 text-slate-300 font-semibold">Neutral: {sectorMomentumData.summary?.neutral_sectors ?? 0}</span>
-                <span className="rounded bg-cyan-900/40 px-2 py-1 text-cyan-300 font-semibold">Market: {sectorMomentumData.summary?.market_breadth ?? "\u2014"}</span>
-                <span className="rounded bg-slate-800 px-2 py-1 text-slate-400 text-xs font-mono">Avg Score: {sectorMomentumData.summary?.avg_momentum_score ?? "\u2014"}</span>
+                <span className="rounded bg-cyan-900/40 px-2 py-1 text-cyan-300 font-semibold">Market: {sectorMomentumData.summary?.market_breadth ?? "--"}</span>
+                <span className="rounded bg-slate-800 px-2 py-1 text-slate-400 text-xs font-mono">Avg Score: {sectorMomentumData.summary?.avg_momentum_score ?? "--"}</span>
                 {sectorMomentumData.from_cache ? <span className="rounded bg-slate-800 px-2 py-1 text-slate-500 text-xs">cached</span> : null}
+                <span className="rounded bg-slate-800 px-2 py-1 text-slate-500 text-xs font-mono">
+                  {(sectorMomentumData.sectors || []).length}/{(sectorMomentumData.sectors || []).length} live
+                </span>
                 <span className="rounded bg-slate-800 px-2 py-1 text-slate-500 text-xs font-mono">
                   {sectorMomentumData.refreshed_at ? new Date(sectorMomentumData.refreshed_at).toLocaleTimeString("en-IN") : ""}
                 </span>
@@ -94,19 +125,19 @@ export function SectorsDashboard({ authHeaders, initialData }) {
                       <div className="text-center">
                         <p className="text-slate-500">1W</p>
                         <p className={`font-mono font-semibold ${(s.return_1w ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`} data-testid={`sector-return-1w-${s.sector.toLowerCase().replace(/[^a-z]/g, '-')}`}>
-                          {s.return_1w != null ? `${s.return_1w >= 0 ? '+' : ''}${s.return_1w.toFixed(1)}%` : "\u2014"}
+                          {s.return_1w != null ? `${s.return_1w >= 0 ? '+' : ''}${s.return_1w.toFixed(1)}%` : "--"}
                         </p>
                       </div>
                       <div className="text-center">
                         <p className="text-slate-500">1M</p>
                         <p className={`font-mono font-semibold ${(s.return_1m ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`} data-testid={`sector-return-1m-${s.sector.toLowerCase().replace(/[^a-z]/g, '-')}`}>
-                          {s.return_1m != null ? `${s.return_1m >= 0 ? '+' : ''}${s.return_1m.toFixed(1)}%` : "\u2014"}
+                          {s.return_1m != null ? `${s.return_1m >= 0 ? '+' : ''}${s.return_1m.toFixed(1)}%` : "--"}
                         </p>
                       </div>
                       <div className="text-center">
                         <p className="text-slate-500">3M</p>
                         <p className={`font-mono font-semibold ${(s.return_3m ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`} data-testid={`sector-return-3m-${s.sector.toLowerCase().replace(/[^a-z]/g, '-')}`}>
-                          {s.return_3m != null ? `${s.return_3m >= 0 ? '+' : ''}${s.return_3m.toFixed(1)}%` : "\u2014"}
+                          {s.return_3m != null ? `${s.return_3m >= 0 ? '+' : ''}${s.return_3m.toFixed(1)}%` : "--"}
                         </p>
                       </div>
                     </div>
