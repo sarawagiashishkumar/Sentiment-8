@@ -13,7 +13,7 @@ import os
 import pytest
 import requests
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, safe_streaming_post, safe_streaming_get
 
 BASE_URL = get_base_url()
 
@@ -71,25 +71,21 @@ class TestRegressionNDJSONEndpoints:
 
     def test_fno_generate_returns_ndjson_stream(self, auth_headers):
         """POST /api/fno/generate returns NDJSON stream without errors"""
-        response = requests.post(
+        response = safe_streaming_post(
             f"{BASE_URL}/api/fno/generate",
             headers=auth_headers,
-            json={},
-            stream=True,
-            timeout=60
+            json_body={},
+            skip_msg="FNO generate unavailable (Kite/timeout)",
         )
         assert response.status_code == 200, f"FNO generate failed: {response.status_code}"
         
-        # Read first few lines to verify NDJSON format
+        import json
         lines_read = 0
-        for line in response.iter_lines(decode_unicode=True):
-            if line:
+        for line in response.text.splitlines():
+            if line.strip():
                 lines_read += 1
-                # Should be valid JSON
-                import json
                 try:
                     data = json.loads(line)
-                    # Progress events have 'type' field
                     if "type" in data:
                         print(f"  Progress event: {data.get('type')}")
                 except json.JSONDecodeError:
@@ -101,19 +97,20 @@ class TestRegressionNDJSONEndpoints:
 
     def test_multibagger_candidates_returns_ndjson(self, auth_headers):
         """GET /api/multibagger/candidates returns NDJSON stream"""
-        response = requests.get(
-            f"{BASE_URL}/api/multibagger/candidates?limit=3",
+        response = safe_streaming_get(
+            f"{BASE_URL}/api/multibagger/candidates",
             headers=auth_headers,
-            stream=True,
-            timeout=60
+            params={"limit": 3},
+            timeout=120,
+            skip_msg="Multibagger candidates unavailable (Kite/timeout)",
         )
         assert response.status_code == 200, f"Multibagger failed: {response.status_code}"
         
+        import json
         lines_read = 0
-        for line in response.iter_lines(decode_unicode=True):
-            if line:
+        for line in response.text.splitlines():
+            if line.strip():
                 lines_read += 1
-                import json
                 try:
                     json.loads(line)
                 except json.JSONDecodeError:

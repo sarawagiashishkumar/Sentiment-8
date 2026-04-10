@@ -10,7 +10,7 @@ import sys
 import pytest
 import requests
 
-from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, safe_streaming_post, safe_streaming_get
 
 # Add backend dir to path for import tests
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
@@ -124,9 +124,14 @@ class TestAuthentication:
 
 
 @pytest.fixture(scope="session")
-def fno_response(auth_client):
+def fno_response(auth_token):
     """Single session-level FNO generate response to avoid multiple expensive calls"""
-    response = auth_client.post(f"{BASE_URL}/api/fno/generate", json={}, timeout=150)
+    response = safe_streaming_post(
+        f"{BASE_URL}/api/fno/generate",
+        json_body={},
+        headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+        skip_msg="FNO generate endpoint unavailable (Kite auth/timeout)",
+    )
     return response
 
 
@@ -186,10 +191,13 @@ class TestFnoSignals:
 
     def test_fno_signals_index_returns_list(self, api_client):
         """GET /api/fno/signals/index returns a list"""
-        response = api_client.get(f"{BASE_URL}/api/fno/signals/index", timeout=60)
-        # Note: This endpoint does not require auth
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        resp = safe_streaming_get(
+            f"{BASE_URL}/api/fno/signals/index",
+            timeout=60,
+            skip_msg="FNO signals index unavailable",
+        )
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
 
 # ── Multibagger ───────────────────────────────────────────────────────────────
@@ -209,14 +217,22 @@ class TestMultibagger:
         )
         assert response.status_code in [401, 403, 422]
 
-    def test_multibagger_generate_with_auth_returns_200(self, auth_client):
+    def test_multibagger_generate_with_auth_returns_200(self, auth_token):
         """POST /api/multibagger/generate with auth returns 200"""
-        response = auth_client.post(f"{BASE_URL}/api/multibagger/generate")
+        response = safe_streaming_post(
+            f"{BASE_URL}/api/multibagger/generate",
+            headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            skip_msg="Multibagger generate unavailable (Kite/timeout)",
+        )
         assert response.status_code == 200
 
-    def test_multibagger_generate_has_candidates(self, auth_client):
+    def test_multibagger_generate_has_candidates(self, auth_token):
         """POST /api/multibagger/generate response has candidates list"""
-        response = auth_client.post(f"{BASE_URL}/api/multibagger/generate")
+        response = safe_streaming_post(
+            f"{BASE_URL}/api/multibagger/generate",
+            headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            skip_msg="Multibagger generate unavailable (Kite/timeout)",
+        )
         if response.status_code == 200:
             data = get_ndjson_complete_data(response)
             assert "candidates" in data

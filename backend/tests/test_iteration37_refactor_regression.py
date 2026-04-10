@@ -15,7 +15,7 @@ import os
 import pytest
 import requests
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, safe_streaming_get
 
 BASE_URL = get_base_url()
 
@@ -169,18 +169,22 @@ class TestFNORoutes:
     
     def test_fno_signals_index_backward_compat(self):
         """GET /api/fno/signals/index - Returns signals list (backward compat)"""
-        response = self.session.get(f"{BASE_URL}/api/fno/signals/index", timeout=120)
-        if response.status_code == 500 and "Network connection lost" in response.text:
-            pytest.skip("Kite Connect network connection lost — live API connectivity issue")
+        response = safe_streaming_get(
+            f"{BASE_URL}/api/fno/signals/index",
+            timeout=120,
+            skip_msg="FNO signals index unavailable (Kite/timeout)",
+        )
         assert response.status_code == 200, f"Signals index failed: {response.text}"
         data = response.json()
         assert isinstance(data, list), "Response should be a list"
     
     def test_fno_signals_potential_backward_compat(self):
         """GET /api/fno/signals/potential - Returns signals (backward compat)"""
-        response = self.session.get(f"{BASE_URL}/api/fno/signals/potential", timeout=120)
-        if response.status_code == 500 and "Network connection lost" in response.text:
-            pytest.skip("Kite Connect network connection lost — live API connectivity issue")
+        response = safe_streaming_get(
+            f"{BASE_URL}/api/fno/signals/potential",
+            timeout=120,
+            skip_msg="FNO signals potential unavailable (Kite/timeout)",
+        )
         assert response.status_code == 200, f"Signals potential failed: {response.text}"
         data = response.json()
         assert isinstance(data, list), "Response should be a list"

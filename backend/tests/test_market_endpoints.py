@@ -82,9 +82,11 @@ def test_fno_signal_banknifty_supported_script(session_client, api_base_url):
 
 
 def test_fno_signals_index_cards(session_client, api_base_url):
-    response = session_client.get(f'{api_base_url}/fno/signals/index', timeout=120)
-    if response.status_code in (500, 502):
-        pytest.skip(f"FNO signals/index returned {response.status_code} — backend processing error in test env")
+    response = safe_streaming_get(
+        f'{api_base_url}/fno/signals/index',
+        timeout=120,
+        skip_msg="FNO signals/index unavailable (Kite/timeout)",
+    )
     assert response.status_code == 200
 
     data = response.json()
@@ -92,9 +94,11 @@ def test_fno_signals_index_cards(session_client, api_base_url):
 
 
 def test_fno_potential_signals_shape_and_actionability(session_client, api_base_url):
-    response = session_client.get(f'{api_base_url}/fno/signals/potential', timeout=120)
-    if response.status_code in (500, 502):
-        pytest.skip(f"FNO signals/potential returned {response.status_code} — backend processing error in test env")
+    response = safe_streaming_get(
+        f'{api_base_url}/fno/signals/potential',
+        timeout=120,
+        skip_msg="FNO signals/potential unavailable (Kite/timeout)",
+    )
     assert response.status_code == 200
 
     data = response.json()

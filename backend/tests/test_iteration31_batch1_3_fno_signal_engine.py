@@ -13,7 +13,7 @@ import requests
 import os
 import sys
 
-from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, safe_streaming_post
 
 # Add backend to path for direct module imports
 sys.path.insert(0, '/app/backend')
@@ -82,21 +82,36 @@ class TestAuthEndpoint:
 class TestFNOGenerateEndpoint:
     """Test F&O signal generation endpoint."""
     
-    def test_fno_generate_returns_200(self, api_client):
+    def test_fno_generate_returns_200(self, auth_token):
         """POST /api/fno/generate returns 200."""
-        response = api_client.post(f"{BASE_URL}/api/fno/generate", json={})
+        response = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={},
+            headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            skip_msg="FNO generate unavailable (Kite/timeout)",
+        )
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     
-    def test_fno_generate_has_nifty_projection(self, api_client):
+    def test_fno_generate_has_nifty_projection(self, auth_token):
         """F&O generate response contains nifty_projection."""
-        response = api_client.post(f"{BASE_URL}/api/fno/generate", json={})
+        response = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={},
+            headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            skip_msg="FNO generate unavailable (Kite/timeout)",
+        )
         data = get_ndjson_complete_data(response)
         assert "nifty_projection" in data, "Response should contain 'nifty_projection'"
         assert data["nifty_projection"] is not None, "nifty_projection should not be None"
     
-    def test_fno_generate_has_banknifty_projection(self, api_client):
+    def test_fno_generate_has_banknifty_projection(self, auth_token):
         """F&O generate response contains banknifty_projection."""
-        response = api_client.post(f"{BASE_URL}/api/fno/generate", json={}, timeout=120)
+        response = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={},
+            headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            skip_msg="FNO generate unavailable (Kite/timeout)",
+        )
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         if response.text:
             data = get_ndjson_complete_data(response)
@@ -105,9 +120,14 @@ class TestFNOGenerateEndpoint:
         else:
             pytest.skip("Empty response - API may be slow")
     
-    def test_fno_generate_has_stock_signals(self, api_client):
+    def test_fno_generate_has_stock_signals(self, auth_token):
         """F&O generate response contains stock_signals array."""
-        response = api_client.post(f"{BASE_URL}/api/fno/generate", json={})
+        response = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={},
+            headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            skip_msg="FNO generate unavailable (Kite/timeout)",
+        )
         data = get_ndjson_complete_data(response)
         assert "stock_signals" in data, "Response should contain 'stock_signals'"
         assert isinstance(data["stock_signals"], list), "stock_signals should be a list"

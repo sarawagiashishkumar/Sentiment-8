@@ -13,7 +13,7 @@ import os
 import sys
 import json
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, safe_streaming_post, safe_streaming_get
 
 # Add backend to path for module imports
 sys.path.insert(0, '/app/backend')
@@ -54,33 +54,28 @@ class TestFNOGenerateEndpoint:
     
     def test_fno_generate_returns_ndjson_stream(self, auth_token):
         """Verify FNO generate returns NDJSON stream with progress events"""
-        response = requests.post(
+        response = safe_streaming_post(
             f"{BASE_URL}/api/fno/generate",
             headers={"Authorization": f"Bearer {auth_token}"},
-            json={"index": "NIFTY"},
-            stream=True,
-            timeout=120
+            json_body={"index": "NIFTY"},
+            skip_msg="FNO generate unavailable (Kite/timeout)",
         )
         assert response.status_code == 200, f"FNO generate failed: {response.status_code}"
         
-        # Check content type is NDJSON
         content_type = response.headers.get("content-type", "")
         assert "application/x-ndjson" in content_type or "text/event-stream" in content_type, \
             f"Expected NDJSON content type, got {content_type}"
         
-        # Parse NDJSON lines
         lines = []
-        for line in response.iter_lines():
-            if line:
-                lines.append(json.loads(line.decode('utf-8')))
+        for line in response.text.splitlines():
+            if line.strip():
+                lines.append(json.loads(line))
         
         assert len(lines) > 0, "No NDJSON lines received"
         
-        # First line should be progress
         first = lines[0]
         assert first.get("type") == "progress", f"First line should be progress, got {first.get('type')}"
         
-        # Check that we have either complete or progress events (stream may end with progress if no signals)
         has_valid_events = any(l.get("type") in ["progress", "complete"] for l in lines)
         assert has_valid_events, "No valid progress/complete events found"
         
@@ -180,30 +175,28 @@ class TestMultibaggerEndpoint:
     
     def test_multibagger_candidates_returns_ndjson(self, auth_token):
         """Verify multibagger candidates returns NDJSON"""
-        response = requests.get(
+        response = safe_streaming_get(
             f"{BASE_URL}/api/multibagger/candidates",
             headers={"Authorization": f"Bearer {auth_token}"},
-            stream=True,
-            timeout=120
+            timeout=120,
+            skip_msg="Multibagger candidates unavailable (Kite/timeout)",
         )
         assert response.status_code == 200, f"Multibagger candidates failed: {response.status_code}"
         
-        # Check content type
         content_type = response.headers.get("content-type", "")
         assert "application/x-ndjson" in content_type or "text/event-stream" in content_type, \
             f"Expected NDJSON content type, got {content_type}"
         
-        # Parse first line
         first_line = None
-        for line in response.iter_lines():
-            if line:
-                first_line = json.loads(line.decode('utf-8'))
+        for line in response.text.splitlines():
+            if line.strip():
+                first_line = json.loads(line)
                 break
         
         assert first_line is not None, "No NDJSON lines received"
         assert first_line.get("type") == "progress", f"First line should be progress"
         
-        print(f"✓ Multibagger candidates returns NDJSON stream")
+        print(f"Multibagger candidates returns NDJSON stream")
 
 
 # ============================================================================

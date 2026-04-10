@@ -22,7 +22,7 @@ import requests
 import json
 import time
 
-from tests.helpers.test_utils import get_base_url
+from tests.helpers.test_utils import get_base_url, safe_streaming_get
 
 # Add backend to path for module imports
 sys.path.insert(0, "/app/backend")
@@ -275,15 +275,16 @@ class TestFNOSignalsIndexEndpoint:
     
     def test_fno_signals_index_returns_list(self, auth_headers):
         """GET /api/fno/signals/index returns list"""
-        response = requests.get(
+        response = safe_streaming_get(
             f"{BASE_URL}/api/fno/signals/index",
             headers=auth_headers,
-            timeout=30
+            timeout=60,
+            skip_msg="FNO signals index unavailable (Kite/timeout)",
         )
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list), "Expected list response"
-        print(f"✓ FNO signals index returns {len(data)} signals")
+        print(f"FNO signals index returns {len(data)} signals")
 
 
 class TestPortfolioAnalyzeEndpoint:
@@ -460,13 +461,14 @@ class TestRouteModuleImports:
     
     def test_fno_routes_accessible(self, auth_headers):
         """FNO routes work (routes/fno.py)"""
-        response = requests.get(
+        response = safe_streaming_get(
             f"{BASE_URL}/api/fno/signals/index",
             headers=auth_headers,
-            timeout=60  # Increased timeout for slow endpoint
+            timeout=60,
+            skip_msg="FNO signals index unavailable (Kite/timeout)",
         )
         assert response.status_code == 200
-        print("✓ FNO routes accessible")
+        print("FNO routes accessible")
     
     def test_portfolio_routes_accessible(self, auth_headers):
         """Portfolio routes work (routes/portfolio.py)"""

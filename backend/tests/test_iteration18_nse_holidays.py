@@ -17,7 +17,7 @@ import pytest
 import requests
 from datetime import datetime, timedelta
 
-from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, safe_streaming_post
 
 BASE_URL = get_base_url()
 
@@ -289,17 +289,14 @@ class TestTradingDayCalculation(TestAuthSetup):
     
     def test_fno_signal_remaining_trading_days_excludes_holidays(self, auth_token):
         """FNO signals should have remaining_trading_days that excludes holidays"""
-        # Get FNO signals to check remaining_trading_days calculation
-        response = requests.post(
+        response = safe_streaming_post(
             f"{BASE_URL}/api/fno/generate",
             headers={"Authorization": f"Bearer {auth_token}"},
-            json={},
-            timeout=60
+            json_body={},
+            skip_msg="FNO generate unavailable (Kite/timeout)",
         )
-        # Even if no signals, the endpoint should work
         if response.status_code == 200:
             data = get_ndjson_complete_data(response)
-            # Check if any signals have remaining_trading_days field
             signals = data.get("signals", []) + data.get("potential_signals", []) + data.get("top_trades", [])
             if signals:
                 for signal in signals[:3]:

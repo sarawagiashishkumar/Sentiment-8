@@ -45,9 +45,11 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - [x] Architecture Hardening Phase 2: kite_client.py, fundamental_data.py, user_service.py, validators.py (server.py 3578->2218)
 - [x] Architecture Hardening Phase 3: script_master.py, india_vix.py, hist_data.py, position_service.py, routes/auth.py (server.py 2220->981)
 - [x] Full pytest suite fix: 1281 passed, 0 failed, 23 skipped (100% green)
+- [x] Multibagger Screener + Price Band Upgrade: Phases 1-5 scaffolded (equity_master_cache.py, price_band_engine.py, model extensions)
+- [x] Test suite resilience: Converted all streaming endpoint tests to use safe_streaming_post/get wrappers for graceful skip on Kite unavailability (1282 passed, 22 skipped, 0 failed as of 2026-04-10)
 
 ## Testing Status
-- Full suite: 1281 passed, 0 failed, 23 skipped (100% green as of 2026-04-09)
+- Full suite: 1282 passed, 0 failed, 22 skipped (100% green as of 2026-04-10)
 - 47 test files across /app/backend/tests/
 - Test helpers in tests/helpers/test_utils.py (safe_streaming_post, read_backend_source, get_base_url)
 
@@ -64,7 +66,9 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 │   ├── multibagger.py               # Multibagger endpoints
 │   └── batch_jobs.py                # Batch/cron endpoints
 ├── services/
-│   ├── script_master.py             # NEW Phase 3: NSE/Angel/Kite/Dhan symbol sync
+│   ├── equity_master_cache.py       # Phase 1 Upgrade: Centralized OHLCV/volatility/forensic cache
+│   ├── price_band_engine.py         # Phase 2 Upgrade: Z-score/volatility-driven price bands
+│   ├── script_master.py             # Phase 3: NSE/Angel/Kite/Dhan symbol sync
 │   ├── india_vix.py                 # NEW Phase 3: India VIX via Kite
 │   ├── hist_data.py                 # NEW Phase 3: Historical OHLCV cache
 │   ├── position_service.py          # NEW Phase 3: Position refresh/monitoring/response
@@ -84,5 +88,6 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 ```
 
 ## Backlog
+- P1: Phase 6 Audit — Run 8-step mathematical validation on RELIANCE, HDFCBANK, TATAPOWER, PAYTM, SUNPHARMA (monotonic band expansion, fundamental scalar, fallback safety)
 - P2: Advanced IV analytics (IV cone + term structure chart — wait for iv_history 30+ days)
 - P2: Historical signal performance tracking enhancements

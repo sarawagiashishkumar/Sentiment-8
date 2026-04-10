@@ -20,7 +20,7 @@ import sys
 import pytest
 import requests
 
-from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, read_backend_source
+from tests.helpers.test_utils import get_base_url, get_ndjson_complete_data, read_backend_source, safe_streaming_post
 
 # ─── Base URL ─────────────────────────────────────────────────────────────────
 BASE_URL = get_base_url()
@@ -558,7 +558,12 @@ def fno_response(authed):
     import time
     for attempt in range(3):
         try:
-            resp = authed.post(f"{BASE_URL}/api/fno/generate", json={}, timeout=180)
+            resp = safe_streaming_post(
+                f"{BASE_URL}/api/fno/generate",
+                json_body={},
+                headers=dict(authed.headers),
+                skip_msg="FNO generate unavailable (Kite/timeout)",
+            )
             if resp.status_code == 200:
                 return get_ndjson_complete_data(resp)
             elif resp.status_code == 502:
@@ -577,7 +582,12 @@ class TestFnoGenerateEndpoint:
 
     def test_fno_response_200(self, authed):
         """F&O generate must return 200 OK."""
-        resp = authed.post(f"{BASE_URL}/api/fno/generate", json={}, timeout=180)
+        resp = safe_streaming_post(
+            f"{BASE_URL}/api/fno/generate",
+            json_body={},
+            headers=dict(authed.headers),
+            skip_msg="FNO generate unavailable (Kite/timeout)",
+        )
         assert resp.status_code == 200, (
             f"F&O generate returned {resp.status_code}: {resp.text[:300]}"
         )

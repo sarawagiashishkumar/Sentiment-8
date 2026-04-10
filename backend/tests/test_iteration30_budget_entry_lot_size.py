@@ -16,7 +16,7 @@ import sys
 import re
 import ast
 
-from tests.helpers.test_utils import get_base_url, read_backend_source
+from tests.helpers.test_utils import get_base_url, read_backend_source, safe_streaming_get
 
 BASE_URL = get_base_url()
 
@@ -493,23 +493,24 @@ class TestLiveFNOSignalFields:
 
     def test_fno_nifty_endpoint_accessible(self):
         """Sanity check: NIFTY F&O index signals endpoint is reachable"""
-        headers = {"Authorization": f"Bearer {self.token}"}
-        try:
-            resp = requests.get(f"{BASE_URL}/api/fno/signals/index", headers=headers, timeout=60)
-        except requests.exceptions.ReadTimeout:
-            pytest.skip("FNO signals/index timed out — skipping live API test")
-        # Accept 200 (success) or 503/422 (market closed) or 404 (endpoint moved) — just not 500
+        resp = safe_streaming_get(
+            f"{BASE_URL}/api/fno/signals/index",
+            headers={"Authorization": f"Bearer {self.token}"},
+            timeout=60,
+            skip_msg="FNO signals/index unavailable (Kite/timeout)",
+        )
         assert resp.status_code in [200, 422, 503, 400, 404], (
             f"Unexpected status {resp.status_code} from NIFTY F&O endpoint: {resp.text[:300]}"
         )
 
     def test_fno_signals_lot_size_for_nifty(self):
         """If NIFTY signals are returned, verify lot_size=65"""
-        headers = {"Authorization": f"Bearer {self.token}"}
-        try:
-            resp = requests.get(f"{BASE_URL}/api/fno/signals/index", headers=headers, timeout=40)
-        except Exception as e:
-            pytest.skip(f"NIFTY F&O signals/index timed out or error: {e}")
+        resp = safe_streaming_get(
+            f"{BASE_URL}/api/fno/signals/index",
+            headers={"Authorization": f"Bearer {self.token}"},
+            timeout=60,
+            skip_msg="FNO signals/index unavailable (Kite/timeout)",
+        )
         if resp.status_code != 200:
             pytest.skip(f"NIFTY F&O endpoint returned {resp.status_code} — likely market closed")
         data = resp.json()
@@ -517,7 +518,6 @@ class TestLiveFNOSignalFields:
         for sig in signals:
             underlying = sig.get("underlying", "")
             script = sig.get("script", "")
-            # Exact match: NIFTY, not BANKNIFTY/MIDCPNIFTY/FINNIFTY
             is_nifty = (underlying == "NIFTY" or
                         (script.startswith("NIFTY") and not any(
                             script.startswith(x) for x in ["NIFTYBEES", "NIFTYBANK", "NIFTYMID"]
@@ -533,11 +533,12 @@ class TestLiveFNOSignalFields:
 
     def test_fno_signals_have_best_budget_entry_field(self):
         """If signals are returned, verify best_budget_entry field is present"""
-        headers = {"Authorization": f"Bearer {self.token}"}
-        try:
-            resp = requests.get(f"{BASE_URL}/api/fno/signals/index", headers=headers, timeout=40)
-        except Exception as e:
-            pytest.skip(f"NIFTY F&O signals/index timed out or error — skipping field check: {e}")
+        resp = safe_streaming_get(
+            f"{BASE_URL}/api/fno/signals/index",
+            headers={"Authorization": f"Bearer {self.token}"},
+            timeout=60,
+            skip_msg="FNO signals/index unavailable (Kite/timeout)",
+        )
         if resp.status_code != 200:
             pytest.skip(f"NIFTY F&O endpoint returned {resp.status_code} — likely market closed")
         data = resp.json()
