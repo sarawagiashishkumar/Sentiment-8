@@ -49,6 +49,13 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
   - **Signal Log**: All generated signals with direction, entry, score, timestamps
 - **Kite Universal Data Source Verified**: No yfinance or external fallbacks in any production data path.
 
+### Phase 6: Sector Drill-down (2026-04-10)
+- **Click-to-expand drill-down**: Click any sector tile → inline panel shows constituent stocks with live Kite LTP, change %, color-coded gainers/losers
+- Works in both **SectorsDashboard** (Sectors tab) and **SectorHeatmap** (Market Heatmap tab)
+- **Reusable SectorDrillDown component** with close button, stock count, gainers/losers count, Live badge
+- **Toggle behavior**: Click same sector again to close
+- **Cyan ring highlight** on selected sector card
+
 ### UI/Navigation
 - Main tabs: Home, Multibagger, F&O Projections, Portfolio, Sectors, Market Heatmap, Admin
 - Sub-tabs for Market Heatmap: Sector Heatmap | Stocks Heatmap | Options Heatmap
@@ -68,7 +75,7 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - `/api/market/industry-sectors` — 29 industry sectors
 
 ## Upcoming Tasks
-- P2: Sector Heatmap Drill-down (click sector → constituent stocks list)
+- None remaining from current spec
 
 ## Future/Backlog
 - Advanced IV analytics: IV cone + IV term structure (needs 30+ days iv_history data)
