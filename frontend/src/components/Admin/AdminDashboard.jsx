@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { UserCog } from "lucide-react";
+import { UserCog, Shield, Settings, Globe, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { SubTabs } from "@/components/Layout/SubTabs";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const roles = [
@@ -12,7 +13,16 @@ const roles = [
   { value: "sub_admin", label: "Sub-Admin" },
 ];
 
+const ADMIN_TABS = [
+  { id: "users", label: "User Management", icon: UserCog },
+  { id: "controls", label: "API Controls & Domains", icon: Settings },
+  { id: "macro", label: "Macro Events", icon: Calendar },
+  { id: "kite", label: "Kite Connect", icon: Globe },
+  { id: "csv", label: "CSV Seeds", icon: Shield },
+];
+
 export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydrateMe }) {
+  const [activeTab, setActiveTab] = useState("users");
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminError, setAdminError] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
@@ -144,8 +154,11 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
   };
 
   return (
-    <section className="space-y-6" data-testid="admin-page">
+    <section className="space-y-4" data-testid="admin-page">
+      <SubTabs tabs={ADMIN_TABS} active={activeTab} onChange={setActiveTab} />
+
       {/* User Management */}
+      {activeTab === "users" && (
       <Card className="result-card border-slate-800 bg-slate-950/70">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-white">User Management & Security</CardTitle>
@@ -219,9 +232,10 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Advanced Controls */}
-      {isOwner ? (
+      {activeTab === "controls" && isOwner ? (
         <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="admin-advanced-controls-card">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
             <CardTitle className="text-white">Advanced Controls</CardTitle>
@@ -312,7 +326,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
       ) : null}
 
       {/* Macro Events */}
-      {isOwner && (
+      {activeTab === "macro" && isOwner && (
         <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="admin-macro-events-card">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
             <div>
@@ -357,7 +371,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
       )}
 
       {/* Kite Connect */}
-      {isOwner && (
+      {activeTab === "kite" && isOwner && (
         <Card className="result-card border-slate-800 bg-slate-950/70">
           <CardHeader><CardTitle className="text-white">Kite Connect Integration</CardTitle></CardHeader>
           <CardContent className="space-y-4">
@@ -388,6 +402,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
       )}
 
       {/* CSV Seed Management */}
+      {activeTab === "csv" && (
       <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="csv-seed-card">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-white">OHLCV CSV Seed Management</CardTitle>
@@ -440,6 +455,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
           )}
         </CardContent>
       </Card>
+      )}
     </section>
   );
 }

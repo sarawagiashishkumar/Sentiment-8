@@ -89,6 +89,11 @@ export function StocksHeatmap({ authHeaders }) {
         </div>
 
         {error && <p className="text-sm text-rose-400 mb-3" data-testid="stocks-heatmap-error">{error}</p>}
+        {data && !data.kite_live && (
+          <div className="mb-3 rounded-lg border border-amber-600/40 bg-amber-950/30 p-2.5 text-xs text-amber-300" data-testid="stocks-heatmap-no-live">
+            No live Kite data available. All prices shown as 0. Ensure Kite is connected in Admin panel.
+          </div>
+        )}
         {!data && !loading && (
           <p className="text-sm text-slate-400 py-6 text-center">Select a filter and click <strong>Load Heatmap</strong>.</p>
         )}

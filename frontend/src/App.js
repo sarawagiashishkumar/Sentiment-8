@@ -13,6 +13,7 @@ import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
 import { SectorsDashboard } from "@/components/Sectors/SectorsDashboard";
 import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
+import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -223,6 +224,11 @@ export default function App() {
             onSectorClick={() => { if (!sectorDataLoaded) setSectorDataLoaded(true); }}
           />
         ) : null}
+
+        {/* Kite Live Warning for all data-dependent sections */}
+        {["multibagger", "fno", "portfolio", "sectors", "heatmap"].includes(currentPage) && (
+          <KiteLiveWarning authHeaders={authHeaders} />
+        )}
 
         {currentPage === "multibagger" ? (
           <MultibaggerDashboard authHeaders={authHeaders} syncCredits={syncCredits} />

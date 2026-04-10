@@ -300,55 +300,72 @@ async def kite_policy(current_user: dict = Depends(get_owner_user)):
     }
 
 
-# ── Market Heatmap Endpoints ──────────────────────────────────────────────────
+# ── Market Heatmap Endpoints (Live Kite /quote — no cache dependency) ─────────
+
+NIFTY50_STOCKS = [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR", "SBIN",
+    "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK", "BAJFINANCE",
+    "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO", "NESTLEIND",
+    "WIPRO", "HCLTECH", "TATAMOTORS", "NTPC", "POWERGRID", "M&M",
+    "ONGC", "ADANIPORTS", "JSWSTEEL", "TATASTEEL", "COALINDIA",
+    "BAJAJFINSV", "TECHM", "INDUSINDBK", "GRASIM", "CIPLA",
+    "DRREDDY", "SBILIFE", "APOLLOHOSP", "HEROMOTOCO", "DIVISLAB",
+    "EICHERMOT", "BRITANNIA", "BPCL", "TRENT", "HINDALCO",
+    "SHRIRAMFIN", "BAJAJ-AUTO", "HDFCLIFE", "TATACONSUM", "BEL",
+]
+
+BANKNIFTY_STOCKS = [
+    "HDFCBANK", "ICICIBANK", "KOTAKBANK", "AXISBANK", "SBIN",
+    "INDUSINDBK", "BANKBARODA", "FEDERALBNK", "PNB", "IDFCFIRSTB",
+    "AUBANK", "BANDHANBNK",
+]
+
 
 @market_data_router.get("/market/sector-stocks")
 async def sector_stocks(
     sector: str = Query(default=""),
     current_user: dict = Depends(get_current_user),
 ):
-    """Return constituent stocks for a given sector with basic price data."""
+    """Return constituent stocks for a given sector with live Kite quote data."""
     import server as _srv
+    from services.kite_client import fetch_kite_batch_quotes
 
     sector = sector.strip()
     if not sector:
         raise HTTPException(400, "sector query parameter required")
 
-    # Look up sector constituents from the fno_universe or script master
-    all_stocks = await _srv.db.script_master.find(
-        {"segment": "NSE", "instrument_type": {"$in": ["EQ", "BE"]}},
-        {"_id": 0, "tradingsymbol": 1, "name": 1},
-    ).to_list(5000)
-
-    # Filter stocks that belong to the sector (best-effort mapping)
-    # Use cached sector→stock mapping if available
+    # Look up sector constituents from DB or use index constituents
     sector_mapping = await _srv.db.sector_stock_mapping.find_one(
         {"sector": sector}, {"_id": 0}
     )
     if sector_mapping and sector_mapping.get("stocks"):
         symbols = sector_mapping["stocks"]
     else:
-        # Fallback: return top traded stocks as placeholder
-        symbols = [s["tradingsymbol"] for s in all_stocks[:20]]
+        # Try index_constituents collection
+        idx_map = await _srv.db.index_constituents.find_one(
+            {"index_name": {"$regex": sector, "$options": "i"}}, {"_id": 0}
+        )
+        if idx_map and idx_map.get("symbols"):
+            symbols = idx_map["symbols"]
+        else:
+            symbols = NIFTY50_STOCKS[:20]
 
-    # Fetch latest LTP/change data from cache
+    # Fetch live from Kite
+    quotes = await fetch_kite_batch_quotes(symbols[:30])
+
     stock_data = []
     for sym in symbols[:30]:
-        cached = await _srv.db.stock_ltp_cache.find_one(
-            {"symbol": sym}, {"_id": 0}
-        )
-        ltp = cached.get("ltp", 0) if cached else 0
-        prev_close = cached.get("prev_close", 0) if cached else 0
-        change_pct = ((ltp - prev_close) / prev_close * 100) if prev_close else 0
+        q = quotes.get(sym, {})
         stock_data.append({
             "symbol": sym,
-            "ltp": round(ltp, 2),
-            "prev_close": round(prev_close, 2),
-            "change_pct": round(change_pct, 2),
+            "ltp": round(q.get("ltp", 0), 2),
+            "prev_close": round(q.get("prev_close", 0), 2),
+            "change_pct": round(q.get("change_pct", 0), 2),
         })
 
     stock_data.sort(key=lambda x: x["change_pct"], reverse=True)
-    return {"sector": sector, "stocks": stock_data}
+    kite_live = any(q.get("ltp", 0) > 0 for q in quotes.values())
+    return {"sector": sector, "stocks": stock_data, "kite_live": kite_live}
 
 
 @market_data_router.get("/market/stock-heatmap")
@@ -356,54 +373,39 @@ async def stock_heatmap(
     filter: str = Query(default="fno"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Return stock heatmap data for the given filter universe."""
+    """Return stock heatmap data with LIVE Kite quotes."""
     import server as _srv
+    from services.kite_client import fetch_kite_batch_quotes
 
-    # Get FNO universe
-    fno_stocks = []
-    async for doc in _srv.db.fno_universe.find({}, {"_id": 0, "symbol": 1, "lot_size": 1}):
-        fno_stocks.append(doc.get("symbol", ""))
+    # Get FNO universe from lot_sizes
+    try:
+        from data.lot_sizes import LOT_SIZE_MAP
+        fno_stocks = [s for s in LOT_SIZE_MAP.keys()
+                      if s not in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"}]
+    except Exception:
+        fno_stocks = NIFTY50_STOCKS
 
-    if not fno_stocks:
-        # Fallback: grab from data/lot_sizes.py if fno_universe is empty
-        try:
-            from data.lot_sizes import LOT_SIZE_MAP
-            fno_stocks = list(LOT_SIZE_MAP.keys())
-        except Exception:
-            fno_stocks = []
-
-    # Build the universe based on filter
-    universe = set()
-    nifty50 = {"RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR", "SBIN",
-               "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK", "BAJFINANCE",
-               "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO", "NESTLEIND",
-               "WIPRO", "HCLTECH", "TATAMOTORS", "NTPC", "POWERGRID", "M&M",
-               "ONGC", "ADANIPORTS", "JSWSTEEL", "TATASTEEL", "COALINDIA",
-               "BAJAJFINSV", "TECHM", "INDUSINDBK", "GRASIM", "CIPLA",
-               "DRREDDY", "SBILIFE", "APOLLOHOSP", "HEROMOTOCO", "DIVISLAB",
-               "EICHERMOT", "BRITANNIA", "BPCL", "TRENT", "HINDALCO",
-               "SHRIRAMFIN", "BAJAJ-AUTO", "HDFCLIFE", "TATACONSUM", "BEL"}
-
-    banknifty = {"HDFCBANK", "ICICIBANK", "KOTAKBANK", "AXISBANK", "SBIN",
-                 "INDUSINDBK", "BANKBARODA", "FEDERALBNK", "PNB", "IDFCFIRSTB",
-                 "AUBANK", "BANDHANBNK"}
-
+    # Build universe based on filter
     if filter == "nifty50":
-        universe = nifty50
+        universe = NIFTY50_STOCKS
     elif filter == "banknifty":
-        universe = banknifty
+        universe = BANKNIFTY_STOCKS
     elif filter == "fno":
-        universe = set(fno_stocks) if fno_stocks else nifty50
+        universe = fno_stocks
+    elif filter in ("plus5", "plus3", "minus3", "minus5"):
+        universe = fno_stocks  # Fetch all, then filter by change
     else:
-        universe = set(fno_stocks) if fno_stocks else nifty50
+        universe = fno_stocks
 
-    # Fetch LTP data
+    # Fetch live quotes from Kite /quote API
+    quotes = await fetch_kite_batch_quotes(universe)
+
     stocks = []
     for sym in universe:
-        cached = await _srv.db.stock_ltp_cache.find_one({"symbol": sym}, {"_id": 0})
-        ltp = cached.get("ltp", 0) if cached else 0
-        prev_close = cached.get("prev_close", 0) if cached else 0
-        change_pct = ((ltp - prev_close) / prev_close * 100) if prev_close else 0
+        q = quotes.get(sym, {})
+        ltp = q.get("ltp", 0)
+        prev_close = q.get("prev_close", 0)
+        change_pct = q.get("change_pct", 0)
         stocks.append({
             "symbol": sym,
             "ltp": round(ltp, 2),
@@ -411,7 +413,7 @@ async def stock_heatmap(
             "change_pct": round(change_pct, 2),
         })
 
-    # Apply additional filters
+    # Apply percentage filters
     if filter == "plus5":
         stocks = [s for s in stocks if s["change_pct"] >= 5]
     elif filter == "plus3":
@@ -422,7 +424,8 @@ async def stock_heatmap(
         stocks = [s for s in stocks if s["change_pct"] <= -5]
 
     stocks.sort(key=lambda x: x["change_pct"], reverse=True)
-    return {"filter": filter, "count": len(stocks), "stocks": stocks}
+    kite_live = any(q.get("ltp", 0) > 0 for q in quotes.values())
+    return {"filter": filter, "count": len(stocks), "stocks": stocks, "kite_live": kite_live}
 
 
 @market_data_router.get("/market/options-heatmap")
@@ -430,66 +433,116 @@ async def options_heatmap(
     filter: str = Query(default="nifty"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Return options chain heatmap data from Kite option chain cache."""
+    """Return options chain heatmap data LIVE from Kite /quote using NFO:tradingsymbol."""
     import server as _srv
+    from services.kite_client import fetch_kite_batch_option_quotes, _get_kite_access_token
+
+    access_token = await _get_kite_access_token()
+    if not access_token:
+        return {"filter": filter, "chains": [], "summary": {}, "kite_live": False,
+                "warning": "Kite not connected. Please authenticate Kite in Admin panel."}
 
     chains = []
 
     if filter in ("nifty", "banknifty"):
         symbol = "NIFTY" if filter == "nifty" else "BANKNIFTY"
-        cached = await _srv.db.option_chain_cache.find_one(
-            {"symbol": symbol}, {"_id": 0}
-        )
-        if cached and cached.get("chain"):
-            strikes = []
-            for row in cached["chain"][:20]:  # Top 20 strikes around ATM
-                strikes.append({
-                    "strike": row.get("strike", 0),
-                    "ce_ltp": row.get("ce_ltp"),
-                    "ce_oi": row.get("ce_oi"),
-                    "ce_iv": row.get("ce_iv"),
-                    "pe_ltp": row.get("pe_ltp"),
-                    "pe_oi": row.get("pe_oi"),
-                    "pe_iv": row.get("pe_iv"),
-                })
+        step = 50 if symbol == "NIFTY" else 100
+
+        # Get spot price from Kite
+        from services.kite_client import fetch_kite_batch_quotes
+        idx_quotes = await fetch_kite_batch_quotes(["NIFTY 50" if symbol == "NIFTY" else "NIFTY BANK"], exchange="NSE")
+        spot = 0
+        for v in idx_quotes.values():
+            spot = v.get("ltp", 0)
+
+        if spot <= 0:
+            # Try from index quote
+            import requests as _req
+            try:
+                resp = _req.get(
+                    "https://api.kite.trade/quote/ltp",
+                    params=[("i", f"NSE:{symbol}")],
+                    headers={"X-Kite-Version": "3", "Authorization": f"token {_srv.KITE_API_KEY}:{access_token}"},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json().get("data", {})
+                    for v in data.values():
+                        spot = float(v.get("last_price", 0))
+            except Exception:
+                pass
+
+        # Get nearest expiry option tradingsymbols from kite_option_master
+        from services.kite_client import _sync_kite_option_master_daily
+        await _sync_kite_option_master_daily()
+
+        # Find nearest expiry
+        from services.date_utils import today_ist as _tist
+        pipeline = [
+            {"$match": {"underlying": symbol}},
+            {"$group": {"_id": "$expiry"}},
+            {"$sort": {"_id": 1}},
+            {"$limit": 1},
+        ]
+        expiry_docs = await _srv.db.kite_option_master.aggregate(pipeline).to_list(1)
+        if not expiry_docs:
+            return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
+                    "warning": "No option master data. Run Kite instrument sync first."}
+
+        nearest_expiry = expiry_docs[0]["_id"]
+
+        # Get strikes around ATM
+        atm_strike = round(spot / step) * step if spot > 0 else 0
+        strike_range = list(range(int(atm_strike - step * 10), int(atm_strike + step * 11), step))
+
+        # Get tradingsymbols for these strikes
+        option_rows = await _srv.db.kite_option_master.find(
+            {"underlying": symbol, "expiry": nearest_expiry, "strike": {"$in": [float(s) for s in strike_range]}},
+            {"_id": 0, "tradingsymbol": 1, "strike": 1, "option_type": 1},
+        ).to_list(200)
+
+        if option_rows:
+            ts_list = [r["tradingsymbol"] for r in option_rows]
+            option_quotes = await fetch_kite_batch_option_quotes(ts_list)
+
+            # Build strike table
+            strike_data = {}
+            for row in option_rows:
+                s = float(row["strike"])
+                ot = row["option_type"]
+                ts = row["tradingsymbol"]
+                q = option_quotes.get(ts, {})
+                if s not in strike_data:
+                    strike_data[s] = {"strike": s}
+                prefix = "ce" if ot == "CE" else "pe"
+                strike_data[s][f"{prefix}_ltp"] = q.get("ltp")
+                strike_data[s][f"{prefix}_oi"] = q.get("oi")
+                strike_data[s][f"{prefix}_iv"] = q.get("iv")
+
+            sorted_strikes = sorted(strike_data.values(), key=lambda x: x["strike"])
             chains.append({
                 "symbol": symbol,
-                "spot": cached.get("spot", 0),
-                "step": 50 if symbol == "NIFTY" else 100,
-                "strikes": strikes,
+                "spot": spot,
+                "step": step,
+                "expiry": nearest_expiry,
+                "strikes": sorted_strikes,
             })
-        summary = {}
-        if cached:
-            summary = {
-                "max_pain": cached.get("max_pain"),
-                "pcr": cached.get("pcr"),
-                "iv_rank": cached.get("iv_rank"),
-                "oi_buildup": cached.get("oi_buildup"),
-            }
-        return {"filter": filter, "chains": chains, "summary": summary}
+
+            # Compute summary
+            total_ce_oi = sum((s.get("ce_oi") or 0) for s in sorted_strikes)
+            total_pe_oi = sum((s.get("pe_oi") or 0) for s in sorted_strikes)
+            pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else None
+
+            return {"filter": filter, "chains": chains, "kite_live": True, "summary": {
+                "pcr": pcr, "max_pain": None, "iv_rank": None,
+                "oi_buildup": "SHORT_BUILDUP" if pcr and pcr < 0.7 else "LONG_BUILDUP" if pcr and pcr > 1.3 else None,
+            }}
+
+        return {"filter": filter, "chains": chains, "summary": {}, "kite_live": True}
 
     elif filter == "stocks":
-        # Stock options: pull from option_chain_cache for stock symbols
-        async for doc in _srv.db.option_chain_cache.find(
-            {"symbol": {"$nin": ["NIFTY", "BANKNIFTY"]}}, {"_id": 0}
-        ).sort("symbol", 1).limit(10):
-            strikes = []
-            for row in (doc.get("chain") or [])[:10]:
-                strikes.append({
-                    "strike": row.get("strike", 0),
-                    "ce_ltp": row.get("ce_ltp"),
-                    "ce_oi": row.get("ce_oi"),
-                    "ce_iv": row.get("ce_iv"),
-                    "pe_ltp": row.get("pe_ltp"),
-                    "pe_oi": row.get("pe_oi"),
-                    "pe_iv": row.get("pe_iv"),
-                })
-            chains.append({
-                "symbol": doc.get("symbol"),
-                "spot": doc.get("spot", 0),
-                "step": 50,
-                "strikes": strikes,
-            })
-        return {"filter": filter, "chains": chains, "summary": {}}
+        return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
+                "warning": "Stock options heatmap: Select specific stock from F&O universe for chain view."}
 
-    return {"filter": filter, "chains": [], "summary": {}}
+    return {"filter": filter, "chains": [], "summary": {}, "kite_live": False}
+

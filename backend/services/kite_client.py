@@ -108,6 +108,132 @@ async def _fetch_kite_equity_core(symbol: str) -> dict | None:
     return await asyncio.to_thread(_fetch)
 
 
+# ── Kite Batch Quote (NSE:symbol format — no instrument tokens needed) ────────
+
+async def fetch_kite_batch_quotes(symbols: list[str], exchange: str = "NSE") -> dict[str, dict]:
+    """
+    Fetch live quotes for multiple symbols in a single Kite API call.
+    Uses exchange:tradingsymbol format (e.g., NSE:RELIANCE).
+    Kite /quote accepts up to 500 instruments per request.
+    Returns {symbol: {ltp, open, high, low, prev_close, volume, ...}}
+    """
+    access_token = await _get_kite_access_token()
+    _s = _srv()
+    if not access_token or not _s.KITE_API_KEY or not symbols:
+        return {}
+
+    result: dict[str, dict] = {}
+
+    def _fetch_batch(batch: list[str]) -> dict[str, dict]:
+        params = [("i", f"{exchange}:{sym}") for sym in batch]
+        try:
+            resp = requests.get(
+                "https://api.kite.trade/quote",
+                params=params,
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                logger.warning("Kite batch quote HTTP %s: %s", resp.status_code, resp.text[:200])
+                return {}
+            data = resp.json().get("data", {})
+            out: dict[str, dict] = {}
+            for key, row in data.items():
+                sym = key.split(":")[-1] if ":" in key else key
+                ltp = _to_float(row.get("last_price"))
+                if ltp is None or ltp <= 0:
+                    continue
+                ohlc = row.get("ohlc") or {}
+                out[sym] = {
+                    "ltp": float(ltp),
+                    "open": _to_float(ohlc.get("open")),
+                    "high": _to_float(ohlc.get("high")),
+                    "low": _to_float(ohlc.get("low")),
+                    "prev_close": _to_float(ohlc.get("close")),
+                    "volume": int(_to_float(row.get("volume")) or 0),
+                    "change_pct": round(
+                        ((ltp - _to_float(ohlc.get("close"))) / _to_float(ohlc.get("close")) * 100)
+                        if _to_float(ohlc.get("close")) else 0,
+                        2,
+                    ),
+                    "oi": _to_float(row.get("oi")),
+                }
+            return out
+        except Exception as exc:
+            logger.warning("Kite batch quote failed: %s", exc)
+            return {}
+
+    # Kite accepts max 500 per call; batch in chunks of 400
+    for idx in range(0, len(symbols), 400):
+        batch = symbols[idx: idx + 400]
+        rows = await asyncio.to_thread(_fetch_batch, batch)
+        result.update(rows)
+
+    return result
+
+
+async def fetch_kite_batch_option_quotes(tradingsymbols: list[str]) -> dict[str, dict]:
+    """
+    Fetch live option quotes using NFO:tradingsymbol format directly.
+    No kite_option_master DB lookup needed.
+    Returns {tradingsymbol: {ltp, day_high, day_low, oi, iv, ...}}
+    """
+    access_token = await _get_kite_access_token()
+    _s = _srv()
+    if not access_token or not _s.KITE_API_KEY or not tradingsymbols:
+        return {}
+
+    result: dict[str, dict] = {}
+
+    def _fetch_batch(batch: list[str]) -> dict[str, dict]:
+        params = [("i", f"NFO:{sym}") for sym in batch]
+        try:
+            resp = requests.get(
+                "https://api.kite.trade/quote",
+                params=params,
+                headers={
+                    "X-Kite-Version": "3",
+                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                return {}
+            data = resp.json().get("data", {})
+            out: dict[str, dict] = {}
+            for key, row in data.items():
+                sym = key.split(":")[-1] if ":" in key else key
+                ltp = _to_float(row.get("last_price"))
+                ohlc = row.get("ohlc") or {}
+                greeks = row.get("greeks") or {}
+                out[sym] = {
+                    "ltp": float(ltp) if ltp else 0,
+                    "day_high": _to_float(ohlc.get("high")),
+                    "day_low": _to_float(ohlc.get("low")),
+                    "oi": _to_float(row.get("oi")),
+                    "volume": int(_to_float(row.get("volume")) or 0),
+                    "iv": _to_float(greeks.get("iv")),
+                    "delta": _to_float(greeks.get("delta")),
+                    "gamma": _to_float(greeks.get("gamma")),
+                }
+            return out
+        except Exception as exc:
+            logger.warning("Kite batch option quote failed: %s", exc)
+            return {}
+
+    for idx in range(0, len(tradingsymbols), 400):
+        batch = tradingsymbols[idx: idx + 400]
+        rows = await asyncio.to_thread(_fetch_batch, batch)
+        result.update(rows)
+
+    return result
+
+
+
+
 # ── Kite Option Master Sync ──────────────────────────────────────────────────
 
 async def _sync_kite_option_master_daily(force: bool = False) -> None:
@@ -342,41 +468,21 @@ async def _fetch_option_ltp_from_kite(contract: FNOContract) -> float | None:
 
 
 async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str, float]:
+    """
+    Fetch option LTPs using Kite /quote/ltp with NFO:tradingsymbol format.
+    No kite_option_master DB lookup needed — Kite accepts NFO:tradingsymbol directly.
+    """
     access_token = await _get_kite_access_token()
     _s = _srv()
     if not access_token or not _s.KITE_API_KEY or not contracts:
         return {}
 
-    await _sync_kite_option_master_daily()
+    # Build script → NFO:tradingsymbol mapping directly from contract
+    script_to_nfo: dict[str, str] = {}
+    for c in contracts:
+        script_to_nfo[c.script] = f"NFO:{c.script}"
 
-    script_to_instrument: dict[str, str] = {}
-    grouped: dict[tuple[str, str, str], list[FNOContract]] = defaultdict(list)
-    for contract in contracts:
-        grouped[(contract.underlying, contract.expiry, contract.option_type)].append(contract)
-
-    for (underlying, expiry, option_type), group_contracts in grouped.items():
-        rows = await _s.db.kite_option_master.find(
-            {
-                "underlying": underlying,
-                "expiry": expiry,
-                "option_type": option_type,
-            },
-            {"_id": 0, "instrument": 1, "strike": 1},
-        ).to_list(2000)
-        if not rows:
-            continue
-
-        by_strike = {round(float(row.get("strike", 0.0)), 2): str(row.get("instrument", "")).strip() for row in rows}
-        for contract in group_contracts:
-            instrument = by_strike.get(round(float(contract.strike), 2))
-            if instrument:
-                script_to_instrument[contract.script] = instrument
-
-    if not script_to_instrument:
-        return {}
-
-    unique_instruments = list(dict.fromkeys(script_to_instrument.values()))
-    instrument_ltp: dict[str, float] = {}
+    nfo_keys = list(script_to_nfo.values())
 
     def _fetch_batch(batch: list[str]) -> dict[str, float]:
         params = [("i", item) for item in batch]
@@ -403,52 +509,36 @@ async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str
         except Exception:
             return {}
 
-    for idx in range(0, len(unique_instruments), 200):
-        batch = unique_instruments[idx : idx + 200]
+    instrument_ltp: dict[str, float] = {}
+    for idx in range(0, len(nfo_keys), 200):
+        batch = nfo_keys[idx: idx + 200]
         rows = await asyncio.to_thread(_fetch_batch, batch)
         instrument_ltp.update(rows)
 
     response: dict[str, float] = {}
-    for script, instrument in script_to_instrument.items():
-        value = instrument_ltp.get(instrument)
+    for script, nfo_key in script_to_nfo.items():
+        value = instrument_ltp.get(nfo_key)
         if value is not None and value > 0:
             response[script] = float(value)
     return response
 
 
 async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dict[str, dict]:
+    """
+    Fetch option snapshots (LTP, day_high, day_low, OI, IV, greeks) using
+    Kite /quote with NFO:tradingsymbol format. No kite_option_master needed.
+    """
     access_token = await _get_kite_access_token()
     _s = _srv()
     if not access_token or not _s.KITE_API_KEY or not contracts:
         return {}
 
-    await _sync_kite_option_master_daily()
-    script_to_instrument: dict[str, str] = {}
-    grouped: dict[tuple[str, str, str], list[FNOContract]] = defaultdict(list)
-    for contract in contracts:
-        grouped[(contract.underlying, contract.expiry, contract.option_type)].append(contract)
+    # Build script → NFO:tradingsymbol mapping directly
+    script_to_nfo: dict[str, str] = {}
+    for c in contracts:
+        script_to_nfo[c.script] = f"NFO:{c.script}"
 
-    for (underlying, expiry, option_type), group_contracts in grouped.items():
-        rows = await _s.db.kite_option_master.find(
-            {
-                "underlying": underlying,
-                "expiry": expiry,
-                "option_type": option_type,
-            },
-            {"_id": 0, "instrument": 1, "strike": 1},
-        ).to_list(2000)
-        if not rows:
-            continue
-        by_strike = {round(float(row.get("strike", 0.0)), 2): str(row.get("instrument", "")).strip() for row in rows}
-        for contract in group_contracts:
-            instrument = by_strike.get(round(float(contract.strike), 2))
-            if instrument:
-                script_to_instrument[contract.script] = instrument
-
-    if not script_to_instrument:
-        return {}
-
-    unique_instruments = list(dict.fromkeys(script_to_instrument.values()))
+    nfo_keys = list(set(script_to_nfo.values()))
     instrument_snapshot: dict[str, dict] = {}
 
     def _fetch_batch(batch: list[str]) -> dict[str, dict]:
@@ -491,14 +581,14 @@ async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dic
         except Exception:
             return {}
 
-    for idx in range(0, len(unique_instruments), 200):
-        batch = unique_instruments[idx : idx + 200]
+    for idx in range(0, len(nfo_keys), 200):
+        batch = nfo_keys[idx: idx + 200]
         rows = await asyncio.to_thread(_fetch_batch, batch)
         instrument_snapshot.update(rows)
 
     response: dict[str, dict] = {}
-    for script, instrument in script_to_instrument.items():
-        row = instrument_snapshot.get(instrument)
+    for script, nfo_key in script_to_nfo.items():
+        row = instrument_snapshot.get(nfo_key)
         if row and _to_float(row.get("ltp")):
             response[script] = row
     return response
@@ -674,9 +764,10 @@ async def _fetch_kite_hist_ohlcv_for_equity(symbol: str, period: str = "1y") -> 
     return await asyncio.to_thread(_fetch)
 
 
-# ── Live Option Snapshot (Kite + Moneycontrol fallback) ───────────────────────
+# ── Live Option Snapshot (Kite only — no MoneyControl fallback) ───────────────
 
 async def _fetch_live_option_snapshot(contract: FNOContract) -> dict:
+    """Fetch live option snapshot from Kite. No MoneyControl fallback per user directive."""
     _s = _srv()
     controls = await _s._get_api_controls()
 
@@ -685,19 +776,7 @@ async def _fetch_live_option_snapshot(contract: FNOContract) -> dict:
         if kite_snapshot and _to_float(kite_snapshot.get("ltp")):
             return kite_snapshot
 
-    if controls.get("moneycontrol_data_enabled", True):
-        try:
-            from services.market_data import market_data_client
-            ltp = float(
-                await asyncio.to_thread(
-                    market_data_client.fetch_option_ltp_for_contract,
-                    contract.model_dump(),
-                )
-            )
-            return {"ltp": ltp, "day_high": None, "day_low": None}
-        except Exception:
-            pass
-
+    # Last resort: model-based estimation if not strict mode
     if not controls.get("strict_live_only", True):
         core = StockCoreNormalized(**(await _s._get_stock_core_cached(contract.underlying)))
         if core.ltp is not None:
@@ -705,7 +784,7 @@ async def _fetch_live_option_snapshot(contract: FNOContract) -> dict:
             if modeled > 0:
                 return {"ltp": float(modeled), "day_high": None, "day_low": None}
 
-    raise HTTPException(status_code=502, detail=f"Live option LTP unavailable for {contract.script}")
+    raise HTTPException(status_code=502, detail=f"Live option LTP unavailable for {contract.script} — ensure Kite is connected")
 
 
 async def _fetch_live_option_ltp(contract: FNOContract) -> float:

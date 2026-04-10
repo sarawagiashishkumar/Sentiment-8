@@ -332,10 +332,38 @@ market_data_client = MarketDataClient()
 async def get_stock_core(symbol: str) -> dict:
     """
     Single normalized stock/index fetch helper.
-    Uses live market data providers with fallbacks and returns a fixed shape.
+    PRIMARY: Kite Connect /quote API.
+    FALLBACK: MoneyControl (only for index data or data Kite doesn't provide).
     """
     symbol_upper = symbol.upper().strip()
 
+    # PRIMARY: Try Kite first (except for indices which Kite handles differently)
+    if symbol_upper not in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"}:
+        try:
+            from services.kite_client import _fetch_kite_equity_core
+            kite_data = await _fetch_kite_equity_core(symbol_upper)
+            if kite_data and kite_data.get("ltp"):
+                return {
+                    "symbol": kite_data.get("symbol", symbol_upper),
+                    "company_name": kite_data.get("company_name", symbol_upper),
+                    "ltp": _safe_round(_parse_number(kite_data.get("ltp"))),
+                    "open": _safe_round(_parse_number(kite_data.get("open"))),
+                    "high": _safe_round(_parse_number(kite_data.get("high"))),
+                    "low": _safe_round(_parse_number(kite_data.get("low"))),
+                    "prev_close": _safe_round(_parse_number(kite_data.get("prev_close"))),
+                    "year_high": None,
+                    "year_low": None,
+                    "volume": int(_parse_number(kite_data.get("volume")) or 0),
+                    "market_cap": None,
+                    "pe_ratio": None,
+                    "book_value": None,
+                    "eps": None,
+                    "sector": kite_data.get("sector") or "NSE",
+                }
+        except Exception as exc:
+            logger.debug("Kite core fetch failed for %s: %s", symbol_upper, exc)
+
+    # FALLBACK: MoneyControl (for indices or when Kite unavailable)
     data = await asyncio.to_thread(market_data_client.fetch_stock_from_moneycontrol, symbol_upper)
     if data is None:
         data = await asyncio.to_thread(market_data_client.fetch_stock_from_rapidapi, symbol_upper)
@@ -344,19 +372,10 @@ async def get_stock_core(symbol: str) -> dict:
         data = {
             "symbol": symbol_upper,
             "company_name": symbol_upper,
-            "ltp": None,
-            "open": None,
-            "high": None,
-            "low": None,
-            "prev_close": None,
-            "year_high": None,
-            "year_low": None,
-            "volume": 0,
-            "market_cap": None,
-            "pe_ratio": None,
-            "book_value": None,
-            "eps": None,
-            "sector": "Unknown",
+            "ltp": None, "open": None, "high": None, "low": None,
+            "prev_close": None, "year_high": None, "year_low": None,
+            "volume": 0, "market_cap": None, "pe_ratio": None,
+            "book_value": None, "eps": None, "sector": "Unknown",
         }
 
     return {

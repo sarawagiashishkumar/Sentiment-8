@@ -1366,18 +1366,46 @@ async def build_fno_signal(
     except Exception:
         pass
 
-    # ── Best Budget Entry: Pullback zone to prevent "momentum peak" entries ───
-    # Identifies the floor the premium is likely to retrace to before continuing
-    # in the signal direction. UI alerts the user to WAIT for this price.
-    # Uses session_low support + percentage pullback model.
-    _bbe_pct = 0.12 if entry_price > 100 else (0.15 if entry_price > 50 else 0.20)
-    _bbe_pullback_target = round(entry_price * (1 - _bbe_pct), 2)
+    # ── Best Budget Entry: 3-Source Pullback Model ──────────────────────────────
+    # Identifies the floor the premium is likely to retrace to before continuing.
+    # SOURCE 1: MAE-based (historical "lowest price before T1" from MFE library)
+    # SOURCE 2: Kite day_low session floor support
+    # SOURCE 3: ATR-adjusted pullback baseline (replaces old fixed %)
+    #
+    # Final BBE = max(all three sources, SL_floor) capped at entry * 0.97
+
+    # Source 3: ATR-based pullback (dynamic, replaces fixed 12/15/20%)
+    # Use underlying ATR * delta proxy to estimate option ATR
+    _option_atr_est = max((_atr_proxy * _delta_proxy), entry_price * 0.02)
+    _bbe_atr_pullback = round(entry_price - _option_atr_est * 1.5, 2)
+
+    # Source 1: MAE-based (try to get MAE from cached MFE library)
+    _bbe_mae_target = None
+    try:
+        from services.mfe_mae_engine import fetch_mfe_library
+        _dte_band = "short" if (contract.expiry - datetime.now(IST).date()).days <= 3 else "medium"
+        _mfe_lib = await fetch_mfe_library(
+            db, contract.underlying, "S3_SUPERTREND", _dte_band, "medium", max_age_hours=72
+        )
+        if _mfe_lib and _mfe_lib.get("stats", {}).get("median_mae_pct"):
+            _mae_median_pct = _mfe_lib["stats"]["median_mae_pct"]
+            _bbe_mae_target = round(entry_price * (1 - _mae_median_pct / 100), 2)
+    except Exception:
+        pass
+
+    # Source 2: Kite day_low support (session floor + 2%)
+    _bbe_from_low = None
     if option_day_low is not None and option_day_low > 0 and option_day_low < entry_price:
-        # Use day-low support: best entry near session floor (just above it)
         _bbe_from_low = round(option_day_low * 1.02, 2)
-        best_budget_entry = max(_bbe_pullback_target, _bbe_from_low)
-    else:
-        best_budget_entry = _bbe_pullback_target
+
+    # Combine: take the MAX of available sources (best/safest entry)
+    _bbe_candidates = [_bbe_atr_pullback]
+    if _bbe_mae_target is not None and _bbe_mae_target > 0:
+        _bbe_candidates.append(_bbe_mae_target)
+    if _bbe_from_low is not None:
+        _bbe_candidates.append(_bbe_from_low)
+    best_budget_entry = max(_bbe_candidates)
+
     # Floor: never inside the SL zone (SL + 5% buffer)
     best_budget_entry = max(best_budget_entry, round(stop_loss * 1.05, 2))
     # Ceiling: always at least 3% below current entry (it IS a pullback)
