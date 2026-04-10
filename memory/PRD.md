@@ -23,7 +23,7 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - Extracted: kite_client.py, fundamental_data.py, user_service.py, validators.py
 - 55+ test iterations passing
 
-### Phase 3: Market Data, Heatmaps & Signal Fixes (Current - 2026-04-10)
+### Phase 3: Market Data, Heatmaps & Signal Fixes
 - **Kite Universal Data Source**: Direct `NFO:tradingsymbol` via `/quote` API
 - **F&O Signal Fix**: BucketD hard_veto lowered from 0.8 to 0.5, allowing CE signals with R:R 0.5-0.8 to pass. Signal quality labels recalibrated (≥75=HIGH, ≥55=MEDIUM, <55=LOW). Conviction levels adjusted for THRESHOLD=40.
 - **Kite API Circuit Breaker**: Consecutive timeout detection skips remaining batches after 2 failures.
@@ -35,12 +35,22 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Sub-tabs**: Plain text without icons, active tab = cyan pill (matching reference).
 - **Kite Session Health Monitor**: 60s background polling, alarm sound + browser notification on disconnect.
 
+### Phase 4: Streaming & Reliability (2026-04-10)
+- **NDJSON Partial Chunk Streaming**: Backend sends partial NIFTY/BANKNIFTY results before completing full universe scan. Frontend renders progressively (NIFTY first, then BANKNIFTY).
+- **NDJSON Keep-alive Heartbeats**: 5-second keepalive padding in stream to prevent Kubernetes ingress idle timeout during long computations.
+- **3-Column Layout Fix**: Block 1 (Top Major Signals): NIFTY (max 4) | BANKNIFTY (max 4) | Top 4 Best Individual Stock Trades. Block 2: Up to 15 individual stock signals in 3-column grid.
+- **Keep-alive Heartbeat System**: `/api/heartbeat` + frontend 60s polling to prevent server sleep during market hours.
+- **Session Persistence**: In-memory sessions with no expiry + 60s heartbeat prevents pod eviction for 10+ min idle.
+- **Warning System**: CDN mp3 alarm (5-second max volume), browser notifications, non-sticky toasts, generic "API Authentication Failed" (no Kite branding).
+- **Force-refresh Cache Busting**: Sector Heatmap + Sectors Dashboard auto-refresh with `force_refresh=true` during market hours.
+
 ### UI/Navigation
 - Main tabs: Home, Multibagger, F&O Projections, Portfolio, Sectors, Market Heatmap, Admin
 - Sub-tabs for Market Heatmap: Sector Heatmap | Stocks Heatmap | Options Heatmap
 
 ## Key API Endpoints
-- `/api/fno/generate` — NDJSON streaming F&O signals
+- `/api/fno/generate` — NDJSON streaming F&O signals (keepalive + partial + complete)
+- `/api/heartbeat` — Keep-alive ping
 - `/api/kite/status` — Session health check
 - `/api/sector-momentum` — 18 NSE index sectors
 - `/api/market/stock-heatmap?filter=nifty50` — Stock heatmap data
@@ -53,3 +63,4 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 
 ## Future/Backlog
 - Advanced IV analytics: IV cone + IV term structure (needs 30+ days iv_history data)
+- fno_signal_engine.py refactoring (~2800 lines → modular strategy files)
