@@ -14,6 +14,17 @@ import requests
 import os
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
+if not BASE_URL:
+    # Fallback: read from frontend .env
+    _env_path = os.path.join(os.path.dirname(__file__), '..', '..', 'frontend', '.env')
+    if os.path.exists(_env_path):
+        with open(_env_path) as f:
+            for line in f:
+                if line.startswith('REACT_APP_BACKEND_URL='):
+                    BASE_URL = line.strip().split('=', 1)[1].rstrip('/')
+                    break
+    if not BASE_URL:
+        BASE_URL = 'http://localhost:8001'
 
 @pytest.fixture(scope="module")
 def auth_token():

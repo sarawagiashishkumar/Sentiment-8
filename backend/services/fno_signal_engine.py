@@ -673,9 +673,9 @@ def _calculate_confluence_score_master_spec(
 
 
 def _get_signal_quality(confluence_score: int) -> Literal["HIGH", "MEDIUM", "LOW"]:
-    if confluence_score >= CONFLUENCE_THRESHOLD:
+    if confluence_score >= 75:
         return "HIGH"
-    if confluence_score >= 65:
+    if confluence_score >= 55:
         return "MEDIUM"
     return "LOW"
 

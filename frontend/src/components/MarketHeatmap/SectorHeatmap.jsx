@@ -112,6 +112,24 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
           {/* NSE Index Sectors */}
           {sectors.length > 0 && (
             <div>
+              {/* Summary badges (above grid, like reference) */}
+              {sectorData?.summary && (
+                <div className="mb-3 flex flex-wrap gap-2 text-[10px]">
+                  <span className="rounded bg-emerald-900/40 px-2 py-0.5 text-emerald-300 font-semibold">Bullish: {sectorData.summary.bullish_sectors ?? 0}</span>
+                  <span className="rounded bg-rose-900/40 px-2 py-0.5 text-rose-300 font-semibold">Bearish: {sectorData.summary.bearish_sectors ?? 0}</span>
+                  <span className="rounded bg-slate-700 px-2 py-0.5 text-slate-300 font-semibold">Neutral: {sectorData.summary.neutral_sectors ?? 0}</span>
+                  <span className="rounded bg-cyan-900/40 px-2 py-0.5 text-cyan-300 font-semibold">Market: {sectorData.summary.market_breadth ?? "--"}</span>
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-400 font-mono">Avg: {sectorData.summary.avg_momentum_score ?? "--"}</span>
+                  {sectorData.from_cache && <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-500">cached</span>}
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-500">{sectors.length}/{sectors.length} live</span>
+                  {sectorData.refreshed_at && (
+                    <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-500 font-mono">
+                      {new Date(sectorData.refreshed_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  )}
+                </div>
+              )}
+
               <h3 className="text-xs font-semibold text-slate-400 mb-2 tracking-wide" data-testid="nse-sectors-heading">
                 NSE Index Sectors ({sectors.length})
               </h3>
@@ -130,7 +148,7 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
                           <span className="font-semibold text-xs truncate pr-1">{s.sector}</span>
                           <ChevronRight size={11} className={`shrink-0 opacity-60 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                         </div>
-                        <div className="text-xl font-bold font-mono">{s.momentum_score}</div>
+                        <div className="text-xl font-bold font-mono">{Math.round(s.momentum_score)}</div>
                         <div className="text-[10px] mt-0.5 opacity-80">
                           <span className={getReturnColor(s.return_1w)}>1W: {s.return_1w != null ? `${s.return_1w >= 0 ? "+" : ""}${s.return_1w.toFixed(1)}%` : "--"}</span>
                         </div>
@@ -159,24 +177,6 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
                   );
                 })}
               </div>
-
-              {/* Summary badges */}
-              {sectorData?.summary && (
-                <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-                  <span className="rounded bg-emerald-900/40 px-2 py-0.5 text-emerald-300 font-semibold">Bullish: {sectorData.summary.bullish_sectors ?? 0}</span>
-                  <span className="rounded bg-rose-900/40 px-2 py-0.5 text-rose-300 font-semibold">Bearish: {sectorData.summary.bearish_sectors ?? 0}</span>
-                  <span className="rounded bg-slate-700 px-2 py-0.5 text-slate-300 font-semibold">Neutral: {sectorData.summary.neutral_sectors ?? 0}</span>
-                  <span className="rounded bg-cyan-900/40 px-2 py-0.5 text-cyan-300 font-semibold">Market: {sectorData.summary.market_breadth ?? "--"}</span>
-                  <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-400 font-mono">Avg: {sectorData.summary.avg_momentum_score ?? "--"}</span>
-                  {sectorData.from_cache && <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-500">cached</span>}
-                  <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-500">{sectors.length}/{sectors.length} live</span>
-                  {sectorData.refreshed_at && (
-                    <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-500 font-mono">
-                      {new Date(sectorData.refreshed_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                  )}
-                </div>
-              )}
             </div>
           )}
 

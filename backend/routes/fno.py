@@ -181,7 +181,7 @@ async def generate_fno_signals(
             if banknifty_projection.rejection_note:
                 reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
             if not stock_signals:
-                reasons.append(f"Individual stock signals: No scripts passed {_srv.CONFLUENCE_THRESHOLD_DISPLAY}% confluence & R:R >= 0.8 filters")
+                reasons.append(f"Individual stock signals: No scripts passed {_srv.CONFLUENCE_THRESHOLD_DISPLAY}% confluence & R:R >= 1.2 filters")
             regime = market_regime.get("regime", "UNKNOWN")
             if regime in ("LOW_VOL_RANGE",):
                 reasons.append(f"Market in {regime} — directional setups lacking conviction")
