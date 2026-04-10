@@ -44,7 +44,7 @@ export function SectorsDashboard({ authHeaders, initialData }) {
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
-      if (isMarketHours()) loadSectorMomentum(false, true);
+      if (isMarketHours()) loadSectorMomentum(true, true);
     }, REFRESH_INTERVAL);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [loadSectorMomentum]);

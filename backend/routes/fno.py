@@ -101,10 +101,16 @@ async def generate_fno_signals(
 
         # ── Phase 1: NIFTY projection ─────────────────────────────────────
         yield _ndjson_line({"type": "progress", "phase": "nifty", "message": "Computing NIFTY projection..."})
+        _nifty_task = asyncio.ensure_future(
+            _srv._build_index_projection("NIFTY", refreshed_at)
+        )
+        while not _nifty_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(_nifty_task), timeout=5)
+            except asyncio.TimeoutError:
+                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         try:
-            nifty_projection = await asyncio.wait_for(
-                _srv._build_index_projection("NIFTY", refreshed_at), timeout=120
-            )
+            nifty_projection = _nifty_task.result()
         except Exception:
             nifty_projection = _empty_index_pane("NIFTY", "NIFTY projection temporarily unavailable")
         yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals"})
@@ -123,9 +129,9 @@ async def generate_fno_signals(
         )
         while not _bn_task.done():
             try:
-                await asyncio.wait_for(asyncio.shield(_bn_task), timeout=10)
+                await asyncio.wait_for(asyncio.shield(_bn_task), timeout=5)
             except asyncio.TimeoutError:
-                yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY options..."})
+                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         try:
             banknifty_projection = _bn_task.result()
         except Exception:
@@ -141,10 +147,16 @@ async def generate_fno_signals(
 
         # ── Phase 3: Stock F&O signals ────────────────────────────────────
         yield _ndjson_line({"type": "progress", "phase": "stocks", "message": "Scanning stock F&O universe..."})
+        _stock_task = asyncio.ensure_future(
+            _srv._build_stock_fno_signals(refreshed_at)
+        )
+        while not _stock_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(_stock_task), timeout=5)
+            except asyncio.TimeoutError:
+                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         try:
-            stock_signals = await asyncio.wait_for(
-                _srv._build_stock_fno_signals(refreshed_at), timeout=120
-            )
+            stock_signals = _stock_task.result()
             logger.info("Stock F&O signals generated: %d", len(stock_signals))
         except asyncio.TimeoutError:
             logger.warning("Stock F&O signal generation timed out")

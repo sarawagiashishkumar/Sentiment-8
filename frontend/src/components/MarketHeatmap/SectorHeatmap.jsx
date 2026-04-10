@@ -23,7 +23,7 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
     if (!silent) setLoading(true);
     try {
       const [sectorResp, industryResp] = await Promise.all([
-        axios.get(`${API}/sector-momentum?force_refresh=false`, { headers: authHeaders }),
+        axios.get(`${API}/sector-momentum?force_refresh=true`, { headers: authHeaders }),
         axios.get(`${API}/market/industry-sectors`, { headers: authHeaders }).catch(() => null),
       ]);
       setSectorData(sectorResp.data);

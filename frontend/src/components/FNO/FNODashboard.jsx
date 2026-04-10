@@ -262,19 +262,22 @@ export function FNODashboard({
                   )}
                 </div>
 
-                {/* Column 3: Top 4 Trades + Custom Script */}
+                {/* Column 3: Top 4 Best Individual Stock Trades + Custom Script */}
                 <div className="space-y-4">
                   <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="top4-trades-panel">
                     <CardHeader className="py-3">
-                      <CardTitle className="text-white text-sm">Top 4 Best Trades Now</CardTitle>
+                      <CardTitle className="text-white text-sm">Top 4 Best Stock Trades</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
-                      {fnoData.top_trades?.length ? (
-                        fnoData.top_trades.map((trade, idx) => (
-                          <FNOSignalCard key={trade.script} signal={trade} suffix={`top4-${idx}`} variant="top4" />
-                        ))
+                      {fnoData.stock_signals?.length ? (
+                        [...fnoData.stock_signals]
+                          .sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0))
+                          .slice(0, 4)
+                          .map((trade, idx) => (
+                            <FNOSignalCard key={trade.script} signal={trade} suffix={`top4-${idx}`} variant="top4" />
+                          ))
                       ) : (
-                        <p className="text-sm text-slate-400">No top trades available.</p>
+                        <p className="text-sm text-slate-400">No stock trades available yet.</p>
                       )}
                     </CardContent>
                   </Card>
@@ -401,7 +404,7 @@ function IndexPane({ pane }) {
           <p className="mb-1.5 text-xs font-semibold text-cyan-300">Assured Directional</p>
           {pane.assured_signals.length ? (
             <div className="space-y-1.5">
-              {pane.assured_signals.slice(0, 5).map((signal, idx) => (
+              {pane.assured_signals.slice(0, 4).map((signal, idx) => (
                 <FNOSignalCard key={signal.script} signal={signal} suffix={`assured-${pane.index_name.toLowerCase()}-${idx}`} variant="assured" />
               ))}
             </div>

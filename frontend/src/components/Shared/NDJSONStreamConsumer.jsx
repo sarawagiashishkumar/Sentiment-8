@@ -36,6 +36,8 @@ export async function readNDJSONStream(response, onProgress, signal, onPartial) 
             onPartial(event);
           } else if (event.type === "complete") {
             result = event.data;
+          } else if (event.type === "keepalive") {
+            // Keep-alive heartbeat — ignore silently, prevents proxy timeout
           }
         } catch {
           // skip malformed lines
