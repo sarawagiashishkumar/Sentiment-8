@@ -75,17 +75,17 @@ export function FNOSignalCard({ signal, suffix, variant = "assured" }) {
 
       {/* Confluence/Confidence */}
       {isTop4 ? (
-        <p>Confidence: {signal.confluence_score >= 80 ? "\u2b50 " : ""}{signal.confluence_score} | {signal.direction}</p>
+        <p>Confidence: {signal.confluence_score} | {signal.direction}</p>
       ) : isStock ? (
-        <p>Confidence: {signal.confluence_score >= 80 ? "\u2b50 " : ""}{signal.confluence_score}</p>
+        <p>Confidence: {signal.confluence_score}</p>
       ) : (
-        <p>Confluence: {signal.confluence_score >= 80 ? "\u2b50 " : ""}{signal.confluence_score} ({signal.signal_quality})</p>
+        <p>Confluence: {signal.confluence_score} ({signal.signal_quality})</p>
       )}
 
       {/* Best Exit */}
       {signal.best_exit_price && (
         <p className="text-green-400 font-semibold text-sm">
-          \u2b50 BEST EXIT: T+{signal.best_exit_days} Trading Days{signal.best_exit_date_str ? ` (${signal.best_exit_date_str})` : ""} @ ₹{formatNumber(signal.best_exit_price)}
+          BEST EXIT: T+{signal.best_exit_days} Trading Days{signal.best_exit_date_str ? ` (${signal.best_exit_date_str})` : ""} @ ₹{formatNumber(signal.best_exit_price)}
         </p>
       )}
 

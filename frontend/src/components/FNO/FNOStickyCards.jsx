@@ -234,7 +234,7 @@ export function FNOStickyCards({
                       </span>
                     ) : null}
                     <p className="text-sm font-semibold text-green-400" data-testid={`custom-position-best-exit-${position.id}`}>
-                      {"\u2b50"} BEST EXIT: T+{position.best_exit_days ?? "?"} Trading Days{position.best_exit_date_str ? ` (${position.best_exit_date_str})` : ""} @ ₹{formatNumber(exitPrice)}
+                      BEST EXIT: T+{position.best_exit_days ?? "?"} Trading Days{position.best_exit_date_str ? ` (${position.best_exit_date_str})` : ""} @ ₹{formatNumber(exitPrice)}
                     </p>
                   </div>
                 ) : null}

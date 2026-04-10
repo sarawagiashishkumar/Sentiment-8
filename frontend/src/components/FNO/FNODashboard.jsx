@@ -299,7 +299,7 @@ export function FNODashboard({
                         <LiveInfoBox signal={fnoData.custom_signal} suffix="custom-script-result" />
                         <p>Direction: {fnoData.custom_signal.direction}</p>
                         <p>Entry/SL/T1/T2: ₹{formatNumber(fnoData.custom_signal.entry_price)} / ₹{formatNumber(fnoData.custom_signal.stop_loss)} / ₹{formatNumber(fnoData.custom_signal.target1)} / ₹{formatNumber(fnoData.custom_signal.target2)}</p>
-                        <p>Confluence: {fnoData.custom_signal.confluence_score >= 80 ? "\u2b50 " : ""}{fnoData.custom_signal.confluence_score}</p>
+                        <p>Confluence: {fnoData.custom_signal.confluence_score}</p>
                       </CardContent>
                     </Card>
                   ) : null}
@@ -362,7 +362,7 @@ export function FNODashboard({
                         <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{Number(row["T2%"]).toFixed(2)}%</td>
                         <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T2 Profit ₹"]).toLocaleString("en-IN")}</td>
                         <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", fontWeight: "600", color: row["Conf"] >= 80 ? "#D97706" : "#1A1A1A" }}>
-                          {row["Conf"] >= 80 ? "\u2b50 " : ""}{row["Conf"]}
+                          {row["Conf"]}
                         </td>
                         <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: row["Bias Point"] >= 0 ? "#2563EB" : "#EA580C" }}>{Number(row["Bias Point"]).toFixed(2)}</td>
                       </tr>
