@@ -9,7 +9,7 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Database**: MongoDB
 - **Data Source**: Kite Connect API v3 (universal source for all spot/NFO data)
 
-## Implemented Features (as of 2026-04-10)
+## Implemented Features
 
 ### Phase 1: Core
 - JWT-based auth with owner/sub_admin/free roles
@@ -21,70 +21,35 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 ### Phase 2: Architecture Hardening
 - Modularized server.py (3578 → 2218 lines)
 - Extracted: kite_client.py, fundamental_data.py, user_service.py, validators.py
-- Full test suite: 53+ passing test iterations
+- 55+ test iterations passing
 
-### Phase 3: Market Data & Heatmaps (Current)
+### Phase 3: Market Data, Heatmaps & Signal Fixes (Current - 2026-04-10)
 - **Kite Universal Data Source**: Direct `NFO:tradingsymbol` via `/quote` API
+- **F&O Signal Fix**: BucketD hard_veto lowered from 0.8 to 0.5, allowing CE signals with R:R 0.5-0.8 to pass. Signal quality labels recalibrated (≥75=HIGH, ≥55=MEDIUM, <55=LOW). Conviction levels adjusted for THRESHOLD=40.
+- **Kite API Circuit Breaker**: Consecutive timeout detection skips remaining batches after 2 failures.
 - **Sector Momentum**: 18 NSE Index Sectors (auto-fetch, 30s auto-refresh)
-- **Market Heatmap Dashboard** with 3 sub-tabs:
-  - **Sector Heatmap**: NSE Index Sectors (18) + Industry Sectors (29), auto-fetch on mount, drill-down to constituents
-  - **Stocks Heatmap**: NIFTY50/BANKNIFTY/F&O Universe/ALL filters, Treemap/List views, auto-fetch & auto-refresh, filter switch auto-reload
-  - **Options Heatmap**: NIFTY/BANKNIFTY + stock-specific chains (RELIANCE, TCS, HDFCBANK), CE/PE/ALL filters, custom stock search, Min OI slider, Treemap/Chain views
-- **Kite Session Health Monitor**: 60s background polling of /api/kite/status, alarm sound + browser notification on disconnection (no "Kite" name in UI)
-- **F&O Signal Quality Fix**: Signal quality labels recalibrated (≥75=HIGH, ≥55=MEDIUM, <55=LOW)
-- **Conviction Levels**: Recalibrated for CONFLUENCE_THRESHOLD=40
+- **Market Heatmap Dashboard** with 3 sub-tabs (matching reference app design):
+  - **Sector Heatmap**: NSE Index Sectors (18) + Industry Sectors (29). All tiles same teal gradient. No summary badges. No refresh button. Auto-fetch on mount.
+  - **Stocks Heatmap**: 3 filters only (NIFTY50/BANKNIFTY/ALL). Full-width CSS grid treemap. Grid/List toggle + color range bar + stock count on same row. Auto-fetch + auto-reload on filter switch.
+  - **Options Heatmap**: NIFTY/BANKNIFTY + stock-specific chains (RELIANCE/TCS/HDFCBANK). ALL/CE/PE filter tabs. Expiry dropdown. Custom Stock search. Min OI slider. CE tiles=teal, PE tiles=magenta. Treemap/Chain views.
+- **Sub-tabs**: Plain text without icons, active tab = cyan pill (matching reference).
+- **Kite Session Health Monitor**: 60s background polling, alarm sound + browser notification on disconnect.
 
 ### UI/Navigation
 - Main tabs: Home, Multibagger, F&O Projections, Portfolio, Sectors, Market Heatmap, Admin
 - Sub-tabs for Market Heatmap: Sector Heatmap | Stocks Heatmap | Options Heatmap
-- Admin sub-menus for admin management
 
 ## Key API Endpoints
 - `/api/fno/generate` — NDJSON streaming F&O signals
 - `/api/kite/status` — Session health check
 - `/api/sector-momentum` — 18 NSE index sectors
 - `/api/market/stock-heatmap?filter=nifty50` — Stock heatmap data
-- `/api/market/options-heatmap?filter=RELIANCE` — Options chain
+- `/api/market/options-heatmap?filter=RELIANCE` — Stock-specific options chain
 - `/api/market/industry-sectors` — 29 industry sectors
-- `/api/market/sector-stocks?sector=SECTOR` — Sector constituent stocks
-
-## Key DB Collections
-- `app_users`: fno_budget, account_risk_pct
-- `fno_signal_history`, `fno_signal_log`: Signal tracking
-- `iv_history`: IV snapshots
-- `index_constituents`: Nifty/BankNifty component stocks
-
-## File Architecture
-```
-/app/backend/
-├── server.py (~616 lines)
-├── routes/
-│   ├── fno.py
-│   ├── market_data.py (industry-sectors, options-heatmap, stock-heatmap)
-│   └── batch_jobs.py
-├── services/
-│   ├── kite_client.py (universal Kite /quote API)
-│   ├── fno_signal_engine.py (signal quality fix)
-│   ├── confluence_score_v2.py (THRESHOLD=40, conviction recalibrated)
-│   ├── sector_momentum.py (18 NSE indices)
-│   └── ...
-├── tests/
-│   ├── test_iteration54_market_heatmap_autofetch.py
-│   ├── test_iteration53_major_update.py
-│   └── test_iteration51_arch_extraction.py
-/app/frontend/src/
-├── components/
-│   ├── MarketHeatmap/ (SectorHeatmap, StocksHeatmap, OptionsHeatmap, Dashboard)
-│   ├── Sectors/SectorsDashboard.jsx
-│   ├── Shared/KiteLiveWarning.jsx (health monitor + alarm)
-│   ├── FNO/FNODashboard.jsx
-│   └── Admin/AdminDashboard.jsx
-└── App.js
-```
 
 ## Upcoming Tasks
-- P2: Verify Sector Heatmap Drill-down (click sector → constituent stocks list)
+- P2: Sector Heatmap Drill-down (click sector → constituent stocks list)
 - P2: Historical signal performance tracking (wire up existing sub-tab)
 
 ## Future/Backlog
-- Advanced IV analytics: IV cone + IV term structure (needs 30+ days iv_history)
+- Advanced IV analytics: IV cone + IV term structure (needs 30+ days iv_history data)
