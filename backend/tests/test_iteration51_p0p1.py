@@ -11,6 +11,16 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
+if not BASE_URL:
+    # Fallback: try to read from frontend .env
+    _env_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", ".env")
+    if os.path.isfile(_env_path):
+        for _line in open(_env_path):
+            if _line.startswith("REACT_APP_BACKEND_URL="):
+                BASE_URL = _line.split("=", 1)[1].strip().rstrip("/")
+                break
+    if not BASE_URL:
+        BASE_URL = "http://localhost:8001"
 
 @pytest.fixture(scope="module")
 def auth_headers():
