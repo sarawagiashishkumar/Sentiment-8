@@ -12,6 +12,7 @@ import { FNODashboard } from "@/components/FNO/FNODashboard";
 import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
 import { SectorsDashboard } from "@/components/Sectors/SectorsDashboard";
 import { AdminDashboard } from "@/components/Admin/AdminDashboard";
+import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 

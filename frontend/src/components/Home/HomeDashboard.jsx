@@ -46,7 +46,7 @@ export function HomeDashboard({ setCurrentPage, onSectorClick }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-slate-300">Live momentum scores for 15 NSE sectors — 1W/1M/3M returns, RSI and trend direction.</p>
+            <p className="text-sm text-slate-300">Live momentum scores for NSE sector indices — 1W/1M/3M returns, RSI and trend direction.</p>
           </CardContent>
         </Card>
       </div>

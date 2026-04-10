@@ -497,9 +497,12 @@ def compute_bucket_d(
     score += conc_score
 
     # 6. T2 probability penalty: if t2_p_hit < 0.45 → subtract 15
+    #    BUT: only apply when MFE data was actually available (t2_p_hit is not None).
+    #    When Kite historical data is unavailable (403/timeout), t2_p_hit is None —
+    #    penalizing the signal for missing data would suppress ALL signals in live market.
     t2_prob_adj = 0
-    _t2_p = t2_p_hit if t2_p_hit is not None else 0.0
-    if _t2_p < 0.45:
+    _t2_p = t2_p_hit if t2_p_hit is not None else 0.50  # Neutral default when no MFE data
+    if t2_p_hit is not None and _t2_p < 0.45:
         t2_prob_adj = -15
         score += t2_prob_adj
 

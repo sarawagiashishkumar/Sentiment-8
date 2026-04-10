@@ -47,7 +47,7 @@ export function SectorsDashboard({ authHeaders, initialData }) {
           ) : sectorMomentumLoading ? (
             <div className="flex items-center gap-2 py-8 text-slate-400" data-testid="sector-momentum-loading">
               <RefreshCw size={20} className="animate-spin" />
-              <span>Fetching live data for 15 sectors... (may take ~30s on first load)</span>
+              <span>Fetching live sector momentum data... (may take ~30s on first load)</span>
             </div>
           ) : null}
 
