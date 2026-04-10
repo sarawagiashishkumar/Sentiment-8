@@ -168,6 +168,10 @@ async def compute_price_bands(symbol: str) -> dict[str, Any]:
         structural_ceiling = ltp * 1.15  # safety: ceiling must be above LTP
 
     bands = {}
+    # Track previous horizon band values for monotonicity enforcement
+    prev_high = {"conservative": ltp, "expected": ltp, "optimistic": ltp}
+    prev_low = {"conservative": ltp, "expected": ltp, "optimistic": ltp}
+
     for H, label in zip(HORIZONS_DAYS, HORIZON_LABELS):
         hv_field = HV_SELECTOR[H]
         hv = doc.get(hv_field)
@@ -182,7 +186,7 @@ async def compute_price_bands(symbol: str) -> dict[str, Any]:
         # Apply regime multiplier
         adj_move = raw_move * regime_mult
 
-        # 3 scenario bands
+        # 3 scenario bands (raw, unanchored)
         raw_low_cons = ltp - adj_move * BAND_Z_CONSERVATIVE
         raw_low_exp = ltp - adj_move * BAND_Z_EXPECTED
         raw_low_opt = ltp - adj_move * BAND_Z_OPTIMISTIC
@@ -191,27 +195,71 @@ async def compute_price_bands(symbol: str) -> dict[str, Any]:
         raw_high_exp = ltp + adj_move * BAND_Z_EXPECTED
         raw_high_opt = ltp + adj_move * BAND_Z_OPTIMISTIC
 
-        # Anchor to structural levels
-        anch_low_cons = max(raw_low_cons, structural_floor)
-        anch_low_exp = max(raw_low_exp, structural_floor)
-        anch_low_opt = max(raw_low_opt, structural_floor * 0.95)
+        # Horizon-aware structural floor decay:
+        # Short horizons (1W/1M) respect the floor strictly; longer horizons
+        # allow the low band to breach it (the support becomes less relevant).
+        horizon_floor_decay = max(0.70, 1.0 - (H / 365) * 0.40)
+        effective_floor = structural_floor * horizon_floor_decay
 
-        anch_high_cons = min(raw_high_cons, structural_ceiling)
-        anch_high_exp = min(raw_high_exp, structural_ceiling)
-        anch_high_opt = min(raw_high_opt, structural_ceiling)
+        anch_low_cons = max(raw_low_cons, effective_floor)
+        anch_low_exp = max(raw_low_exp, effective_floor * 0.97)
+        anch_low_opt = max(raw_low_opt, effective_floor * 0.92)
 
-        # Fundamental scalar (only for H >= 90 days)
+        # Horizon-aware ceiling expansion:
+        # Longer horizons allow the high band to exceed near-term resistance.
+        horizon_ceil_growth = 1.0 + (H / 365) * 0.30
+        effective_ceiling = structural_ceiling * horizon_ceil_growth
+
+        anch_high_cons = min(raw_high_cons, effective_ceiling)
+        anch_high_exp = min(raw_high_exp, effective_ceiling)
+        anch_high_opt = min(raw_high_opt, effective_ceiling)
+
+        # Fundamental scalar (only for H >= 90 days, scales only the UPSIDE above LTP)
         fund_scalar = 1.00
         if H >= FUNDAMENTAL_SCALAR_MIN_HORIZON:
             fund_scalar = compute_fundamental_scalar(doc, H)
 
-        final_high_cons = round(anch_high_cons * fund_scalar, 2)
-        final_high_exp = round(anch_high_exp * fund_scalar, 2)
-        final_high_opt = round(anch_high_opt * fund_scalar, 2)
+        def _apply_fund_scalar(high_val: float) -> float:
+            """Apply fundamental scalar to only the upside portion above LTP."""
+            upside = high_val - ltp
+            scaled_upside = upside * fund_scalar
+            return ltp + scaled_upside
+
+        final_high_cons = round(_apply_fund_scalar(anch_high_cons), 2)
+        final_high_exp = round(_apply_fund_scalar(anch_high_exp), 2)
+        final_high_opt = round(_apply_fund_scalar(anch_high_opt), 2)
 
         final_low_cons = round(anch_low_cons, 2)
         final_low_exp = round(anch_low_exp, 2)
         final_low_opt = round(anch_low_opt, 2)
+
+        # Safety: high must always be above LTP (minimum 0.3% above)
+        min_high = round(ltp * 1.003, 2)
+        final_high_cons = max(final_high_cons, min_high)
+        final_high_exp = max(final_high_exp, min_high)
+        final_high_opt = max(final_high_opt, min_high)
+
+        # Safety: low must always be below LTP (maximum 0.3% below)
+        max_low = round(ltp * 0.997, 2)
+        final_low_cons = min(final_low_cons, max_low)
+        final_low_exp = min(final_low_exp, max_low)
+        final_low_opt = min(final_low_opt, max_low)
+
+        # Monotonicity enforcement: ensure each horizon expands or equals previous
+        final_high_cons = max(final_high_cons, prev_high["conservative"])
+        final_high_exp = max(final_high_exp, prev_high["expected"])
+        final_high_opt = max(final_high_opt, prev_high["optimistic"])
+        final_low_cons = min(final_low_cons, prev_low["conservative"])
+        final_low_exp = min(final_low_exp, prev_low["expected"])
+        final_low_opt = min(final_low_opt, prev_low["optimistic"])
+
+        # Update tracking for next iteration
+        prev_high["conservative"] = final_high_cons
+        prev_high["expected"] = final_high_exp
+        prev_high["optimistic"] = final_high_opt
+        prev_low["conservative"] = final_low_cons
+        prev_low["expected"] = final_low_exp
+        prev_low["optimistic"] = final_low_opt
 
         bands[label] = {
             "horizon_days": H,

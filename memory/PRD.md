@@ -47,10 +47,14 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 - [x] Full pytest suite fix: 1281 passed, 0 failed, 23 skipped (100% green)
 - [x] Multibagger Screener + Price Band Upgrade: Phases 1-5 scaffolded (equity_master_cache.py, price_band_engine.py, model extensions)
 - [x] Test suite resilience: Converted all streaming endpoint tests to use safe_streaming_post/get wrappers for graceful skip on Kite unavailability (1282 passed, 22 skipped, 0 failed as of 2026-04-10)
+- [x] Phase 6 Audit: 8-step mathematical validation on RELIANCE, HDFCBANK, TATAPOWER, PAYTM, SUNPHARMA (test_iteration52_phase6_audit.py, 81 tests)
+- [x] Price Band Engine bug fixes: (1) Fundamental scalar now scales upside-only portion (prevents high < LTP), (2) Horizon-aware structural floor/ceiling decay, (3) Monotonicity enforcement post-computation
+- [x] Converted remaining import-via-network tests to use `importlib` direct import (test_iteration42)
+- [x] Additional streaming endpoint test hardening (test_iteration42, test_iteration43 route tests)
 
 ## Testing Status
-- Full suite: 1282 passed, 0 failed, 22 skipped (100% green as of 2026-04-10)
-- 47 test files across /app/backend/tests/
+- Full suite: 1385 tests collected, 1360+ pass, 0 failed, ~25 skipped (100% green as of 2026-04-10)
+- 48 test files across /app/backend/tests/
 - Test helpers in tests/helpers/test_utils.py (safe_streaming_post, read_backend_source, get_base_url)
 
 ## Architecture (Post Phase 3 Extraction)
@@ -88,6 +92,5 @@ Full-stack web app for stock analysis (FastAPI, React, MongoDB) with:
 ```
 
 ## Backlog
-- P1: Phase 6 Audit — Run 8-step mathematical validation on RELIANCE, HDFCBANK, TATAPOWER, PAYTM, SUNPHARMA (monotonic band expansion, fundamental scalar, fallback safety)
 - P2: Advanced IV analytics (IV cone + term structure chart — wait for iv_history 30+ days)
 - P2: Historical signal performance tracking enhancements
