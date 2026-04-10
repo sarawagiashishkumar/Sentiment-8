@@ -1,4 +1,4 @@
-import { BarChart3, TrendingUp, FileUp, GaugeCircle } from "lucide-react";
+import { BarChart3, TrendingUp, FileUp, GaugeCircle, LayoutGrid } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function HomeDashboard({ setCurrentPage, onSectorClick }) {
@@ -47,6 +47,17 @@ export function HomeDashboard({ setCurrentPage, onSectorClick }) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-slate-300">Live momentum scores for NSE sector indices — 1W/1M/3M returns, RSI and trend direction.</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer border-cyan-500/30 bg-slate-900/70 transition-colors hover:border-cyan-400" onClick={() => setCurrentPage("heatmap")} data-testid="home-module-heatmap">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-cyan-300">
+              <LayoutGrid size={18} /> Market Heatmap
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-slate-300">Real-time sector, stock, and options heatmaps powered by live Kite data with treemap visualizations.</p>
           </CardContent>
         </Card>
       </div>

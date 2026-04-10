@@ -224,7 +224,7 @@ export default function App() {
     <main className="min-h-screen dashboard-dark-bg text-slate-100" data-testid="app-shell">
       <div className="dashboard-grid-overlay" />
       <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <AppHeader me={me} onLogout={onLogout} />
+        <AppHeader me={me} onLogout={onLogout} authHeaders={authHeaders} />
         <AppSidebar
           currentPage={currentPage} setCurrentPage={setCurrentPage}
           isAdmin={isAdmin} isOwner={isOwner}

@@ -725,6 +725,94 @@ async def get_signal_log_endpoint(
     return {"log": log, "count": len(log)}
 
 
+
+# ---------------------------------------------------------------------------
+# BBE (Budget Entry) Alerts: Real-time LTP monitoring against BBE zones
+# ---------------------------------------------------------------------------
+
+@fno_router.get("/fno/bbe-alerts")
+async def get_bbe_alerts(user=Depends(get_current_user)):
+    """
+    Fetch recent signals with budget_entry_alert=True, get live LTP,
+    and return which signals have entered the BBE zone (LTP <= BBE).
+    This is a 'NOW BUY' detection endpoint.
+    """
+    import server as _srv
+    from datetime import datetime, timedelta, timezone as tz
+
+    # Get signals from last 24h that have BBE set
+    cutoff = datetime.now(tz.utc) - timedelta(hours=24)
+    cursor = _srv.db.fno_signal_log.find(
+        {
+            "generated_at": {"$gte": cutoff},
+            "best_budget_entry": {"$ne": None},
+            "best_budget_entry": {"$gt": 0},
+        },
+        {"_id": 0},
+    ).sort("generated_at", -1).limit(20)
+    signals = await cursor.to_list(length=20)
+
+    if not signals:
+        return {"alerts": [], "count": 0, "checked_at": _srv._utc_now_iso()}
+
+    # Deduplicate by option_symbol (keep latest)
+    seen = {}
+    for s in signals:
+        sym = s.get("option_symbol", "")
+        if sym and sym not in seen:
+            seen[sym] = s
+    unique_signals = list(seen.values())
+
+    # Batch-fetch live LTP from Kite
+    alerts = []
+    try:
+        from services.kite_client import fetch_kite_batch_option_quotes
+        option_symbols = [s['option_symbol'] for s in unique_signals if s.get("option_symbol")]
+        if option_symbols:
+            quotes = await fetch_kite_batch_option_quotes(option_symbols)
+            for s in unique_signals:
+                sym = s.get("option_symbol", "")
+                quote = quotes.get(sym, {})
+                ltp = quote.get("ltp", 0)
+                bbe = s.get("best_budget_entry", 0)
+                entry = s.get("entry_price", 0)
+
+                if ltp <= 0 or bbe <= 0:
+                    continue
+
+                in_bbe_zone = ltp <= bbe
+                pct_from_bbe = round(((ltp - bbe) / bbe) * 100, 2) if bbe > 0 else 0
+
+                alerts.append({
+                    "option_symbol": s.get("option_symbol"),
+                    "symbol": s.get("symbol"),
+                    "direction": s.get("direction"),
+                    "entry_price": entry,
+                    "best_budget_entry": bbe,
+                    "stop_loss": s.get("stop_loss"),
+                    "target1": s.get("target1"),
+                    "confluence_score": s.get("confluence_score"),
+                    "signal_quality": s.get("signal_quality"),
+                    "live_ltp": ltp,
+                    "in_bbe_zone": in_bbe_zone,
+                    "pct_from_bbe": pct_from_bbe,
+                    "now_buy": in_bbe_zone,
+                    "generated_at": s.get("generated_at").isoformat() if s.get("generated_at") else None,
+                })
+    except Exception as exc:
+        logger.warning("BBE alert LTP fetch failed: %s", exc)
+
+    # Sort: NOW BUY signals first, then by proximity to BBE
+    alerts.sort(key=lambda a: (not a["now_buy"], a["pct_from_bbe"]))
+
+    return {
+        "alerts": alerts,
+        "count": len(alerts),
+        "now_buy_count": sum(1 for a in alerts if a["now_buy"]),
+        "checked_at": _srv._utc_now_iso(),
+    }
+
+
 # ---------------------------------------------------------------------------
 # IV Analytics: IV Cone + IV Term Structure
 # ---------------------------------------------------------------------------

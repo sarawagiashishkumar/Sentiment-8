@@ -559,6 +559,8 @@ async def log_generated_signal(db, signal_data: dict) -> None:
             "target1": signal_data.get("target1"),
             "target2": signal_data.get("target2"),
             "best_exit_price": signal_data.get("best_exit_price"),
+            "best_budget_entry": signal_data.get("best_budget_entry"),
+            "budget_entry_alert": signal_data.get("budget_entry_alert", False),
             "confluence_score": signal_data.get("confluence_score", 0),
             "signal_quality": signal_data.get("signal_quality", ""),
             "not_affordable": signal_data.get("not_affordable", False),

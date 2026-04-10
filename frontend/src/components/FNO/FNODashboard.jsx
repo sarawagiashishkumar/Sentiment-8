@@ -15,6 +15,7 @@ import { FNOEventPopup } from "./FNOEventPopup";
 import { FNOSignalHistory } from "./FNOSignalHistory";
 import { FNOIVAnalytics } from "./FNOIVAnalytics";
 import { FNOMultiTimeframe } from "./FNOMultiTimeframe";
+import { BBEAlertMonitor } from "./BBEAlertMonitor";
 import { SubTabs } from "@/components/Layout/SubTabs";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -187,6 +188,12 @@ export function FNODashboard({
               />
 
               <FNOEventPopup authHeaders={authHeaders} />
+
+              <BBEAlertMonitor
+                authHeaders={authHeaders}
+                alertSoundEnabled={alertSoundEnabled}
+                playAlertSound={playAlertSound}
+              />
 
               {fnoError ? <p className="text-sm text-rose-400" data-testid="fno-error">{fnoError}</p> : null}
               {!fnoData ? (
