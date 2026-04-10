@@ -1,7 +1,4 @@
 # Test Credentials
-
-## Admin Account
-- Username: `@shish123`
-- PIN: `1234` (legacy, not required for current auth flow)
-- Role: `owner`
-- Auth: POST /api/auth/access with `{"username": "@shish123"}`
+- Owner: POST /api/auth/access with `{"username": "@shish123"}`
+- User: POST /api/auth/access with `{"username": "Manas@2005"}`
+- Admin PIN: POST /api/auth/access with `{"username": "admin"}` (requires admin PIN)

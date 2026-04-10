@@ -15,7 +15,16 @@ import pytest
 import requests
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://backend-refactor-p2.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
+if not BASE_URL:
+    _env_path = os.path.join(os.path.dirname(__file__), '..', '..', 'frontend', '.env')
+    if os.path.isfile(_env_path):
+        for _line in open(_env_path):
+            if _line.startswith('REACT_APP_BACKEND_URL='):
+                BASE_URL = _line.split('=', 1)[1].strip().rstrip('/')
+                break
+    if not BASE_URL:
+        BASE_URL = 'http://localhost:8001'
 
 
 class TestAuthFlow:
