@@ -123,6 +123,7 @@ async def fetch_kite_batch_quotes(symbols: list[str], exchange: str = "NSE") -> 
         return {}
 
     result: dict[str, dict] = {}
+    _consecutive_failures = 0
 
     def _fetch_batch(batch: list[str]) -> dict[str, dict]:
         params = [("i", f"{exchange}:{sym}") for sym in batch]
@@ -134,7 +135,7 @@ async def fetch_kite_batch_quotes(symbols: list[str], exchange: str = "NSE") -> 
                     "X-Kite-Version": "3",
                     "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
                 },
-                timeout=15,
+                timeout=8,
             )
             if resp.status_code != 200:
                 logger.warning("Kite batch quote HTTP %s: %s", resp.status_code, resp.text[:200])
@@ -168,8 +169,15 @@ async def fetch_kite_batch_quotes(symbols: list[str], exchange: str = "NSE") -> 
 
     # Kite accepts max 500 per call; batch in chunks of 400
     for idx in range(0, len(symbols), 400):
+        if _consecutive_failures >= 2:
+            logger.warning("Kite circuit breaker: %d consecutive failures, skipping remaining batches", _consecutive_failures)
+            break
         batch = symbols[idx: idx + 400]
         rows = await asyncio.to_thread(_fetch_batch, batch)
+        if rows:
+            _consecutive_failures = 0
+        else:
+            _consecutive_failures += 1
         result.update(rows)
 
     return result

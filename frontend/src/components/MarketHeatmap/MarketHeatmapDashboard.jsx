@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { Grid3X3, BarChart3, Layers } from "lucide-react";
 import { SubTabs } from "@/components/Layout/SubTabs";
 import { SectorHeatmap } from "./SectorHeatmap";
 import { StocksHeatmap } from "./StocksHeatmap";
@@ -7,9 +6,9 @@ import { OptionsHeatmap } from "./OptionsHeatmap";
 import { DataFetchErrorPopup } from "@/components/Shared/KiteLiveWarning";
 
 const TABS = [
-  { id: "sectors", label: "Sector Heatmap", icon: Grid3X3 },
-  { id: "stocks", label: "Stocks Heatmap", icon: BarChart3 },
-  { id: "options", label: "Options Heatmap", icon: Layers },
+  { id: "sectors", label: "Sector Heatmap" },
+  { id: "stocks", label: "Stocks Heatmap" },
+  { id: "options", label: "Options Heatmap" },
 ];
 
 export function MarketHeatmapDashboard({ authHeaders }) {

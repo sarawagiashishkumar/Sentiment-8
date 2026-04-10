@@ -408,19 +408,20 @@ def compute_bucket_d(
     Score based on trade quality (R:R, probability) and portfolio fit.
 
     Hard vetoes:
-      rr_to_t1 < 0.8  → D = 0 (hard zero, signal should be suppressed)
+      rr_to_t1 < 0.5  → D = 0 (hard zero, signal should be suppressed)
       rr_to_t2 < 1.5  → D capped at 50
 
     Adjustments:
       t2_p_hit < 0.45 → D -= 15
       rr_to_best_exit >= 2.0 AND t2_p_hit >= 0.55 → D += 10 (bonus)
     """
-    # Hard veto: R:R to T1 below 0.8 — relaxed from 1.0 for ATM options in volatile markets
-    if rr_to_t1 < 0.8:
+    # Hard veto: R:R to T1 below 0.5 — relaxed from 0.8 to allow more signals
+    # through. Signals with R:R 0.5-0.8 will score low on D but won't be killed.
+    if rr_to_t1 < 0.5:
         return {
             "score": 0,
             "hard_veto": True,
-            "veto_reason": f"rr_to_t1={rr_to_t1:.2f}<0.8",
+            "veto_reason": f"rr_to_t1={rr_to_t1:.2f}<0.5",
             "breakdown": {
                 "rr_t1": 0, "rr_t2": 0, "probability": 0,
                 "sl_distance": 0, "concentration": 0,
