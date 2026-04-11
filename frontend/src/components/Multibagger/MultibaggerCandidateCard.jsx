@@ -68,7 +68,7 @@ export function MultibaggerCandidateCard({ row, expanded, onToggleBands }) {
         <TableCell colSpan={12} className="py-2 text-xs text-slate-300 leading-relaxed border-b border-slate-800/60">
           <span className="font-semibold text-cyan-400 mr-2">Thesis:</span>
           {(row.thesis || "No thesis available").split(" | ").map((part, i) => (
-            <span key={i} className="inline-block mr-3 mb-1">
+            <span key={`${row.symbol}-thesis-${i}`} className="inline-block mr-3 mb-1">
               {i > 0 && <span className="text-slate-600 mr-3">|</span>}
               {part}
             </span>

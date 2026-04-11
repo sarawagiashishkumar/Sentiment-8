@@ -47,7 +47,8 @@ export function StocksHeatmap({ authHeaders, onFetchError }) {
       const resp = await axios.get(`${API}/market/stock-heatmap?filter=${filter}`, { headers: authHeaders });
       setData(resp.data);
       if (!resp.data.kite_live && onFetchError) onFetchError();
-    } catch {
+    } catch (err) {
+      console.error("StocksHeatmap fetch error:", err);
       if (onFetchError) onFetchError();
     } finally {
       setLoading(false);

@@ -29,18 +29,21 @@ logger = logging.getLogger(__name__)
 
 
 def _srv():
-    """Lazy import server module to avoid circular imports."""
+    """Lazy import server module for complex functions not in app_state."""
     import server
     return server
+
+
+# Import shared state directly — breaks circular import for basic access
+from services.app_state import db as _app_db, KITE_API_KEY as _app_kite_key
 
 
 # ── Kite Access Token ─────────────────────────────────────────────────────────
 
 async def _get_kite_access_token() -> str | None:
-    _s = _srv()
-    if not _s.KITE_API_KEY:
+    if not _app_kite_key:
         return None
-    session = await _s.db.system_meta.find_one({"key": "kite_session"}, {"_id": 0})
+    session = await _app_db.system_meta.find_one({"key": "kite_session"}, {"_id": 0})
     if not session:
         return None
     if session.get("date") != _today_ist():

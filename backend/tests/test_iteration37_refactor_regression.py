@@ -16,12 +16,11 @@ import pytest
 import requests
 
 from tests.helpers.test_utils import get_base_url, safe_streaming_get
+from tests.conftest_helpers import OWNER_USERNAME
 
 BASE_URL = get_base_url()
 
-# Test credentials from test_credentials.md
-TEST_USERNAME = "@shish123"
-TEST_PASSWORD = "1234"
+TEST_USERNAME = OWNER_USERNAME
 
 
 class TestAuthEndpoints:

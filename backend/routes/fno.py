@@ -66,6 +66,67 @@ def _empty_index_pane(name: str, note: str) -> IndexProjectionPane:
 
 # ── /fno/generate ─────────────────────────────────────────────────────────────
 
+async def _run_phase_with_keepalive(task, _srv):
+    """Run an async task with periodic keepalive lines while it executes."""
+    lines = []
+    while not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        except asyncio.TimeoutError:
+            lines.append(_ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()}))
+    return lines
+
+
+async def _build_index_phase(index_name, refreshed_at, _srv):
+    """Build a single index projection with keepalive support. Returns (projection, keepalive_lines)."""
+    task = asyncio.ensure_future(_srv._build_index_projection(index_name, refreshed_at))
+    keepalive_lines = await _run_phase_with_keepalive(task, _srv)
+    try:
+        projection = task.result()
+    except Exception:
+        projection = _empty_index_pane(index_name, f"{index_name} projection temporarily unavailable")
+    return projection, keepalive_lines
+
+
+async def _build_stock_phase(refreshed_at, _srv):
+    """Build stock F&O signals with keepalive support. Returns (stock_signals, keepalive_lines)."""
+    task = asyncio.ensure_future(_srv._build_stock_fno_signals(refreshed_at))
+    keepalive_lines = await _run_phase_with_keepalive(task, _srv)
+    try:
+        stock_signals = task.result()
+        logger.info("Stock F&O signals generated: %d", len(stock_signals))
+    except asyncio.TimeoutError:
+        logger.warning("Stock F&O signal generation timed out")
+        stock_signals = []
+    except Exception as exc:
+        logger.error("Stock F&O signal generation failed: %s", exc)
+        stock_signals = []
+    return stock_signals, keepalive_lines
+
+
+def _build_no_signals_alert(nifty_projection, banknifty_projection, stock_signals, top_trades, market_regime, market_session, threshold_display):
+    """Build the 'no signals available' alert text if no potential trades found."""
+    all_top_trades = [r for r in top_trades if r.is_potential_trade]
+    if all_top_trades:
+        return None
+    reasons = []
+    if nifty_projection.rejection_note:
+        reasons.append(f"NIFTY: {nifty_projection.rejection_note}")
+    if banknifty_projection.rejection_note:
+        reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
+    if not stock_signals:
+        reasons.append(f"Individual stock signals: No scripts passed {threshold_display}% confluence & R:R >= 1.2 filters")
+    regime = market_regime.get("regime", "UNKNOWN")
+    if regime in ("LOW_VOL_RANGE",):
+        reasons.append(f"Market in {regime} — directional setups lacking conviction")
+    elif regime in ("CRASH_MODE",):
+        reasons.append(f"Market in {regime} — extreme volatility")
+    if not market_session.get("is_open"):
+        reasons.append(f"Market CLOSED ({market_session.get('status', 'CLOSED')})")
+    reason_text = " | ".join(reasons) if reasons else f"Current market conditions do not meet minimum {threshold_display}% confluence threshold"
+    return f"No script signals currently available. Reason: {reason_text}"
+
+
 @fno_router.post("/fno/generate")
 async def generate_fno_signals(
     payload: FNOGenerateRequest,
@@ -101,18 +162,9 @@ async def generate_fno_signals(
 
         # ── Phase 1: NIFTY projection ─────────────────────────────────────
         yield _ndjson_line({"type": "progress", "phase": "nifty", "message": "Computing NIFTY projection..."})
-        _nifty_task = asyncio.ensure_future(
-            _srv._build_index_projection("NIFTY", refreshed_at)
-        )
-        while not _nifty_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(_nifty_task), timeout=5)
-            except asyncio.TimeoutError:
-                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
-        try:
-            nifty_projection = _nifty_task.result()
-        except Exception:
-            nifty_projection = _empty_index_pane("NIFTY", "NIFTY projection temporarily unavailable")
+        nifty_projection, nifty_ka = await _build_index_phase("NIFTY", refreshed_at, _srv)
+        for line in nifty_ka:
+            yield line
         yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals"})
 
         # Send partial NIFTY results immediately so frontend can display them
@@ -124,18 +176,9 @@ async def generate_fno_signals(
 
         # ── Phase 2: BANKNIFTY projection ─────────────────────────────────
         yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY projection..."})
-        _bn_task = asyncio.ensure_future(
-            _srv._build_index_projection("BANKNIFTY", refreshed_at)
-        )
-        while not _bn_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(_bn_task), timeout=5)
-            except asyncio.TimeoutError:
-                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
-        try:
-            banknifty_projection = _bn_task.result()
-        except Exception:
-            banknifty_projection = _empty_index_pane("BANKNIFTY", "BANKNIFTY projection temporarily unavailable")
+        banknifty_projection, bn_ka = await _build_index_phase("BANKNIFTY", refreshed_at, _srv)
+        for line in bn_ka:
+            yield line
         yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals"})
 
         # Send partial BANKNIFTY results
@@ -147,23 +190,9 @@ async def generate_fno_signals(
 
         # ── Phase 3: Stock F&O signals ────────────────────────────────────
         yield _ndjson_line({"type": "progress", "phase": "stocks", "message": "Scanning stock F&O universe..."})
-        _stock_task = asyncio.ensure_future(
-            _srv._build_stock_fno_signals(refreshed_at)
-        )
-        while not _stock_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(_stock_task), timeout=5)
-            except asyncio.TimeoutError:
-                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
-        try:
-            stock_signals = _stock_task.result()
-            logger.info("Stock F&O signals generated: %d", len(stock_signals))
-        except asyncio.TimeoutError:
-            logger.warning("Stock F&O signal generation timed out")
-            stock_signals = []
-        except Exception as exc:
-            logger.error("Stock F&O signal generation failed: %s", exc)
-            stock_signals = []
+        stock_signals, stock_ka = await _build_stock_phase(refreshed_at, _srv)
+        for line in stock_ka:
+            yield line
         yield _ndjson_line({"type": "progress", "phase": "stocks_done", "message": f"Stocks: {len(stock_signals)} signals"})
 
         # ── Phase 4: Custom signal (if requested) ────────────────────────
@@ -204,25 +233,10 @@ async def generate_fno_signals(
         market_regime = classify_market_regime_enhanced(vix=india_vix, adx=_nifty_adx, rsi=_nifty_rsi)
         market_session = get_market_session_status()
 
-        no_signals_alert = None
-        all_top_trades = [r for r in top_trades if r.is_potential_trade]
-        if not all_top_trades:
-            reasons: list[str] = []
-            if nifty_projection.rejection_note:
-                reasons.append(f"NIFTY: {nifty_projection.rejection_note}")
-            if banknifty_projection.rejection_note:
-                reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
-            if not stock_signals:
-                reasons.append(f"Individual stock signals: No scripts passed {_srv.CONFLUENCE_THRESHOLD_DISPLAY}% confluence & R:R >= 1.2 filters")
-            regime = market_regime.get("regime", "UNKNOWN")
-            if regime in ("LOW_VOL_RANGE",):
-                reasons.append(f"Market in {regime} — directional setups lacking conviction")
-            elif regime in ("CRASH_MODE",):
-                reasons.append(f"Market in {regime} — extreme volatility")
-            if not market_session.get("is_open"):
-                reasons.append(f"Market CLOSED ({market_session.get('status', 'CLOSED')})")
-            reason_text = " | ".join(reasons) if reasons else f"Current market conditions do not meet minimum {_srv.CONFLUENCE_THRESHOLD_DISPLAY}% confluence threshold"
-            no_signals_alert = f"No script signals currently available. Reason: {reason_text}"
+        no_signals_alert = _build_no_signals_alert(
+            nifty_projection, banknifty_projection, stock_signals,
+            top_trades, market_regime, market_session, _srv.CONFLUENCE_THRESHOLD_DISPLAY,
+        )
 
         response = FNOGenerateResponse(
             cost_charged=charged,

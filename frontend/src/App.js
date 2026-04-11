@@ -18,7 +18,7 @@ import { KiteLiveWarning, DataFetchErrorPopup } from "@/components/Shared/KiteLi
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem("stock_auth_token") || "");
+  const [token, setToken] = useState(sessionStorage.getItem("stock_auth_token") || "");
   const [me, setMe] = useState(null);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
@@ -54,7 +54,7 @@ export default function App() {
     const bootstrap = async () => {
       if (!token) return;
       try { await hydrateMe(token); }
-      catch { localStorage.removeItem("stock_auth_token"); setToken(""); setMe(null); }
+      catch { sessionStorage.removeItem("stock_auth_token"); setToken(""); setMe(null); }
     };
     bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -183,7 +183,7 @@ export default function App() {
     setLoginLoading(true);
     try {
       const response = await axios.post(`${API}/auth/access`, { username: loginUsername.trim() });
-      localStorage.setItem("stock_auth_token", response.data.token);
+      sessionStorage.setItem("stock_auth_token", response.data.token);
       setToken(response.data.token);
       setMe({
         role: response.data.role, credits: response.data.credits,
@@ -204,7 +204,7 @@ export default function App() {
   const onLogout = async () => {
     try { await axios.post(`${API}/auth/logout`, {}, { headers: authHeaders }); }
     catch { /* ignore */ }
-    localStorage.removeItem("stock_auth_token");
+    sessionStorage.removeItem("stock_auth_token");
     setToken(""); setMe(null); setCurrentPage("home");
     setCustomPositions([]);
   };

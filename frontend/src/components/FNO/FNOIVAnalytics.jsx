@@ -154,8 +154,8 @@ export function FNOIVAnalytics({ authHeaders }) {
               </ResponsiveContainer>
               {/* Term points table */}
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {termData.term_points.map((pt, i) => (
-                  <span key={i} className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-300">
+                {termData.term_points.map((pt) => (
+                  <span key={`${pt.expiry}-${pt.dte}`} className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-300">
                     {pt.expiry} ({pt.dte}d): <span className="text-violet-300 font-semibold">{pt.iv}%</span>
                   </span>
                 ))}

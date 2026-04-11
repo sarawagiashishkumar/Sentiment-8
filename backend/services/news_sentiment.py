@@ -119,7 +119,7 @@ def _headline_hash(title: str) -> str:
     normalized = re.sub(r"[^a-z0-9\s]", "", title.lower().strip())
     # Remove very short words and common fillers
     words = [w for w in normalized.split() if len(w) > 2]
-    return hashlib.md5(" ".join(sorted(words[:8])).encode()).hexdigest()[:12]
+    return hashlib.sha256(" ".join(sorted(words[:8])).encode()).hexdigest()[:12]
 
 
 def _fetch_rss_headlines(max_per_feed: int = 30) -> list[dict[str, Any]]:

@@ -24,8 +24,8 @@ function playAlarmSound() {
       audio.pause();
       audio.currentTime = 0;
     }, ALARM_DURATION_MS);
-  } catch {
-    // Audio blocked by browser policy — ignore silently
+  } catch (audioErr) {
+    console.debug("Audio blocked by browser policy:", audioErr.message);
   }
 }
 
@@ -45,7 +45,7 @@ function showBrowserNotification(title, body) {
   if ("Notification" in window && Notification.permission === "granted") {
     try {
       new Notification(title, { body, icon: "/favicon.ico" });
-    } catch { /* ignore */ }
+    } catch (err) { console.debug("Browser notification error:", err.message); }
   }
 }
 
@@ -85,7 +85,8 @@ export function KiteLiveWarning({ authHeaders }) {
         setDisconnected(false);
         alarmPlayedRef.current = false;
       }
-    } catch {
+    } catch (netErr) {
+      console.error("KiteLiveWarning: health check network error:", netErr.message);
       // Network error to our own backend — also a disconnect
       if (!disconnected && !alarmPlayedRef.current) {
         playAlarmSound();

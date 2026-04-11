@@ -17,10 +17,10 @@ import json
 import time
 
 from tests.helpers.test_utils import get_base_url, safe_streaming_get, safe_streaming_post
+from tests.conftest_helpers import OWNER_USERNAME
 
 BASE_URL = get_base_url()
-ADMIN_USERNAME = "@shish123"
-ADMIN_PASSWORD = "1234"
+ADMIN_USERNAME = OWNER_USERNAME
 
 
 class TestBackendHealth:

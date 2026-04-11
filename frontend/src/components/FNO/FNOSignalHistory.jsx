@@ -25,7 +25,7 @@ export function FNOSignalHistory({ authHeaders }) {
       setStats(statsRes.data);
       setHistory(histRes.data.history || []);
       setSignalLog(logRes.data.log || []);
-    } catch { /* silent */ }
+    } catch (err) { console.error("FNOSignalHistory fetch error:", err.message); }
     finally { setLoading(false); }
   }, [authHeaders]);
 
@@ -159,7 +159,7 @@ export function FNOSignalHistory({ authHeaders }) {
             </div>
           ) : (
             signalLog.map((s, i) => (
-              <div key={i} className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs flex items-center gap-2 flex-wrap" data-testid={`log-row-${i}`}>
+              <div key={`${s.option_symbol || s.symbol}-${s.generated_at || i}`} className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-xs flex items-center gap-2 flex-wrap" data-testid={`log-row-${i}`}>
                 <span className="font-mono text-cyan-200">{s.option_symbol || s.symbol}</span>
                 <Badge className="border border-slate-600 text-slate-300 bg-slate-800/30 text-[10px]">
                   {s.signal_quality || "N/A"}

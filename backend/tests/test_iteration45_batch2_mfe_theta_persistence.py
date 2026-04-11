@@ -22,9 +22,9 @@ sys.path.insert(0, "/app/backend")
 
 BASE_URL = get_base_url()
 
-# Test credentials from test_credentials.md
-TEST_USERNAME = "@shish123"
-TEST_PASSWORD = "1234"
+# Test credentials from env/conftest_helpers
+from tests.conftest_helpers import OWNER_USERNAME
+TEST_USERNAME = OWNER_USERNAME
 
 
 @pytest.fixture(scope="module")

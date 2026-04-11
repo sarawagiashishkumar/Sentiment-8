@@ -14,7 +14,7 @@ export async function readNDJSONStream(response, onProgress, signal, onPartial) 
 
   if (signal) {
     signal.addEventListener("abort", () => {
-      try { reader.cancel(); } catch { /* already closed */ }
+      try { reader.cancel(); } catch (e) { console.debug("NDJSON reader already closed:", e.message); }
     }, { once: true });
   }
 
@@ -39,8 +39,8 @@ export async function readNDJSONStream(response, onProgress, signal, onPartial) 
           } else if (event.type === "keepalive") {
             // Keep-alive heartbeat — ignore silently, prevents proxy timeout
           }
-        } catch {
-          // skip malformed lines
+        } catch (parseErr) {
+          console.warn("NDJSON: skipping malformed line:", parseErr.message);
         }
       }
     }
@@ -50,8 +50,8 @@ export async function readNDJSONStream(response, onProgress, signal, onPartial) 
         const event = JSON.parse(buffer);
         if (event.type === "complete") result = event.data;
         else if (event.type === "partial" && onPartial) onPartial(event);
-      } catch {
-        // skip
+      } catch (parseErr) {
+        console.warn("NDJSON: trailing buffer parse error:", parseErr.message);
       }
     }
   } catch (err) {
