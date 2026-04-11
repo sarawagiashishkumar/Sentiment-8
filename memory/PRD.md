@@ -54,6 +54,15 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Unicode \u2b50 rendering FIXED**: Removed all `\u2b50` star emoji references that were rendering as literal text on mobile devices. Affected: FNOTargetPanel, FNOStickyCards, FNOSignalCard, FNODashboard
 - **Ghost user investigation**: Verified database is clean — only 2 legitimate users (Manas@2005, @shish123). The "⭐ Before Best Exit" text user saw was the BEST EXIT feature label (now cleaned up)
 
+### Phase 8: Code Quality Refactoring (2026-04-11)
+- **Circular Import Broken**: Created `services/app_state.py` as centralized state module (db, IST, KITE_API_KEY, kite_access_token). Services import from app_state instead of lazy `import server`. server.py populates app_state on startup.
+- **Hardcoded Test Secrets Removed**: Created `tests/conftest_helpers.py` with `os.environ.get()` for credentials. Updated 5 test files to use shared config.
+- **Auth Token Security**: Moved from `localStorage` to `sessionStorage` — token clears on tab close, reducing XSS exposure.
+- **Weak Cryptography Fixed**: Replaced MD5 with SHA-256 in `news_sentiment.py` headline hashing.
+- **Silent Error Handling Fixed**: All empty catch blocks in NDJSONStreamConsumer, KiteLiveWarning, FNOSignalHistory, StocksHeatmap now log to console.
+- **Array Index Keys Fixed**: Replaced `key={i}` with stable identifiers in MultibaggerCandidateCard, FNOSignalHistory, FNOIVAnalytics.
+- **fno.py Complexity Reduced**: Extracted `_run_phase_with_keepalive()`, `_build_index_phase()`, `_build_stock_phase()`, `_build_no_signals_alert()` helper functions. Reduced nesting depth from 5 to 3.
+
 ## Key API Endpoints
 - `/api/fno/generate` — NDJSON streaming F&O signals
 - `/api/fno/bbe-alerts` — Real-time BBE zone monitoring
