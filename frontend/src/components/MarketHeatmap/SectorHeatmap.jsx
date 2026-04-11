@@ -14,6 +14,18 @@ function isMarketHours() {
   return (h * 60 + m) >= 555 && (h * 60 + m) <= 930;
 }
 
+/** Get gradient background style based on value intensity */
+function getGradientStyle(value) {
+  const absVal = Math.abs(value);
+  // Opacity scales from 0.15 (near zero) to 0.95 (extreme values)
+  const intensity = Math.min(absVal / 6, 1);
+  const opacity = 0.15 + intensity * 0.8;
+  if (value >= 0) {
+    return { backgroundColor: `rgba(16, 185, 129, ${opacity})`, borderColor: `rgba(16, 185, 129, ${0.2 + intensity * 0.5})` };
+  }
+  return { backgroundColor: `rgba(239, 68, 68, ${opacity})`, borderColor: `rgba(239, 68, 68, ${0.2 + intensity * 0.5})` };
+}
+
 export function SectorHeatmap({ authHeaders, onFetchError }) {
   const [sectorData, setSectorData] = useState(null);
   const [industryData, setIndustryData] = useState(null);
@@ -47,8 +59,8 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [loadData]);
 
-  const sectors = sectorData?.sectors || [];
-  const industrySectors = industryData?.sectors || [];
+  const sectors = [...(sectorData?.sectors || [])].sort((a, b) => (b.momentum_score || 0) - (a.momentum_score || 0));
+  const industrySectors = [...(industryData?.sectors || [])].sort((a, b) => (b.avg_change_pct || 0) - (a.avg_change_pct || 0));
 
   if (loading && !sectorData) {
     return (
@@ -69,22 +81,27 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
             NSE Index Sectors ({sectors.length})
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2" data-testid="sector-heatmap-grid">
-            {sectors.map((s) => (
-              <div
-                key={s.sector}
-                data-testid={`heatmap-sector-${s.sector.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
-                className={`rounded-lg border border-emerald-500/30 bg-gradient-to-br from-emerald-900/60 to-teal-900/40 p-3 transition-all hover:brightness-110 hover:scale-[1.02] cursor-pointer ${
-                  selectedSector === s.sector ? "ring-2 ring-cyan-400" : ""
-                }`}
-                onClick={() => setSelectedSector(selectedSector === s.sector ? null : s.sector)}
-              >
-                <div className="font-semibold text-xs text-emerald-100 truncate mb-1">{s.sector}</div>
-                <div className="text-2xl font-bold font-mono text-white">{Math.round(s.momentum_score)}</div>
-                <div className="text-[10px] mt-1 text-emerald-300/80">
-                  1W: {s.return_1w != null ? `${s.return_1w >= 0 ? "+" : ""}${s.return_1w.toFixed(1)}%` : "--"}
+            {sectors.map((s) => {
+              const score = s.momentum_score || 0;
+              const tileStyle = getGradientStyle(score > 50 ? (score - 50) / 10 : -(50 - score) / 10);
+              return (
+                <div
+                  key={s.sector}
+                  data-testid={`heatmap-sector-${s.sector.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
+                  className={`rounded-lg border p-3 transition-all hover:brightness-110 hover:scale-[1.02] cursor-pointer ${
+                    selectedSector === s.sector ? "ring-2 ring-cyan-400" : ""
+                  }`}
+                  style={tileStyle}
+                  onClick={() => setSelectedSector(selectedSector === s.sector ? null : s.sector)}
+                >
+                  <div className="font-semibold text-xs text-white/90 truncate mb-1">{s.sector}</div>
+                  <div className="text-2xl font-bold font-mono text-white">{Math.round(score)}</div>
+                  <div className="text-[10px] mt-1 text-white/70">
+                    1W: {s.return_1w != null ? `${s.return_1w >= 0 ? "+" : ""}${s.return_1w.toFixed(1)}%` : "--"}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {selectedSector && sectors.some(s => s.sector === selectedSector) && (
             <SectorDrillDown
@@ -104,28 +121,25 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2" data-testid="industry-sectors-grid">
             {industrySectors.map((s) => {
-              const isPositive = s.avg_change_pct >= 0;
+              const tileStyle = getGradientStyle(s.avg_change_pct || 0);
               return (
                 <div
                   key={s.sector}
                   data-testid={`industry-sector-${s.sector.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
                   className={`rounded-lg border p-3 transition-all hover:brightness-110 cursor-pointer ${
                     selectedSector === s.sector ? "ring-2 ring-cyan-400" : ""
-                  } ${
-                    isPositive
-                      ? "border-emerald-500/30 bg-gradient-to-br from-emerald-900/60 to-teal-900/40"
-                      : "border-rose-500/30 bg-gradient-to-br from-rose-900/60 to-red-900/40"
                   }`}
+                  style={tileStyle}
                   onClick={() => setSelectedSector(selectedSector === s.sector ? null : s.sector)}
                 >
-                  <div className="font-semibold text-xs text-slate-100 truncate mb-1">{s.sector}</div>
-                  <div className={`text-xl font-bold font-mono ${isPositive ? "text-emerald-200" : "text-rose-200"}`}>
-                    {isPositive ? "+" : ""}{s.avg_change_pct?.toFixed(2)}%
+                  <div className="font-semibold text-xs text-white/90 truncate mb-1">{s.sector}</div>
+                  <div className={`text-xl font-bold font-mono text-white`}>
+                    {s.avg_change_pct >= 0 ? "+" : ""}{s.avg_change_pct?.toFixed(2)}%
                   </div>
-                  <div className="flex items-center gap-2 text-[9px] mt-1 text-slate-400">
+                  <div className="flex items-center gap-2 text-[9px] mt-1 text-white/60">
                     <span>{s.stock_count} stocks</span>
-                    <span className="text-emerald-400">{s.gainers}<TrendingUp size={8} className="inline ml-0.5" /></span>
-                    <span className="text-rose-400">{s.losers}<TrendingDown size={8} className="inline ml-0.5" /></span>
+                    <span className="text-emerald-300">{s.gainers}<TrendingUp size={8} className="inline ml-0.5" /></span>
+                    <span className="text-rose-300">{s.losers}<TrendingDown size={8} className="inline ml-0.5" /></span>
                   </div>
                 </div>
               );

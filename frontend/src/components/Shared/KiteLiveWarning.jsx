@@ -167,12 +167,24 @@ export function triggerWarningAlarm(title, message) {
 }
 
 
-// ── DataFetchErrorPopup: Generic error popup for heatmaps etc ────────────────
+// ── DataFetchErrorPopup: Centered popup for heatmaps etc ─────────────────────
+
+function isMarketCurrentlyClosed() {
+  const now = new Date();
+  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const h = ist.getHours(), m = ist.getMinutes(), day = ist.getDay();
+  if (day === 0 || day === 6) return true;
+  const totalMins = h * 60 + m;
+  return totalMins < 555 || totalMins > 930;
+}
 
 export function DataFetchErrorPopup({ show, onClose }) {
+  const [marketClosed, setMarketClosed] = useState(false);
+
   useEffect(() => {
     if (show) {
       playAlarmSound();
+      setMarketClosed(isMarketCurrentlyClosed());
       showBrowserNotification("Data Fetch Failed", "Unable to load live market data.");
     }
   }, [show]);
@@ -180,26 +192,34 @@ export function DataFetchErrorPopup({ show, onClose }) {
   if (!show) return null;
 
   return (
-    <div
-      className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-amber-500/60 bg-amber-950/95 p-4 shadow-xl"
-      data-testid="data-fetch-error-popup"
-      role="alert"
-    >
-      <div className="flex items-start gap-3">
-        <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-amber-200">Data Fetch Failed</p>
-          <p className="text-xs text-amber-300/80 mt-1">
-            Unable to fetch live market data. Check API authentication in Admin panel.
-          </p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" data-testid="data-fetch-error-overlay">
+      <div
+        className="relative mx-4 w-full max-w-md rounded-xl border border-amber-500/60 bg-slate-950 p-6 shadow-2xl shadow-amber-500/10"
+        data-testid="data-fetch-error-popup"
+        role="alert"
+      >
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div className="rounded-full bg-amber-500/20 p-3">
+            <AlertTriangle size={28} className="text-amber-400" />
+          </div>
+          <h3 className="text-lg font-bold text-amber-200">Data Fetch Failed</h3>
+          {marketClosed ? (
+            <p className="text-sm text-amber-300/80">
+              <strong>Market is currently closed.</strong> Live data will not be available until the next trading session (Mon-Fri, 9:15 AM - 3:30 PM IST). Cached data may be shown instead.
+            </p>
+          ) : (
+            <p className="text-sm text-amber-300/80">
+              Unable to fetch live market data. Check Market Data API authentication in the Admin panel.
+            </p>
+          )}
+          <button
+            onClick={onClose}
+            className="mt-2 rounded-lg bg-amber-600 px-6 py-2 text-sm font-semibold text-white hover:bg-amber-500 transition-colors"
+            data-testid="dismiss-fetch-error"
+          >
+            Dismiss
+          </button>
         </div>
-        <button
-          onClick={onClose}
-          className="text-amber-400 hover:text-amber-200 p-0.5"
-          data-testid="dismiss-fetch-error"
-        >
-          <X size={14} />
-        </button>
       </div>
     </div>
   );

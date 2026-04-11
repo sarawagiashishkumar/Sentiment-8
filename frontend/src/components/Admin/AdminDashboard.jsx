@@ -244,7 +244,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
           <CardContent className="space-y-5">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <label className="flex items-center gap-2 text-sm text-slate-200" data-testid="api-control-kite-enabled">
-                <input type="checkbox" checked={Boolean(apiControlsEdit.kite_data_enabled)} onChange={(e) => setApiControlsEdit((prev) => ({ ...prev, kite_data_enabled: e.target.checked }))} /> Kite data enabled
+                <input type="checkbox" checked={Boolean(apiControlsEdit.kite_data_enabled)} onChange={(e) => setApiControlsEdit((prev) => ({ ...prev, kite_data_enabled: e.target.checked }))} /> Market Data API enabled
               </label>
               <label className="flex items-center gap-2 text-sm text-slate-200" data-testid="api-control-moneycontrol-enabled">
                 <input type="checkbox" checked={Boolean(apiControlsEdit.moneycontrol_data_enabled)} onChange={(e) => setApiControlsEdit((prev) => ({ ...prev, moneycontrol_data_enabled: e.target.checked }))} /> Secondary API enabled
@@ -370,10 +370,10 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
         </Card>
       )}
 
-      {/* Kite Connect */}
+      {/* Market Data API Connect */}
       {activeTab === "kite" && isOwner && (
         <Card className="result-card border-slate-800 bg-slate-950/70">
-          <CardHeader><CardTitle className="text-white">Kite Connect Integration</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-white">Market Data API Integration</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
               <div className="space-y-2">
@@ -388,13 +388,13 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
                 {kiteStatus?.date && <p className="text-xs text-slate-500">Last authenticated: {kiteStatus.date}</p>}
               </div>
               <Button type="button" onClick={async () => {
-                try { const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/kite/auth-url`, { headers: { Authorization: `Bearer ${token}` } }); const data = await res.json(); if (data.auth_url) { window.open(data.auth_url, '_blank'); setTimeout(() => checkKiteStatus(), 3000); } } catch (err) { console.error('Kite auth error:', err); }
-              }} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400">Connect Kite</Button>
+                try { const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/kite/auth-url`, { headers: { Authorization: `Bearer ${token}` } }); const data = await res.json(); if (data.auth_url) { window.open(data.auth_url, '_blank'); setTimeout(() => checkKiteStatus(), 3000); } } catch (err) { console.error('Market Data API auth error:', err); }
+              }} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400">Connect Market Data API</Button>
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
               <p className="text-xs font-semibold text-slate-300 mb-2">OAuth URL:</p>
               <p className="text-xs text-cyan-400 break-all font-mono">https://kite.zerodha.com/connect/login?v=3&api_key=wgbgees3zbjpn254</p>
-              <p className="text-xs text-slate-500 mt-2">Note: Kite authentication expires daily. Re-authenticate each trading day for live data.</p>
+              <p className="text-xs text-slate-500 mt-2">Note: Market Data API authentication expires daily. Re-authenticate each trading day for live data.</p>
             </div>
             <Button type="button" onClick={checkKiteStatus} className="bg-slate-800 text-slate-100 hover:bg-slate-700">Refresh Status</Button>
           </CardContent>
@@ -414,9 +414,9 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
             <ul className="list-disc pl-4 space-y-0.5">
               <li>Upload verified CSV files with columns: <code className="bg-slate-800 px-1 rounded">date,open,high,low,close,volume</code></li>
               <li>Files are named by symbol (e.g., NIFTY.csv, RELIANCE.csv)</li>
-              <li>Used ONLY when Kite Connect is unavailable (offline fallback)</li>
+              <li>Used ONLY when Market Data API is unavailable (offline fallback)</li>
               <li>Data must be manually verified before upload — no auto-scraping</li>
-              <li>Primary source is always Kite Connect Historical Data API</li>
+              <li>Primary source is always Market Data API Historical Data</li>
             </ul>
           </div>
           <form onSubmit={uploadCsvSeed} className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="csv-seed-upload-form">
@@ -451,7 +451,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
               </Table>
             </div>
           ) : (
-            <p className="text-sm text-slate-500" data-testid="csv-seed-empty">No CSV seeds uploaded. Backtests will use Kite Connect data only.</p>
+            <p className="text-sm text-slate-500" data-testid="csv-seed-empty">No CSV seeds uploaded. Backtests will use Market Data API only.</p>
           )}
         </CardContent>
       </Card>

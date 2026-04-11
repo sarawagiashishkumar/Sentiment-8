@@ -10,7 +10,6 @@ import { HomeDashboard } from "@/components/Home/HomeDashboard";
 import { MultibaggerDashboard } from "@/components/Multibagger/MultibaggerDashboard";
 import { FNODashboard } from "@/components/FNO/FNODashboard";
 import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
-import { SectorsDashboard } from "@/components/Sectors/SectorsDashboard";
 import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
 import { KiteLiveWarning, DataFetchErrorPopup } from "@/components/Shared/KiteLiveWarning";
@@ -26,7 +25,6 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState("home");
   const [customPositions, setCustomPositions] = useState([]);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
-  const [sectorDataLoaded, setSectorDataLoaded] = useState(false);
 
   const audioContextRef = useRef(null);
   const urgentBuzzedRef = useRef(new Set());
@@ -77,18 +75,41 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // ── Keep-alive heartbeat ──────────────────────────────────────────
-  // Pings /api/heartbeat every 60s to prevent server/pod sleep during
-  // market hours. Also keeps Kite session warm and prevents user logout
-  // while idle (watching heatmap, tracking prices etc).
+  // ── Keep-alive heartbeat with anti-sleep protocol ──────────────────
+  // Hard resets 10-min inactivity timer on EVERY user interaction
+  // (click, scroll, keypress, filter toggle, auto-fetch).
+  // Auto-fetch activity also counts as engagement — server stays awake.
+  const lastActivityRef = useRef(Date.now());
+  const heartbeatTimerRef = useRef(null);
+  const INACTIVITY_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
+  const HEARTBEAT_INTERVAL_MS = 60000; // 60s
+
   useEffect(() => {
     if (!token) return undefined;
+
     const ping = () => {
       axios.get(`${API}/heartbeat`, { headers: authHeaders, timeout: 5000 }).catch(() => {});
     };
+
+    const resetActivity = () => { lastActivityRef.current = Date.now(); };
+
+    // Hard reset on every interaction
+    const interactionEvents = ["click", "scroll", "keydown", "mousemove", "touchstart"];
+    interactionEvents.forEach(evt => window.addEventListener(evt, resetActivity, { passive: true }));
+
     ping(); // immediate first ping
-    const timer = setInterval(ping, 60000); // every 60s
-    return () => clearInterval(timer);
+    heartbeatTimerRef.current = setInterval(() => {
+      const idleMs = Date.now() - lastActivityRef.current;
+      // Always ping if within inactivity limit, or if page is visible (anti-sleep)
+      if (idleMs < INACTIVITY_LIMIT_MS || !document.hidden) {
+        ping();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    return () => {
+      interactionEvents.forEach(evt => window.removeEventListener(evt, resetActivity));
+      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+    };
   }, [token, authHeaders]);
 
   // ── Rich alert sound engine ──────────────────────────────────────
@@ -227,20 +248,16 @@ export default function App() {
         <AppHeader me={me} onLogout={onLogout} authHeaders={authHeaders} />
         <AppSidebar
           currentPage={currentPage} setCurrentPage={setCurrentPage}
-          isAdmin={isAdmin} isOwner={isOwner}
-          onSectorClick={() => { if (!sectorDataLoaded) setSectorDataLoaded(true); }}
+          isAdmin={isAdmin}
           onAdminClick={() => {}}
         />
 
         {currentPage === "home" ? (
-          <HomeDashboard
-            setCurrentPage={setCurrentPage}
-            onSectorClick={() => { if (!sectorDataLoaded) setSectorDataLoaded(true); }}
-          />
+          <HomeDashboard setCurrentPage={setCurrentPage} />
         ) : null}
 
-        {/* Kite Live Warning for all data-dependent sections */}
-        {["multibagger", "fno", "portfolio", "sectors", "heatmap"].includes(currentPage) && (
+        {/* Market Data API Warning for all data-dependent sections */}
+        {["multibagger", "fno", "portfolio", "heatmap"].includes(currentPage) && (
           <KiteLiveWarning authHeaders={authHeaders} />
         )}
 
@@ -259,10 +276,6 @@ export default function App() {
 
         {currentPage === "portfolio" ? (
           <PortfolioDashboard authHeaders={authHeaders} syncCredits={syncCredits} />
-        ) : null}
-
-        {currentPage === "sectors" ? (
-          <SectorsDashboard authHeaders={authHeaders} />
         ) : null}
 
         {currentPage === "admin" && isAdmin ? (

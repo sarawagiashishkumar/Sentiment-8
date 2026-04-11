@@ -137,7 +137,7 @@ async def get_sector_momentum(
 async def get_kite_auth_url(current_user: dict = Depends(get_owner_user)):
     _ = current_user
     if not _state.KITE_API_KEY or not _state.KITE_API_SECRET or not _state.KITE_REDIRECT_URL:
-        raise HTTPException(status_code=400, detail="Kite credentials not configured")
+        raise HTTPException(status_code=400, detail="Market Data API credentials not configured")
     return {
         "auth_url": f"https://kite.zerodha.com/connect/login?v=3&api_key={_state.KITE_API_KEY}",
         "redirect_url": _state.KITE_REDIRECT_URL,
@@ -152,7 +152,7 @@ async def kite_callback(request_token: str = Query(...), status: str | None = Qu
 
     _ = status
     if not _state.KITE_API_KEY or not _state.KITE_API_SECRET:
-        raise HTTPException(status_code=400, detail="Kite credentials not configured")
+        raise HTTPException(status_code=400, detail="Market Data API credentials not configured")
 
     checksum = hashlib.sha256(
         f"{_state.KITE_API_KEY}{request_token}{_state.KITE_API_SECRET}".encode()
@@ -324,41 +324,63 @@ async def sector_stocks(
     sector: str = Query(default=""),
     current_user: dict = Depends(get_current_user),
 ):
-    """Return constituent stocks for a given sector with live Kite quote data."""
-    import server as _srv
+    """Return constituent stocks for a given sector with live Kite quote data.
+    Looks up sector_stock_mapping, index_constituents, and INDUSTRY_SECTOR_MAPPING
+    for dynamic sector-to-stocks resolution. Never falls back to static NIFTY50."""
     from services.kite_client import fetch_kite_batch_quotes
 
     sector = sector.strip()
     if not sector:
         raise HTTPException(400, "sector query parameter required")
 
-    # Look up sector constituents from DB or use index constituents
+    symbols = []
+
+    # 1. Check sector_stock_mapping collection
     sector_mapping = await _state.db.sector_stock_mapping.find_one(
         {"sector": sector}, {"_id": 0}
     )
     if sector_mapping and sector_mapping.get("stocks"):
         symbols = sector_mapping["stocks"]
-    else:
-        # Try index_constituents collection
+
+    # 2. Check index_constituents collection (exact match first, then regex)
+    if not symbols:
         idx_map = await _state.db.index_constituents.find_one(
-            {"index_name": {"$regex": sector, "$options": "i"}}, {"_id": 0}
+            {"index_name": sector}, {"_id": 0}
         )
+        if not idx_map:
+            idx_map = await _state.db.index_constituents.find_one(
+                {"index_name": {"$regex": f"^{sector}$", "$options": "i"}}, {"_id": 0}
+            )
         if idx_map and idx_map.get("symbols"):
             symbols = idx_map["symbols"]
-        else:
-            symbols = NIFTY50_STOCKS[:20]
 
-    # Fetch live from Kite
-    quotes = await fetch_kite_batch_quotes(symbols[:30])
+    # 3. Check INDUSTRY_SECTOR_MAPPING (hardcoded industry sectors)
+    if not symbols:
+        for key, stocks in INDUSTRY_SECTOR_MAPPING.items():
+            if key.lower() == sector.lower():
+                symbols = stocks
+                break
+
+    # 4. If still empty, return empty with a helpful message
+    if not symbols:
+        return {"sector": sector, "stocks": [], "kite_live": False,
+                "message": f"No stock mapping found for sector '{sector}'. Data will populate after instrument sync."}
+
+    # Fetch live from Kite — no arbitrary cap, fetch all constituents
+    quotes = await fetch_kite_batch_quotes(symbols)
 
     stock_data = []
-    for sym in symbols[:30]:
+    for sym in symbols:
         q = quotes.get(sym, {})
         stock_data.append({
             "symbol": sym,
             "ltp": round(q.get("ltp", 0), 2),
             "prev_close": round(q.get("prev_close", 0), 2),
             "change_pct": round(q.get("change_pct", 0), 2),
+            "open": round(q.get("open", 0), 2),
+            "high": round(q.get("high", 0), 2),
+            "low": round(q.get("low", 0), 2),
+            "volume": q.get("volume", 0),
         })
 
     stock_data.sort(key=lambda x: x["change_pct"], reverse=True)
@@ -409,6 +431,10 @@ async def stock_heatmap(
             "ltp": round(ltp, 2),
             "prev_close": round(prev_close, 2),
             "change_pct": round(change_pct, 2),
+            "open": round(q.get("open", 0), 2),
+            "high": round(q.get("high", 0), 2),
+            "low": round(q.get("low", 0), 2),
+            "volume": q.get("volume", 0),
         })
 
     # Apply percentage filters
@@ -438,7 +464,7 @@ async def options_heatmap(
     access_token = await _get_kite_access_token()
     if not access_token:
         return {"filter": filter, "chains": [], "summary": {}, "kite_live": False,
-                "warning": "Kite not connected. Please authenticate Kite in Admin panel."}
+                "warning": "Market Data API not connected. Please authenticate in Admin panel."}
 
     chains = []
 
@@ -485,7 +511,7 @@ async def options_heatmap(
         expiry_docs = await _state.db.kite_option_master.aggregate(pipeline).to_list(1)
         if not expiry_docs:
             return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
-                    "warning": "No option master data. Run Kite instrument sync first."}
+                    "warning": "No option master data. Run instrument sync from Admin panel first."}
 
         nearest_expiry = expiry_docs[0]["_id"]
 
@@ -585,7 +611,7 @@ async def options_heatmap(
         expiry_docs = await _state.db.kite_option_master.aggregate(pipeline).to_list(3)
         if not expiry_docs:
             return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
-                    "warning": f"No option data for {stock_symbol}. Run Kite instrument sync."}
+                    "warning": f"No option data for {stock_symbol}. Run instrument sync from Admin panel."}
 
         nearest_expiry = expiry_docs[0]["_id"]
         available_expiries = [d["_id"] for d in expiry_docs]

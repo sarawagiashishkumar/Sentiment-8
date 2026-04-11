@@ -414,9 +414,10 @@ async def root():
 
 @api_router.get("/heartbeat")
 async def heartbeat():
-    """Lightweight keep-alive endpoint. Frontend pings every 60s to prevent
-    Kubernetes pod eviction and maintain session warmth during market hours."""
-    return {"status": "alive", "ts": datetime.now(IST).isoformat()}
+    """Lightweight keep-alive endpoint. Frontend pings on every interaction
+    and at intervals to prevent Kubernetes pod eviction and maintain session warmth.
+    Any call here = active engagement = server stays awake."""
+    return {"status": "alive", "ts": datetime.now(IST).isoformat(), "active": True}
 
 # ── Auth routes: extracted to routes/auth.py ──
 

@@ -77,31 +77,38 @@ export function SectorDrillDown({ sector, authHeaders, onClose }) {
       ) : stocks.length === 0 ? (
         <p className="text-xs text-slate-500 py-2">No constituent data available for this sector.</p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5" data-testid="sector-drilldown-grid">
-          {stocks.map((s) => {
-            const isUp = s.change_pct >= 0;
-            return (
-              <div
-                key={s.symbol}
-                className={`rounded-md border p-2 text-[10px] transition-all hover:brightness-110 ${
-                  isUp
-                    ? "border-emerald-500/20 bg-emerald-900/20"
-                    : "border-rose-500/20 bg-rose-900/20"
-                }`}
-                data-testid={`drilldown-stock-${s.symbol.toLowerCase()}`}
-              >
-                <div className="font-semibold text-slate-100 truncate">{s.symbol}</div>
-                <div className="flex items-center justify-between mt-0.5">
-                  <span className="font-mono text-slate-300">
-                    {s.ltp > 0 ? s.ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--"}
-                  </span>
-                  <span className={`font-mono font-bold ${isUp ? "text-emerald-300" : "text-rose-300"}`}>
-                    {isUp ? "+" : ""}{s.change_pct.toFixed(2)}%
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+        <div className="overflow-x-auto rounded-lg border border-slate-700" data-testid="sector-drilldown-table">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-800/80 text-slate-400">
+                <th className="px-3 py-2 text-left font-medium">Symbol</th>
+                <th className="px-3 py-2 text-right font-medium">LTP</th>
+                <th className="px-3 py-2 text-right font-medium">% Change</th>
+                <th className="px-3 py-2 text-right font-medium">Open</th>
+                <th className="px-3 py-2 text-right font-medium">High</th>
+                <th className="px-3 py-2 text-right font-medium">Low</th>
+                <th className="px-3 py-2 text-right font-medium">Volume</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stocks.map((s, i) => {
+                const isUp = s.change_pct >= 0;
+                return (
+                  <tr key={s.symbol} className={`${i % 2 === 0 ? "bg-slate-900/40" : "bg-slate-950/40"} hover:bg-slate-800/60`} data-testid={`drilldown-stock-${s.symbol.toLowerCase()}`}>
+                    <td className="px-3 py-1.5 font-mono font-semibold text-slate-200">{s.symbol}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-slate-200">{s.ltp > 0 ? s.ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--"}</td>
+                    <td className={`px-3 py-1.5 text-right font-mono font-bold ${isUp ? "text-emerald-400" : "text-rose-400"}`}>
+                      {isUp ? "+" : ""}{s.change_pct.toFixed(2)}%
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-slate-400">{s.open > 0 ? s.open.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--"}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-slate-400">{s.high > 0 ? s.high.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--"}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-slate-400">{s.low > 0 ? s.low.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--"}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-slate-400">{s.volume > 0 ? s.volume.toLocaleString("en-IN") : "--"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

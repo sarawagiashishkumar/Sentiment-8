@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
-import { Activity, LayoutGrid, List, Search } from "lucide-react";
+import { Activity, LayoutGrid, List, Search, X } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -13,9 +13,12 @@ function isMarketHours() {
   return (h * 60 + m) >= 555 && (h * 60 + m) <= 930;
 }
 
-const SYMBOL_PRESETS = [
+const INDEX_TABS = [
   { id: "nifty", label: "NIFTY" },
   { id: "banknifty", label: "BANKNIFTY" },
+];
+
+const TOP_FNO_STOCKS = [
   { id: "RELIANCE", label: "RELIANCE" },
   { id: "TCS", label: "TCS" },
   { id: "HDFCBANK", label: "HDFCBANK" },
@@ -26,11 +29,13 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
   const [loading, setLoading] = useState(false);
   const [activeSymbol, setActiveSymbol] = useState("nifty");
   const [customStock, setCustomStock] = useState("");
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [oiTypeFilter, setOiTypeFilter] = useState("all");
   const [viewMode, setViewMode] = useState("treemap");
   const [minOI, setMinOI] = useState(0);
   const intervalRef = useRef(null);
   const symbolRef = useRef(activeSymbol);
+  const searchTimeoutRef = useRef(null);
 
   const loadData = useCallback(async (symbol, silent = false) => {
     if (!silent) setLoading(true);
@@ -60,10 +65,39 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [loadData]);
 
+  // Instant search — zero-click auto-populate
+  const handleSearchInput = (value) => {
+    setCustomStock(value);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    const q = value.trim().toUpperCase();
+    if (q.length >= 2) {
+      // Auto-suggest from known F&O symbols
+      const knownSymbols = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "ITC", "LT", "AXISBANK", "KOTAKBANK", "BAJFINANCE", "WIPRO", "HINDUNILVR", "BHARTIARTL", "TATAMOTORS", "MARUTI", "M&M", "SUNPHARMA", "TITAN", "ADANIPORTS", "TATASTEEL", "JSWSTEEL", "COALINDIA", "NTPC", "POWERGRID", "ONGC", "HCLTECH", "TECHM", "ULTRACEMCO", "NESTLEIND", "CIPLA", "DRREDDY", "DIVISLAB", "APOLLOHOSP", "HEROMOTOCO", "EICHERMOT", "BPCL", "TRENT", "HINDALCO", "SHRIRAMFIN", "DLF", "INDIGO", "HAL", "BEL", "ZOMATO", "PAYTM", "LIC", "DMART", "TATAPOWER", "VEDL"];
+      const matches = knownSymbols.filter(s => s.includes(q)).slice(0, 5);
+      setSearchSuggestions(matches);
+      // Zero-click: if exact match, fetch immediately
+      if (matches.length === 1 && matches[0] === q) {
+        searchTimeoutRef.current = setTimeout(() => {
+          setActiveSymbol(q);
+          setCustomStock("");
+          setSearchSuggestions([]);
+        }, 300);
+      }
+    } else {
+      setSearchSuggestions([]);
+    }
+  };
+
+  const selectSuggestion = (sym) => {
+    setActiveSymbol(sym);
+    setCustomStock("");
+    setSearchSuggestions([]);
+  };
+
   const handleCustomSearch = (e) => {
     e.preventDefault();
     const sym = customStock.trim().toUpperCase();
-    if (sym) { setActiveSymbol(sym); setCustomStock(""); }
+    if (sym) { setActiveSymbol(sym); setCustomStock(""); setSearchSuggestions([]); }
   };
 
   const chains = data?.chains || [];
@@ -106,10 +140,14 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
   if (loading && !data) {
     return (
       <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-8">
-        <p className="text-sm text-slate-400 text-center animate-pulse">Loading options data...</p>
+        <p className="text-sm text-slate-400 text-center animate-pulse" data-testid="options-loading">Loading options data...</p>
       </div>
     );
   }
+
+  // Determine if current selection is an index or stock
+  const isIndexTab = INDEX_TABS.some(t => t.id === activeSymbol);
+  const isTopStock = TOP_FNO_STOCKS.some(t => t.id === activeSymbol);
 
   return (
     <div className="space-y-3" data-testid="options-heatmap">
@@ -118,23 +156,19 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
         Options Heatmap
       </h2>
 
-      {/* Single filter row - matching reference layout exactly */}
-      <div className="flex items-center gap-2 flex-wrap" data-testid="options-heatmap-filters">
-        {/* Symbol presets */}
-        {SYMBOL_PRESETS.map(f => (
-          <button key={f.id} data-testid={`options-filter-${f.id}`}
-            onClick={() => setActiveSymbol(f.id)}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
-              activeSymbol === f.id
-                ? "bg-cyan-600 text-white"
-                : "text-slate-400 hover:text-slate-200"
-            }`}>{f.label}</button>
+      {/* Row 1: NIFTY / BANKNIFTY Tabs */}
+      <div className="flex items-center gap-2 flex-wrap" data-testid="options-index-tabs">
+        {INDEX_TABS.map(t => (
+          <button key={t.id} data-testid={`options-tab-${t.id}`}
+            onClick={() => setActiveSymbol(t.id)}
+            className={`rounded-lg px-4 py-1.5 text-xs font-bold transition-all ${
+              activeSymbol === t.id
+                ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20"
+                : "bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700"
+            }`}>{t.label}</button>
         ))}
-
-        {/* Separator */}
         <div className="w-px h-5 bg-slate-700" />
-
-        {/* ALL / CE / PE */}
+        {/* ALL / CE / PE filter */}
         {["all", "ce", "pe"].map(t => (
           <button key={t} data-testid={`options-oi-type-${t}`}
             onClick={() => setOiTypeFilter(t)}
@@ -144,7 +178,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
                 : "text-slate-400 hover:text-slate-200"
             }`}>{t.toUpperCase()}</button>
         ))}
-
+        <div className="w-px h-5 bg-slate-700" />
         {/* Expiry dropdown */}
         {availableExpiries.length > 0 && (
           <select
@@ -158,24 +192,66 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
             ))}
           </select>
         )}
+      </div>
 
-        {/* Custom Stock */}
-        <form onSubmit={handleCustomSearch} className="flex items-center gap-1">
-          <input
-            type="text"
-            value={customStock}
-            onChange={(e) => setCustomStock(e.target.value)}
-            placeholder="Custom Stock..."
-            className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 w-28 focus:border-cyan-500 focus:outline-none"
-            data-testid="options-custom-stock-input"
-          />
-          <button type="submit" className="text-slate-400 hover:text-cyan-300 p-1" data-testid="options-custom-stock-search">
-            <Search size={12} />
-          </button>
-        </form>
+      {/* Row 2: Top 3 F&O Stocks + Custom Symbol Search */}
+      <div className="flex items-center gap-2 flex-wrap" data-testid="options-stock-filters">
+        {TOP_FNO_STOCKS.map(f => (
+          <button key={f.id} data-testid={`options-stock-${f.id.toLowerCase()}`}
+            onClick={() => setActiveSymbol(f.id)}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+              activeSymbol === f.id
+                ? "bg-emerald-600 text-white"
+                : "text-slate-400 hover:text-slate-200 bg-slate-800/50"
+            }`}>{f.label}</button>
+        ))}
 
-        {/* Min OI */}
-        <div className="flex items-center gap-1 text-[10px] text-slate-400">
+        {/* Custom stock search with auto-suggest */}
+        <div className="relative" data-testid="options-custom-search">
+          <form onSubmit={handleCustomSearch} className="flex items-center gap-1">
+            <div className="relative">
+              <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                value={customStock}
+                onChange={(e) => handleSearchInput(e.target.value)}
+                placeholder="Search F&O symbol..."
+                className="bg-slate-900 border border-slate-700 rounded-md pl-6 pr-6 py-1 text-xs text-slate-200 w-40 focus:border-cyan-500 focus:outline-none"
+                data-testid="options-custom-stock-input"
+              />
+              {customStock && (
+                <button type="button" onClick={() => { setCustomStock(""); setSearchSuggestions([]); }} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+          </form>
+          {/* Auto-suggest dropdown */}
+          {searchSuggestions.length > 0 && (
+            <div className="absolute top-full left-0 mt-1 w-40 bg-slate-900 border border-slate-700 rounded-md shadow-xl z-20" data-testid="options-search-suggestions">
+              {searchSuggestions.map(sym => (
+                <button
+                  key={sym}
+                  onClick={() => selectSuggestion(sym)}
+                  className="w-full text-left px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800 font-mono"
+                  data-testid={`options-suggest-${sym.toLowerCase()}`}
+                >
+                  {sym}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Active symbol indicator */}
+        {!isIndexTab && !isTopStock && activeSymbol && (
+          <span className="rounded bg-violet-600 px-2 py-0.5 text-xs font-mono text-white" data-testid="options-active-custom">
+            {activeSymbol}
+          </span>
+        )}
+
+        {/* Min OI slider */}
+        <div className="flex items-center gap-1 text-[10px] text-slate-400 ml-auto">
           <Activity size={10} />
           <span>Min OI:</span>
           <input
@@ -188,7 +264,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
         </div>
 
         {/* View toggle */}
-        <div className="flex border border-slate-700 rounded-md overflow-hidden ml-auto">
+        <div className="flex border border-slate-700 rounded-md overflow-hidden">
           <button data-testid="options-view-treemap" onClick={() => setViewMode("treemap")}
             className={`p-1.5 ${viewMode === "treemap" ? "bg-cyan-600 text-white" : "text-slate-400 hover:text-slate-200"}`}>
             <LayoutGrid size={13} />
@@ -206,12 +282,12 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
       </div>
 
       {data?.warning && (
-        <div className="rounded-lg border border-amber-600/40 bg-amber-950/30 p-2.5 text-xs text-amber-300">{data.warning}</div>
+        <div className="rounded-lg border border-amber-600/40 bg-amber-950/30 p-2.5 text-xs text-amber-300" data-testid="options-warning">{data.warning}</div>
       )}
 
       {/* Summary */}
       {data?.summary && data.summary.pcr != null && (
-        <div className="flex flex-wrap gap-2 text-xs">
+        <div className="flex flex-wrap gap-2 text-xs" data-testid="options-summary">
           <span className="rounded bg-slate-800 px-2 py-1 text-slate-300 font-mono">PCR: {data.summary.pcr}</span>
           {data.summary.oi_buildup && (
             <span className={`rounded px-2 py-1 font-semibold ${
@@ -223,7 +299,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
         </div>
       )}
 
-      {/* Treemap View - matches reference: CE=teal, PE=magenta/pink, full width grid */}
+      {/* Treemap View */}
       {data && viewMode === "treemap" && allContracts.length > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 gap-px bg-slate-800 rounded-lg overflow-hidden" data-testid="options-treemap-view">
           {allContracts.slice(0, 500).map((c, idx) => {
@@ -264,7 +340,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
               </div>
               {item.strikes?.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-[10px]">
+                  <table className="w-full text-[10px]" data-testid="options-chain-table">
                     <thead>
                       <tr className="text-slate-500 border-b border-slate-700">
                         <th className="px-2 py-1.5 text-right">CE OI</th>
@@ -308,7 +384,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
       )}
 
       {data && allContracts.length === 0 && chains.length === 0 && !loading && (
-        <p className="text-sm text-slate-400 text-center py-4">No options data. Ensure API is connected.</p>
+        <p className="text-sm text-slate-400 text-center py-4" data-testid="options-no-data">No options data. Ensure Market Data API is connected.</p>
       )}
     </div>
   );

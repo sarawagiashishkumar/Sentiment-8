@@ -1,7 +1,7 @@
-import { Home, BarChart3, TrendingUp, FileUp, GaugeCircle, Shield, Grid3X3 } from "lucide-react";
+import { Home, BarChart3, TrendingUp, FileUp, Shield, Grid3X3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export function AppSidebar({ currentPage, setCurrentPage, isAdmin, isOwner, onSectorClick, onAdminClick }) {
+export function AppSidebar({ currentPage, setCurrentPage, isAdmin, onAdminClick }) {
   const navClass = (page) =>
     currentPage === page
       ? "bg-cyan-500 text-slate-900 hover:bg-cyan-400"
@@ -20,9 +20,6 @@ export function AppSidebar({ currentPage, setCurrentPage, isAdmin, isOwner, onSe
       </Button>
       <Button type="button" onClick={() => setCurrentPage("portfolio")} className={navClass("portfolio")} data-testid="nav-portfolio">
         <FileUp size={16} /> Portfolio
-      </Button>
-      <Button type="button" onClick={() => { setCurrentPage("sectors"); onSectorClick(); }} className={navClass("sectors")} data-testid="nav-sectors">
-        <GaugeCircle size={16} /> Sectors
       </Button>
       <Button type="button" onClick={() => setCurrentPage("heatmap")} className={navClass("heatmap")} data-testid="nav-heatmap">
         <Grid3X3 size={16} /> Market HeatMap
