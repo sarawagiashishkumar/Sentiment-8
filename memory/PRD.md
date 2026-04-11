@@ -63,6 +63,15 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Array Index Keys Fixed**: Replaced `key={i}` with stable identifiers in MultibaggerCandidateCard, FNOSignalHistory, FNOIVAnalytics.
 - **fno.py Complexity Reduced**: Extracted `_run_phase_with_keepalive()`, `_build_index_phase()`, `_build_stock_phase()`, `_build_no_signals_alert()` helper functions. Reduced nesting depth from 5 to 3.
 
+### Phase 9: Code Quality Refactoring Part 2 (2026-04-11)
+- **Remaining Circular Imports Broken**: `market_data.py` migrated 5 lazy `import server` calls to `import services.app_state as _state` for db, KITE_API_KEY, KITE_API_SECRET, KITE_REDIRECT_URL, SECTOR_MOMENTUM_CACHE, IST
+- **app_state.py Expanded**: Added KITE_API_SECRET, KITE_REDIRECT_URL, SECTOR_MOMENTUM_CACHE, SECTOR_MOMENTUM_CACHE_TTL_SECONDS, SCRIPT_MASTER_LAST_SYNC_DATE
+- **Dynamic Import Security Fixed**: `script_master.py` `__import__("datetime")` → static `from datetime import datetime`
+- **batch_jobs.py Complexity Reduced**: Extracted `_build_mfe_for_symbol()` and `_build_fwd_mfe_for_symbol()` helpers, reducing nesting from 6 → 3
+- **KiteLiveWarning Stale Closure Fixed**: `disconnected` state in `useCallback` dependency → `disconnectedRef` (useRef), eliminating infinite re-registration
+- **FNOIVAnalytics Re-render Fix**: Extracted 10 inline chart style objects (CHART_TICK, TOOLTIP_STYLE, etc.) to module-level constants
+- **useAuth Hook Created**: `hooks/useAuth.js` — reusable auth logic (for future App.js refactoring)
+
 ## Key API Endpoints
 - `/api/fno/generate` — NDJSON streaming F&O signals
 - `/api/fno/bbe-alerts` — Real-time BBE zone monitoring
