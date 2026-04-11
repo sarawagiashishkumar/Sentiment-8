@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from deps import get_current_user, get_owner_user
+import services.app_state as _state
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ async def script_master_lookup(q: str = Query(default="")):
 
     await _srv._sync_script_master_daily()
     resolved = await _srv._resolve_symbol_input(query)
-    row = await _srv.db.script_master.find_one(
+    row = await _state.db.script_master.find_one(
         {"canonical_symbol": resolved},
         {"_id": 0, "canonical_symbol": 1, "display_name": 1, "aliases": 1},
     )
@@ -60,9 +61,9 @@ async def script_master_refresh(owner_user: dict = Depends(get_owner_user)):
 
     async def _stream() -> AsyncGenerator[str, None]:
         yield json.dumps({"type": "progress", "phase": "start", "message": "Syncing script master..."}) + "\n"
-        _srv.SCRIPT_MASTER_LAST_SYNC_DATE = None
+        _state.SCRIPT_MASTER_LAST_SYNC_DATE = None
         await _srv._sync_script_master_daily(force=True)
-        result = {"refreshed": True, "date": datetime.now(_srv.IST).date().isoformat()}
+        result = {"refreshed": True, "date": datetime.now(_state.IST).date().isoformat()}
         yield json.dumps({"type": "complete", "data": result}) + "\n"
 
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
@@ -80,7 +81,6 @@ async def get_sector_momentum(
     Returns momentum scores, 1W/1M/3M returns, RSI, ADX for 15 NSE sectors.
     Results cached for 30 minutes. Use ?force_refresh=true to bypass cache.
     """
-    import server as _srv
     from datetime import datetime, timezone
     from services.sector_momentum import compute_sector_momentum_dashboard
 
@@ -88,22 +88,22 @@ async def get_sector_momentum(
     now_ts = datetime.now(timezone.utc).timestamp()
 
     # In-memory cache check
-    if not force_refresh and _srv.SECTOR_MOMENTUM_CACHE:
-        cached_ts = _srv.SECTOR_MOMENTUM_CACHE.get("_ts", 0)
-        if (now_ts - cached_ts) < _srv.SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
-            data = {k: v for k, v in _srv.SECTOR_MOMENTUM_CACHE.items() if not k.startswith("_")}
+    if not force_refresh and _state.SECTOR_MOMENTUM_CACHE:
+        cached_ts = _state.SECTOR_MOMENTUM_CACHE.get("_ts", 0)
+        if (now_ts - cached_ts) < _state.SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
+            data = {k: v for k, v in _state.SECTOR_MOMENTUM_CACHE.items() if not k.startswith("_")}
             data["from_cache"] = True
             return data
 
     # MongoDB cache check
     if not force_refresh:
         try:
-            cached_doc = await _srv.db.sector_momentum_cache.find_one(
+            cached_doc = await _state.db.sector_momentum_cache.find_one(
                 {"_key": "sector_momentum"}, {"_id": 0}
             )
-            if cached_doc and (now_ts - float(cached_doc.get("cached_at_ts", 0))) < _srv.SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
+            if cached_doc and (now_ts - float(cached_doc.get("cached_at_ts", 0))) < _state.SECTOR_MOMENTUM_CACHE_TTL_SECONDS:
                 payload = {k: v for k, v in cached_doc.items() if k not in ("_key", "cached_at_ts")}
-                _srv.SECTOR_MOMENTUM_CACHE.update({**payload, "_ts": now_ts})
+                _state.SECTOR_MOMENTUM_CACHE.update({**payload, "_ts": now_ts})
                 payload["from_cache"] = True
                 return payload
         except Exception:
@@ -111,15 +111,15 @@ async def get_sector_momentum(
 
     # Compute fresh
     try:
-        result = await compute_sector_momentum_dashboard(db=_srv.db)
+        result = await compute_sector_momentum_dashboard(db=_state.db)
     except Exception as exc:
         logger.error("Sector momentum computation failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Sector momentum computation failed: {exc}")
 
     # Store in caches
-    _srv.SECTOR_MOMENTUM_CACHE.update({**result, "_ts": now_ts})
+    _state.SECTOR_MOMENTUM_CACHE.update({**result, "_ts": now_ts})
     try:
-        await _srv.db.sector_momentum_cache.update_one(
+        await _state.db.sector_momentum_cache.update_one(
             {"_key": "sector_momentum"},
             {"$set": {"_key": "sector_momentum", "cached_at_ts": now_ts, **result}},
             upsert=True,
@@ -135,14 +135,12 @@ async def get_sector_momentum(
 
 @market_data_router.get("/kite/auth-url")
 async def get_kite_auth_url(current_user: dict = Depends(get_owner_user)):
-    import server as _srv
-
     _ = current_user
-    if not _srv.KITE_API_KEY or not _srv.KITE_API_SECRET or not _srv.KITE_REDIRECT_URL:
+    if not _state.KITE_API_KEY or not _state.KITE_API_SECRET or not _state.KITE_REDIRECT_URL:
         raise HTTPException(status_code=400, detail="Kite credentials not configured")
     return {
-        "auth_url": f"https://kite.zerodha.com/connect/login?v=3&api_key={_srv.KITE_API_KEY}",
-        "redirect_url": _srv.KITE_REDIRECT_URL,
+        "auth_url": f"https://kite.zerodha.com/connect/login?v=3&api_key={_state.KITE_API_KEY}",
+        "redirect_url": _state.KITE_REDIRECT_URL,
     }
 
 
@@ -153,18 +151,18 @@ async def kite_callback(request_token: str = Query(...), status: str | None = Qu
     import requests
 
     _ = status
-    if not _srv.KITE_API_KEY or not _srv.KITE_API_SECRET:
+    if not _state.KITE_API_KEY or not _state.KITE_API_SECRET:
         raise HTTPException(status_code=400, detail="Kite credentials not configured")
 
     checksum = hashlib.sha256(
-        f"{_srv.KITE_API_KEY}{request_token}{_srv.KITE_API_SECRET}".encode()
+        f"{_state.KITE_API_KEY}{request_token}{_state.KITE_API_SECRET}".encode()
     ).hexdigest()
 
     def _create_session() -> dict:
         response = requests.post(
             "https://api.kite.trade/session/token",
             data={
-                "api_key": _srv.KITE_API_KEY,
+                "api_key": _state.KITE_API_KEY,
                 "request_token": request_token,
                 "checksum": checksum,
             },
@@ -184,13 +182,13 @@ async def kite_callback(request_token: str = Query(...), status: str | None = Qu
         raise HTTPException(status_code=502, detail="Kite access token missing")
 
     today = _srv._today_ist()
-    await _srv.db.system_meta.update_one(
+    await _state.db.system_meta.update_one(
         {"key": "kite_session"},
         {
             "$set": {
                 "key": "kite_session",
                 "date": today,
-                "api_key": _srv.KITE_API_KEY,
+                "api_key": _state.KITE_API_KEY,
                 "access_token": access_token,
                 "public_token": session_data.get("public_token"),
                 "user_id": session_data.get("user_id"),
@@ -216,7 +214,7 @@ async def kite_status(current_user: dict = Depends(get_owner_user)):
     import server as _srv
 
     _ = current_user
-    row = await _srv.db.system_meta.find_one({"key": "kite_session"}, {"_id": 0})
+    row = await _state.db.system_meta.find_one({"key": "kite_session"}, {"_id": 0})
     if not row:
         return {"connected": False, "reason": "no_session"}
 
@@ -241,7 +239,7 @@ async def kite_status(current_user: dict = Depends(get_owner_user)):
                 "https://api.kite.trade/user/profile",
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_srv.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=8,
             )
@@ -277,7 +275,7 @@ async def kite_refresh_option_master(current_user: dict = Depends(get_owner_user
 
     _ = current_user
     await _srv._sync_kite_option_master_daily(force=True)
-    meta = await _srv.db.system_meta.find_one({"key": "kite_option_master_sync"}, {"_id": 0})
+    meta = await _state.db.system_meta.find_one({"key": "kite_option_master_sync"}, {"_id": 0})
     return {"refreshed": True, "meta": meta or {}}
 
 
@@ -335,14 +333,14 @@ async def sector_stocks(
         raise HTTPException(400, "sector query parameter required")
 
     # Look up sector constituents from DB or use index constituents
-    sector_mapping = await _srv.db.sector_stock_mapping.find_one(
+    sector_mapping = await _state.db.sector_stock_mapping.find_one(
         {"sector": sector}, {"_id": 0}
     )
     if sector_mapping and sector_mapping.get("stocks"):
         symbols = sector_mapping["stocks"]
     else:
         # Try index_constituents collection
-        idx_map = await _srv.db.index_constituents.find_one(
+        idx_map = await _state.db.index_constituents.find_one(
             {"index_name": {"$regex": sector, "$options": "i"}}, {"_id": 0}
         )
         if idx_map and idx_map.get("symbols"):
@@ -462,7 +460,7 @@ async def options_heatmap(
                 resp = _req.get(
                     "https://api.kite.trade/quote/ltp",
                     params=[("i", f"NSE:{symbol}")],
-                    headers={"X-Kite-Version": "3", "Authorization": f"token {_srv.KITE_API_KEY}:{access_token}"},
+                    headers={"X-Kite-Version": "3", "Authorization": f"token {_state.KITE_API_KEY}:{access_token}"},
                     timeout=10,
                 )
                 if resp.status_code == 200:
@@ -484,7 +482,7 @@ async def options_heatmap(
             {"$sort": {"_id": 1}},
             {"$limit": 1},
         ]
-        expiry_docs = await _srv.db.kite_option_master.aggregate(pipeline).to_list(1)
+        expiry_docs = await _state.db.kite_option_master.aggregate(pipeline).to_list(1)
         if not expiry_docs:
             return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
                     "warning": "No option master data. Run Kite instrument sync first."}
@@ -496,7 +494,7 @@ async def options_heatmap(
         strike_range = list(range(int(atm_strike - step * 10), int(atm_strike + step * 11), step))
 
         # Get tradingsymbols for these strikes
-        option_rows = await _srv.db.kite_option_master.find(
+        option_rows = await _state.db.kite_option_master.find(
             {"underlying": symbol, "expiry": nearest_expiry, "strike": {"$in": [float(s) for s in strike_range]}},
             {"_id": 0, "tradingsymbol": 1, "strike": 1, "option_type": 1},
         ).to_list(200)
@@ -584,7 +582,7 @@ async def options_heatmap(
             {"$sort": {"_id": 1}},
             {"$limit": 3},
         ]
-        expiry_docs = await _srv.db.kite_option_master.aggregate(pipeline).to_list(3)
+        expiry_docs = await _state.db.kite_option_master.aggregate(pipeline).to_list(3)
         if not expiry_docs:
             return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
                     "warning": f"No option data for {stock_symbol}. Run Kite instrument sync."}
@@ -595,7 +593,7 @@ async def options_heatmap(
         atm_strike = round(spot / step) * step
         strike_range = list(range(int(atm_strike - step * 10), int(atm_strike + step * 11), step))
 
-        option_rows = await _srv.db.kite_option_master.find(
+        option_rows = await _state.db.kite_option_master.find(
             {"underlying": stock_symbol, "expiry": nearest_expiry, "strike": {"$in": [float(s) for s in strike_range]}},
             {"_id": 0, "tradingsymbol": 1, "strike": 1, "option_type": 1},
         ).to_list(200)

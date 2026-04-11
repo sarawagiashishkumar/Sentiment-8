@@ -36,6 +36,34 @@ class BatchSymbolRequest(BaseModel):
     symbols: Optional[list[str]] = None
 
 
+async def _build_mfe_for_symbol(db, s, symbol, strategies, dte_values):
+    """Build MFE library entries for a single symbol. Returns (results, error)."""
+    results = []
+    hist_df = await s._get_hist_ohlcv(symbol, period="1y")
+    if hist_df is None or hist_df.empty or len(hist_df) < 100:
+        return results, {"symbol": symbol, "error": "insufficient_historical_data"}
+
+    close_col = "Close" if "Close" in hist_df.columns else "close"
+    closes = hist_df[close_col]
+    atr = float(closes.pct_change().rolling(14).std().iloc[-1] * closes.iloc[-1]) if len(closes) > 20 else float(closes.iloc[-1] * 0.012)
+
+    for strat in strategies:
+        for dte in dte_values:
+            for iv_regime_label, (iv_lo, iv_hi) in IV_REGIMES.items():
+                iv_mid = (iv_lo + iv_hi) / 2 if iv_hi < 900 else 35.0
+                result = await build_and_store_mfe_library(
+                    db, symbol, hist_df, atr,
+                    strategy_id=strat, dte=dte, iv=iv_mid,
+                )
+                if result.get("stored"):
+                    results.append({
+                        "symbol": symbol, "strategy": strat,
+                        "dte": dte, "iv_regime": iv_regime_label,
+                        "sample_size": result.get("sample_size", 0),
+                    })
+    return results, None
+
+
 @batch_router.post("/build-mfe-library")
 async def api_build_mfe_library(
     req: BatchSymbolRequest = BatchSymbolRequest(),
@@ -43,62 +71,33 @@ async def api_build_mfe_library(
 ):
     """
     Trigger offline MFE/MAE library build for specified symbols (or defaults).
-    Builds probability tables for each (symbol × strategy × DTE × IV regime) combo
-    and stores in MongoDB mfe_library collection.
-
     This is a heavy operation — run during off-market hours.
     """
     s = _srv()
     db = s.db
 
-    symbols = req.symbols
-    # Default to major indices + top FNO stocks
-    if not symbols:
-        symbols = ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"]
-
-    # Use a subset of strategy profiles for initial build
+    symbols = req.symbols or ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"]
     strategies = ["S1_ORB", "S3_SUPERTREND", "S4_MACD_ADX", "SW1_52W_BREAKOUT"]
     dte_values = [0, 2, 5, 10]
 
-    results = []
+    all_results = []
     errors = []
 
     for symbol in symbols:
         try:
-            hist_df = await s._get_hist_ohlcv(symbol, period="1y")
-            if hist_df is None or hist_df.empty or len(hist_df) < 100:
-                errors.append({"symbol": symbol, "error": "insufficient_historical_data"})
-                continue
-
-            close_col = "Close" if "Close" in hist_df.columns else "close"
-            closes = hist_df[close_col]
-            atr = float(closes.pct_change().rolling(14).std().iloc[-1] * closes.iloc[-1]) if len(closes) > 20 else float(closes.iloc[-1] * 0.012)
-
-            for strat in strategies:
-                for dte in dte_values:
-                    for iv_regime_label, (iv_lo, iv_hi) in IV_REGIMES.items():
-                        iv_mid = (iv_lo + iv_hi) / 2 if iv_hi < 900 else 35.0
-                        result = await build_and_store_mfe_library(
-                            db, symbol, hist_df, atr,
-                            strategy_id=strat, dte=dte, iv=iv_mid,
-                        )
-                        if result.get("stored"):
-                            results.append({
-                                "symbol": symbol,
-                                "strategy": strat,
-                                "dte": dte,
-                                "iv_regime": iv_regime_label,
-                                "sample_size": result.get("sample_size", 0),
-                            })
+            sym_results, sym_error = await _build_mfe_for_symbol(db, s, symbol, strategies, dte_values)
+            all_results.extend(sym_results)
+            if sym_error:
+                errors.append(sym_error)
         except Exception as exc:
             errors.append({"symbol": symbol, "error": str(exc)})
-            logger.warning(f"MFE library build failed for {symbol}: {exc}")
+            logger.warning("MFE library build failed for %s: %s", symbol, exc)
 
     return {
         "status": "completed",
-        "libraries_built": len(results),
+        "libraries_built": len(all_results),
         "errors": len(errors),
-        "details": results[:20],  # Limit response size
+        "details": all_results[:20],
         "error_details": errors,
     }
 
@@ -120,66 +119,64 @@ async def api_build_theta_curves(user=Depends(get_owner_user)):
     }
 
 
+async def _build_fwd_mfe_for_symbol(db, s, symbol, dte_values, regimes):
+    """Build forward MFE entries for a single symbol. Returns (results, error)."""
+    results = []
+    hist_df = await s._get_hist_ohlcv(symbol, period="1y")
+    if hist_df is None or hist_df.empty or len(hist_df) < 100:
+        return results, {"symbol": symbol, "error": "insufficient_historical_data"}
+
+    close_col = "Close" if "Close" in hist_df.columns else "close"
+    closes = hist_df[close_col]
+    atr = float(closes.pct_change().rolling(14).std().iloc[-1] * closes.iloc[-1]) if len(closes) > 20 else float(closes.iloc[-1] * 0.012)
+    opt_class = "index_weekly" if symbol in ("NIFTY", "BANKNIFTY") else "stock_monthly"
+
+    for dte in dte_values:
+        for regime in regimes:
+            result = await build_and_store_forward_mfe(
+                db, symbol, hist_df, atr,
+                remaining_trading_days=dte, regime=regime, option_class=opt_class,
+            )
+            if result.get("stored"):
+                results.append({
+                    "symbol": symbol, "dte": dte, "regime": regime,
+                    "reliable": result.get("reliable", False),
+                    "sample_size": result.get("sample_size", 0),
+                })
+    return results, None
+
+
 @batch_router.post("/build-forward-mfe")
 async def api_build_forward_mfe(
     req: BatchSymbolRequest = BatchSymbolRequest(),
     user=Depends(get_owner_user),
 ):
-    """
-    Build forward MFE-to-expiry curves for specified symbols.
-    Computes theta-adjusted forward MFE percentiles and stores in MongoDB.
-    """
+    """Build forward MFE-to-expiry curves for specified symbols."""
     s = _srv()
     db = s.db
 
-    symbols = req.symbols
-    if not symbols:
-        symbols = ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"]
-
+    symbols = req.symbols or ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"]
     dte_values = [1, 2, 5, 10, 15]
     regimes = ["LowVolTrend", "LowVolRange", "NormalVolTrend", "HighVolTrend"]
 
-    results = []
+    all_results = []
     errors = []
 
     for symbol in symbols:
         try:
-            hist_df = await s._get_hist_ohlcv(symbol, period="1y")
-            if hist_df is None or hist_df.empty or len(hist_df) < 100:
-                errors.append({"symbol": symbol, "error": "insufficient_historical_data"})
-                continue
-
-            close_col = "Close" if "Close" in hist_df.columns else "close"
-            closes = hist_df[close_col]
-            atr = float(closes.pct_change().rolling(14).std().iloc[-1] * closes.iloc[-1]) if len(closes) > 20 else float(closes.iloc[-1] * 0.012)
-
-            opt_class = "index_weekly" if symbol in ("NIFTY", "BANKNIFTY") else "stock_monthly"
-
-            for dte in dte_values:
-                for regime in regimes:
-                    result = await build_and_store_forward_mfe(
-                        db, symbol, hist_df, atr,
-                        remaining_trading_days=dte,
-                        regime=regime,
-                        option_class=opt_class,
-                    )
-                    if result.get("stored"):
-                        results.append({
-                            "symbol": symbol,
-                            "dte": dte,
-                            "regime": regime,
-                            "reliable": result.get("reliable", False),
-                            "sample_size": result.get("sample_size", 0),
-                        })
+            sym_results, sym_error = await _build_fwd_mfe_for_symbol(db, s, symbol, dte_values, regimes)
+            all_results.extend(sym_results)
+            if sym_error:
+                errors.append(sym_error)
         except Exception as exc:
             errors.append({"symbol": symbol, "error": str(exc)})
-            logger.warning(f"Forward MFE build failed for {symbol}: {exc}")
+            logger.warning("Forward MFE build failed for %s: %s", symbol, exc)
 
     return {
         "status": "completed",
-        "fwd_mfe_built": len(results),
+        "fwd_mfe_built": len(all_results),
         "errors": len(errors),
-        "details": results[:20],
+        "details": all_results[:20],
         "error_details": errors,
     }
 

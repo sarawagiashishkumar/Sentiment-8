@@ -260,7 +260,7 @@ CONFLUENCE_THRESHOLD_DISPLAY = 40  # For display in rejection messages
 
 # ── Configure centralized app state (breaks circular import chain) ────────────
 from services.app_state import configure as _configure_app_state
-_configure_app_state(db, api_key=KITE_API_KEY)
+_configure_app_state(db, api_key=KITE_API_KEY, api_secret=KITE_API_SECRET, redirect_url=KITE_REDIRECT_URL)
 
 # ── Global data-source config: imported from canonical data_policy module ───
 from services.data_policy import KITE_IS_SOURCE_OF_TRUTH, USE_YFINANCE  # noqa: F401

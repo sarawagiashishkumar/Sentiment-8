@@ -14,17 +14,30 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 # ── Kite Connect ──────────────────────────────────────────────────────────────
 KITE_API_KEY = None       # Set from env
+KITE_API_SECRET = None    # Set from env
+KITE_REDIRECT_URL = None  # Set from env
 kite_access_token = None  # Set via admin endpoint
 
 # ── Config Constants ──────────────────────────────────────────────────────────
 CONFLUENCE_THRESHOLD_DISPLAY = 40
 
+# ── Caches (populated at runtime) ─────────────────────────────────────────────
+SECTOR_MOMENTUM_CACHE = {}
+SECTOR_MOMENTUM_CACHE_TTL_SECONDS = 1800  # 30 minutes
 
-def configure(database, api_key=None, access_token=None):
+# ── Script Master Tracking ────────────────────────────────────────────────────
+SCRIPT_MASTER_LAST_SYNC_DATE = None
+
+
+def configure(database, api_key=None, api_secret=None, redirect_url=None, access_token=None):
     """Called by server.py on startup to inject shared state."""
-    global db, KITE_API_KEY, kite_access_token
+    global db, KITE_API_KEY, KITE_API_SECRET, KITE_REDIRECT_URL, kite_access_token
     db = database
     if api_key is not None:
         KITE_API_KEY = api_key
+    if api_secret is not None:
+        KITE_API_SECRET = api_secret
+    if redirect_url is not None:
+        KITE_REDIRECT_URL = redirect_url
     if access_token is not None:
         kite_access_token = access_token

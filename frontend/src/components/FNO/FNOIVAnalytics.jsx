@@ -7,6 +7,16 @@ import { RefreshCw, TrendingUp } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+// Chart style constants — extracted to avoid re-render allocations
+const CHART_TICK = { fontSize: 9, fill: "#94a3b8" };
+const CHART_GRID_DASH = "3 3";
+const CHART_GRID_STROKE = "#334155";
+const TOOLTIP_STYLE = { background: "#1e293b", border: "1px solid #475569", borderRadius: 6, fontSize: 11 };
+const TOOLTIP_LABEL = { color: "#94a3b8" };
+const X_LABEL_DTE = { value: "Days to Expiry", position: "insideBottom", offset: -3, fontSize: 10, fill: "#64748b" };
+const Y_LABEL_IV = { value: "IV %", angle: -90, position: "insideLeft", fontSize: 10, fill: "#64748b" };
+const DOT_STYLE = { fill: "#a78bfa", r: 4 };
+
 export function FNOIVAnalytics({ authHeaders }) {
   const [symbol, setSymbol] = useState("NIFTY");
   const [coneData, setConeData] = useState(null);
@@ -105,13 +115,10 @@ export function FNOIVAnalytics({ authHeaders }) {
               {/* Chart */}
               <ResponsiveContainer width="100%" height={200}>
                 <AreaChart data={coneData.points}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 9, fill: "#94a3b8" }} domain={["auto", "auto"]} />
-                  <Tooltip
-                    contentStyle={{ background: "#1e293b", border: "1px solid #475569", borderRadius: 6, fontSize: 11 }}
-                    labelStyle={{ color: "#94a3b8" }}
-                  />
+                  <CartesianGrid strokeDasharray={CHART_GRID_DASH} stroke={CHART_GRID_STROKE} />
+                  <XAxis dataKey="date" tick={CHART_TICK} interval="preserveStartEnd" />
+                  <YAxis tick={CHART_TICK} domain={["auto", "auto"]} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL} />
                   <Area type="monotone" dataKey="iv" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.15} strokeWidth={1.5} name="ATM IV %" />
                   {/* Band reference lines */}
                   {coneData.bands && (
@@ -142,14 +149,11 @@ export function FNOIVAnalytics({ authHeaders }) {
               </span>
               <ResponsiveContainer width="100%" height={200}>
                 <LineChart data={termData.term_points}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis dataKey="dte" tick={{ fontSize: 9, fill: "#94a3b8" }} label={{ value: "Days to Expiry", position: "insideBottom", offset: -3, fontSize: 10, fill: "#64748b" }} />
-                  <YAxis tick={{ fontSize: 9, fill: "#94a3b8" }} label={{ value: "IV %", angle: -90, position: "insideLeft", fontSize: 10, fill: "#64748b" }} />
-                  <Tooltip
-                    contentStyle={{ background: "#1e293b", border: "1px solid #475569", borderRadius: 6, fontSize: 11 }}
-                    formatter={(val, name) => [`${val}%`, name]}
-                  />
-                  <Line type="monotone" dataKey="iv" stroke="#a78bfa" strokeWidth={2} dot={{ fill: "#a78bfa", r: 4 }} name="IV" />
+                  <CartesianGrid strokeDasharray={CHART_GRID_DASH} stroke={CHART_GRID_STROKE} />
+                  <XAxis dataKey="dte" tick={CHART_TICK} label={X_LABEL_DTE} />
+                  <YAxis tick={CHART_TICK} label={Y_LABEL_IV} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(val, name) => [`${val}%`, name]} />
+                  <Line type="monotone" dataKey="iv" stroke="#a78bfa" strokeWidth={2} dot={DOT_STYLE} name="IV" />
                 </LineChart>
               </ResponsiveContainer>
               {/* Term points table */}

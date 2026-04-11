@@ -58,6 +58,7 @@ export function KiteLiveWarning({ authHeaders }) {
   const [lastDisconnectTime, setLastDisconnectTime] = useState(null);
   const intervalRef = useRef(null);
   const alarmPlayedRef = useRef(false);
+  const disconnectedRef = useRef(false);
 
   const checkHealth = useCallback(async () => {
     try {
@@ -69,7 +70,7 @@ export function KiteLiveWarning({ authHeaders }) {
 
       if (!isConnected) {
         // Newly disconnected — trigger alarm
-        if (!disconnected && !alarmPlayedRef.current) {
+        if (!disconnectedRef.current && !alarmPlayedRef.current) {
           playAlarmSound();
           showBrowserNotification(
             "API Authentication Failed",
@@ -78,17 +79,19 @@ export function KiteLiveWarning({ authHeaders }) {
           alarmPlayedRef.current = true;
           setLastDisconnectTime(new Date());
         }
+        disconnectedRef.current = true;
         setDisconnected(true);
         setDismissed(false); // re-show on each detection
       } else {
         // Reconnected — reset state
+        disconnectedRef.current = false;
         setDisconnected(false);
         alarmPlayedRef.current = false;
       }
     } catch (netErr) {
       console.error("KiteLiveWarning: health check network error:", netErr.message);
       // Network error to our own backend — also a disconnect
-      if (!disconnected && !alarmPlayedRef.current) {
+      if (!disconnectedRef.current && !alarmPlayedRef.current) {
         playAlarmSound();
         showBrowserNotification(
           "Network Connection Lost",
@@ -97,10 +100,11 @@ export function KiteLiveWarning({ authHeaders }) {
         alarmPlayedRef.current = true;
         setLastDisconnectTime(new Date());
       }
+      disconnectedRef.current = true;
       setDisconnected(true);
       setDismissed(false);
     }
-  }, [authHeaders, disconnected]);
+  }, [authHeaders]);
 
   useEffect(() => {
     requestNotificationPermission();
