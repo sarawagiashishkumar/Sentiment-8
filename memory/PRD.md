@@ -315,30 +315,34 @@ Future capabilities (zero additional cost):
 - **Empty Catch Blocks**: All 9 empty `catch {}` blocks across AdminPaymentsPanel, UserCrmInbox, and LiveHelpModule replaced with `console.error()` logging.
 - **Console Cleanup**: Verified zero `console.log` statements in production code, only `console.error` retained.
 
-### Phase 29: Component Refactor — Code Quality Report Completion (2026-04-12)
-- **App.js Split (68→~25 complexity)**: Extracted alert sound engine + alert monitor + position tracking into `useAlertEngine.js` custom hook (114 lines). App.js reduced from 352→156 lines (56% reduction).
-- **AdminDashboard Split (96→~20 complexity)**: Extracted `AdminControlsTab.jsx` (131 lines: API controls, domain CRUD, DNS instructions) and `AdminMacroTab.jsx` (79 lines: macro event toggles with intensity colors). AdminDashboard reduced from 344→167 lines (51% reduction).
-- **Cloudflare Verification**: NOT a code bug — CDN-level bot protection on preview URLs. User checks the box once per session.
+### Phase 30: Code Quality Report Round 2 (2026-04-12)
+- **Circular Import Fix**: `hist_data.py` rewritten to use `app_state.db` directly — eliminated last known circular import in services/
+- **CRM Refactor**: `admin_send_message` (90 lines, 11 complexity) split into `_validate_crm_message`, `_send_targeted_message`, `_broadcast_message`. Main function now 5 lines.
+- **Hook Deps Fix**: `useAlertEngine` stale closure fixed using `useRef` pattern — `addNotifRef`, `sendPushRef`, `authRef` updated every render, consumed in useEffect without dep array churn
+- **Model Nesting Fix**: `_sanitize_nan_floats` reduced from 5→3 nesting levels with early return + ternary
 
 ## Code Quality Completion Status
 | Item | Status |
 |------|--------|
-| Circular import chain | FIXED (app_state expanded, auth uses app_state) |
+| Circular import chain (server↔services) | FIXED (app_state expanded, hist_data rewritten) |
 | Auth function complexity | FIXED (15→5, split into 5 functions) |
 | Alert system complexity | FIXED (34→<10, split into 6 functions) |
 | App.js complexity | FIXED (68→~25, useAlertEngine extracted) |
 | AdminDashboard complexity | FIXED (96→~20, Controls+Macro extracted) |
+| CRM admin_send_message | FIXED (90 lines→3 helpers) |
 | Empty catch blocks | FIXED (all 9 replaced) |
-| Console statement cleanup | DONE (0 console.log, only console.error) |
+| Hook dependencies | FIXED (useAlertEngine useRef pattern) |
+| Model nesting | FIXED (_sanitize_nan_floats early return) |
+| Console cleanup | DONE (0 console.log) |
 | Type hint coverage | BACKLOG |
 | FNODashboard split | BACKLOG |
 | OptionsHeatmap split | BACKLOG |
 
 ## Future/Backlog
-- Type hints on all public APIs (models + services first)
+- Type hints on public APIs (models + services first)
 - FNODashboard component split (377 lines)
 - OptionsHeatmap component split (378 lines)
 - AdminPerfTab complexity reduction (206 lines)
-- Security review of test dynamic imports
+- FNO routes generate_fno_signals complexity reduction
 - Payment history accumulates as users reactivate accounts
 - Fraud incidents accumulate as multi-device logins trigger impossible travel checks
