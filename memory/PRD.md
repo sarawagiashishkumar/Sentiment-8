@@ -137,7 +137,13 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **fno_utils.py Extracted**: 179 lines (`_format_script`, `_compute_report_from_rows`, `_infer_stock_option_type`, `_analyze_micro_dip_prediction`). Engine now 1632 lines — 41% total reduction from original 2787 across 4 extractions (fno_builders 684, fno_confluence 395, fno_utils 179).
 - **Performance Threshold Alerts**: PhaseBar component shows red "SLOW" warning with pulse animation when timing exceeds configurable thresholds (NIFTY >10s, BANKNIFTY >10s, Stocks >30s, Assembly >5s, Total >60s, Multibagger Scan >30s).
 
+### Phase 16: Push Notifications, Persistence & Final Engine Modularization (2026-04-12)
+- **Service Worker Push Notifications**: `sw-notifications.js` registered for background push delivery. `PushNotifToggle` in header (BellRing=ON, BellOff=OFF). State persisted in sessionStorage. Push fires for Critical (EXIT_URGENT, NOW BUY, API Disconnect) and Warning (APPROACHING_SL, LOSS_WARNING) alerts even when tab is minimized/background. Respects ON/OFF toggle preference.
+- **Notification Persistence to MongoDB**: `user_notifications` collection with CRUD via `/api/notifications` (GET/POST/PATCH read-all/DELETE). Frontend loads history on login, saves new alerts to backend, syncs clear-all and mark-all-read operations.
+- **Final Engine Modularization**: `build_fno_signal` (~1180 lines) extracted into `fno_signal_builder.py`. Engine now **500 lines** (82% reduction from original 2787). 5 extracted modules total: fno_signal_builder (1184), fno_builders (683), fno_confluence (395), fno_utils (189).
+
 ## Future/Backlog
-- Wait for 30+ days iv_history accumulation for meaningful IV cone percentile bands
-- Performance benchmarking during live market hours (timing data will populate during trading sessions)
-- Further signal engine optimization based on profiling data
+- Benchmark during live market hours — perf data auto-populates with each generation run
+- IV history accumulation — continues automatically (30+ days for meaningful cone)
+- Signal engine optimization — analyze profiling data from live market sessions
+- Notification analytics — track alert frequency, response times
