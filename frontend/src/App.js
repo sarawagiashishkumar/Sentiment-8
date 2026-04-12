@@ -64,6 +64,8 @@ export default function App() {
     try {
       const response = await axios.get(`${API}/fno/custom-positions`, { headers: authHeaders });
       setCustomPositions(response.data || []);
+      // Auto-fetch counts as active engagement — reset inactivity clock
+      if (lastActivityRef.current) lastActivityRef.current = Date.now();
     } catch { /* keep silent during polling */ }
   };
 
@@ -93,9 +95,19 @@ export default function App() {
 
     const resetActivity = () => { lastActivityRef.current = Date.now(); };
 
-    // Hard reset on every interaction
-    const interactionEvents = ["click", "scroll", "keydown", "mousemove", "touchstart"];
+    // Hard reset on every user interaction
+    const interactionEvents = ["click", "scroll", "keydown", "mousemove", "touchstart", "focus"];
     interactionEvents.forEach(evt => window.addEventListener(evt, resetActivity, { passive: true }));
+
+    // Also reset on visibility change (user returns to tab)
+    const handleVisibility = () => { if (!document.hidden) resetActivity(); };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    // Axios interceptor: any API response = active engagement (covers auto-fetch)
+    const axiosInterceptor = axios.interceptors.response.use(
+      (response) => { resetActivity(); return response; },
+      (error) => { resetActivity(); return Promise.reject(error); },
+    );
 
     ping(); // immediate first ping
     heartbeatTimerRef.current = setInterval(() => {
@@ -108,6 +120,8 @@ export default function App() {
 
     return () => {
       interactionEvents.forEach(evt => window.removeEventListener(evt, resetActivity));
+      document.removeEventListener("visibilitychange", handleVisibility);
+      axios.interceptors.response.eject(axiosInterceptor);
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
     };
   }, [token, authHeaders]);

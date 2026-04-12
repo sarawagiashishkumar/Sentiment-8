@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { SectorDrillDown } from "@/components/Shared/SectorDrillDown";
+import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -72,7 +73,10 @@ export function SectorHeatmap({ authHeaders, onFetchError }) {
 
   return (
     <div className="space-y-5" data-testid="sector-heatmap">
-      <h2 className="text-lg font-bold text-white" data-testid="sector-heatmap-title">Market Sector Heatmap</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-white" data-testid="sector-heatmap-title">Market Sector Heatmap</h2>
+        <RefreshCountdown intervalMs={REFRESH_INTERVAL} isActive={true} onManualRefresh={() => loadData()} />
+      </div>
 
       {/* NSE Index Sectors */}
       {sectors.length > 0 && (

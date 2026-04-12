@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import axios from "axios";
 import { LayoutGrid, List, Search, X } from "lucide-react";
+import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -111,7 +112,10 @@ export function StocksHeatmap({ authHeaders, onFetchError }) {
 
   return (
     <div className="space-y-3" data-testid="stocks-heatmap">
-      <h2 className="text-lg font-bold text-white">Stocks Heatmap</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-white">Stocks Heatmap</h2>
+        <RefreshCountdown intervalMs={REFRESH_INTERVAL} isActive={true} onManualRefresh={() => loadData(activeFilter)} />
+      </div>
 
       {/* Filter bar */}
       <div className="flex items-center gap-3 flex-wrap" data-testid="stocks-heatmap-filters">

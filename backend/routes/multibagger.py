@@ -5,6 +5,7 @@ Endpoints: /multibagger/generate, /multibagger/candidates, /multibagger/custom-s
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import AsyncGenerator, List
@@ -44,7 +45,14 @@ async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
     async def _stream() -> AsyncGenerator[str, None]:
         yield _ndjson_line({"type": "progress", "phase": "start", "message": "Scanning multibagger universe..."})
 
-        candidates = await _srv._build_multibagger_candidates(refreshed_at)
+        # Run with inline keepalive to prevent proxy timeout
+        task = asyncio.ensure_future(_srv._build_multibagger_candidates(refreshed_at))
+        while not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except asyncio.TimeoutError:
+                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
+        candidates = task.result()
         potential_count = len([r for r in candidates if r.is_potential_multibagger])
 
         yield _ndjson_line({"type": "progress", "phase": "scored", "message": f"Scored {len(candidates)} candidates, {potential_count} potential"})

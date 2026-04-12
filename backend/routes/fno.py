@@ -66,34 +66,25 @@ def _empty_index_pane(name: str, note: str) -> IndexProjectionPane:
 
 # ── /fno/generate ─────────────────────────────────────────────────────────────
 
-async def _run_phase_with_keepalive(task, _srv):
-    """Run an async task with periodic keepalive lines while it executes."""
-    lines = []
-    while not task.done():
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=5)
-        except asyncio.TimeoutError:
-            lines.append(_ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()}))
-    return lines
+# NOTE: The old _run_phase_with_keepalive buffered keepalive lines and returned
+# them as a list. This is WRONG — keepalives must stream to the client immediately
+# to prevent proxy/ingress idle timeouts. The fix: inline the keepalive loop
+# directly in the generator so `yield` sends them to the wire instantly.
 
 
 async def _build_index_phase(index_name, refreshed_at, _srv):
-    """Build a single index projection with keepalive support. Returns (projection, keepalive_lines)."""
-    task = asyncio.ensure_future(_srv._build_index_projection(index_name, refreshed_at))
-    keepalive_lines = await _run_phase_with_keepalive(task, _srv)
+    """Build a single index projection. Returns projection only (no buffered keepalives)."""
     try:
-        projection = task.result()
+        projection = await _srv._build_index_projection(index_name, refreshed_at)
     except Exception:
         projection = _empty_index_pane(index_name, f"{index_name} projection temporarily unavailable")
-    return projection, keepalive_lines
+    return projection
 
 
 async def _build_stock_phase(refreshed_at, _srv):
-    """Build stock F&O signals with keepalive support. Returns (stock_signals, keepalive_lines)."""
-    task = asyncio.ensure_future(_srv._build_stock_fno_signals(refreshed_at))
-    keepalive_lines = await _run_phase_with_keepalive(task, _srv)
+    """Build stock F&O signals. Returns stock_signals only (no buffered keepalives)."""
     try:
-        stock_signals = task.result()
+        stock_signals = await _srv._build_stock_fno_signals(refreshed_at)
         logger.info("Stock F&O signals generated: %d", len(stock_signals))
     except asyncio.TimeoutError:
         logger.warning("Stock F&O signal generation timed out")
@@ -101,7 +92,7 @@ async def _build_stock_phase(refreshed_at, _srv):
     except Exception as exc:
         logger.error("Stock F&O signal generation failed: %s", exc)
         stock_signals = []
-    return stock_signals, keepalive_lines
+    return stock_signals
 
 
 def _build_no_signals_alert(nifty_projection, banknifty_projection, stock_signals, top_trades, market_regime, market_session, threshold_display):
@@ -160,11 +151,15 @@ async def generate_fno_signals(
         if not _is_market_hrs:
             yield _ndjson_line({"type": "progress", "phase": "market_hours", "message": "Market closed — using last available data"})
 
-        # ── Phase 1: NIFTY projection ─────────────────────────────────────
+        # ── Phase 1: NIFTY projection (with inline keepalive) ──────────────
         yield _ndjson_line({"type": "progress", "phase": "nifty", "message": "Computing NIFTY projection..."})
-        nifty_projection, nifty_ka = await _build_index_phase("NIFTY", refreshed_at, _srv)
-        for line in nifty_ka:
-            yield line
+        nifty_task = asyncio.ensure_future(_build_index_phase("NIFTY", refreshed_at, _srv))
+        while not nifty_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(nifty_task), timeout=5)
+            except asyncio.TimeoutError:
+                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
+        nifty_projection = nifty_task.result()
         yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals"})
 
         # Send partial NIFTY results immediately so frontend can display them
@@ -174,11 +169,15 @@ async def generate_fno_signals(
         }
         yield _ndjson_line({"type": "partial", "phase": "nifty", "data": nifty_partial})
 
-        # ── Phase 2: BANKNIFTY projection ─────────────────────────────────
+        # ── Phase 2: BANKNIFTY projection (with inline keepalive) ──────────
         yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY projection..."})
-        banknifty_projection, bn_ka = await _build_index_phase("BANKNIFTY", refreshed_at, _srv)
-        for line in bn_ka:
-            yield line
+        bn_task = asyncio.ensure_future(_build_index_phase("BANKNIFTY", refreshed_at, _srv))
+        while not bn_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(bn_task), timeout=5)
+            except asyncio.TimeoutError:
+                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
+        banknifty_projection = bn_task.result()
         yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals"})
 
         # Send partial BANKNIFTY results
@@ -188,11 +187,15 @@ async def generate_fno_signals(
         }
         yield _ndjson_line({"type": "partial", "phase": "banknifty", "data": banknifty_partial})
 
-        # ── Phase 3: Stock F&O signals ────────────────────────────────────
+        # ── Phase 3: Stock F&O signals (with inline keepalive) ─────────────
         yield _ndjson_line({"type": "progress", "phase": "stocks", "message": "Scanning stock F&O universe..."})
-        stock_signals, stock_ka = await _build_stock_phase(refreshed_at, _srv)
-        for line in stock_ka:
-            yield line
+        stock_task = asyncio.ensure_future(_build_stock_phase(refreshed_at, _srv))
+        while not stock_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(stock_task), timeout=5)
+            except asyncio.TimeoutError:
+                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
+        stock_signals = stock_task.result()
         yield _ndjson_line({"type": "progress", "phase": "stocks_done", "message": f"Stocks: {len(stock_signals)} signals"})
 
         # ── Phase 4: Custom signal (if requested) ────────────────────────

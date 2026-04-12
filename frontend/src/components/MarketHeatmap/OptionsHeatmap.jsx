@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { Activity, LayoutGrid, List, Search, X } from "lucide-react";
+import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -151,10 +152,13 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
 
   return (
     <div className="space-y-3" data-testid="options-heatmap">
-      <h2 className="text-lg font-bold text-white flex items-center gap-2">
-        <Activity size={18} className="text-cyan-400" />
-        Options Heatmap
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <Activity size={18} className="text-cyan-400" />
+          Options Heatmap
+        </h2>
+        <RefreshCountdown intervalMs={REFRESH_INTERVAL} isActive={true} onManualRefresh={() => loadData(activeSymbol)} />
+      </div>
 
       {/* Row 1: NIFTY / BANKNIFTY Tabs */}
       <div className="flex items-center gap-2 flex-wrap" data-testid="options-index-tabs">
