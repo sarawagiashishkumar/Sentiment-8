@@ -96,6 +96,12 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Auto-Refresh Countdown Indicator**: New `RefreshCountdown` component (SVG ring + seconds countdown + manual refresh button) added to all 3 heatmap tabs (Sector, Stocks, Options). Shows real-time countdown to next auto-refresh.
 - **Session Reset Triggers Comprehensive**: Axios response interceptor resets inactivity clock on EVERY API response (covers auto-fetch). Visibility change + focus events also reset. Auto-fetch = active engagement — server stays awake.
 
+### Phase 12: Modularization & IV Analytics Enhancement (2026-04-12)
+- **useAuth Hook Wired**: Extracted all inline auth logic (login, logout, hydrate, token, syncCredits) from App.js into `hooks/useAuth.js`. App.js reduced from 312 to 240 lines.
+- **AdminDashboard Split**: Broke 462-line monolith into orchestrator + 3 sub-components: `AdminUsersTab` (User Management table), `AdminApiTab` (Market Data API integration), `AdminCsvTab` (CSV Seed Management). Controls & Macro tabs kept inline due to tight state coupling.
+- **fno_signal_engine.py Modularized**: Extracted `_build_report`, `_compute_enhanced_index_breadth`, `_build_index_projection`, `_build_stock_fno_signals` into new `services/fno_builders.py` (679 lines). Engine reduced from 2787 to 2152 lines.
+- **IV Analytics Enhanced**: Added 5 quick symbol presets (NIFTY, BANKNIFTY, RELIANCE, TCS, HDFCBANK) and data collection status indicator showing progress toward 30-day minimum for reliable percentile bands.
+
 ## Key API Endpoints
 - `/api/fno/generate` — NDJSON streaming F&O signals
 - `/api/fno/bbe-alerts` — Real-time BBE zone monitoring
@@ -112,7 +118,6 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - `/api/admin/users` — User management
 
 ## Future/Backlog
-- Advanced IV analytics: IV cone + IV term structure (needs 30+ days iv_history data)
-- fno_signal_engine.py refactoring (~2800 lines → modular strategy files)
-- Extract useAuth hook into App.js (hook created but not wired)
-- AdminDashboard.jsx split into sub-components (438 lines)
+- Advanced IV analytics: Wait for 30+ days iv_history accumulation for meaningful percentile bands
+- Further fno_signal_engine.py modularization (confluence scoring → fno_confluence.py)
+- Performance profiling: benchmark F&O signal generation latency during market hours
