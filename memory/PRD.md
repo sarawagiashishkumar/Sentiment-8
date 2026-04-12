@@ -7,78 +7,55 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Backend**: FastAPI (Python) — all numeric computations server-side
 - **Frontend**: React + Shadcn UI + Recharts
 - **Database**: MongoDB
-- **Data Source**: Kite Connect API v3 (universal sole source — no yfinance fallbacks)
+- **Data Source**: Kite Connect API v3 (universal sole source)
 
-## Implemented Features
+## Implemented Features (Latest)
 
-### Phase 1-9: Core, Architecture, Heatmaps, Streaming, Alerts, Modularization, Code Quality
-### Phase 10-20: UI/UX, NDJSON Streaming, IV Analytics, Notifications, TradingView, Reports, Watchlist, Backtester
-### Phase 21-27: Alert Engine, Permissions, Fraud Detection, CRM, Razorpay, WebRTC, Voice AI Agent
-### Phase 28-30: Code Quality Report Fixes (auth, alerts, CRM, hooks, models)
-
-### Phase 31: Code Quality — Component & Route Splitting (2026-04-12)
-- **FNODashboard Split**: `FNOExportTable.jsx` + `useFNOGeneration.js` hook extracted. Dashboard 311 lines.
-- **OptionsHeatmap Split**: 4 sub-components extracted. Orchestrator 407→156 lines (62% reduction).
-- **Backend fno.py Split**: 3 sub-modules extracted. Core fno.py 1227→692 lines (44% reduction).
-- Test: iteration 85 — 26/26 backend, 100% frontend.
+### Phase 33: Clean Desk Protocol + 7 Items (2026-04-12)
+- **Plan Comparison Page**: New `/plans` nav tab (9th button). 4 tier cards (Free/Basic/Pro/Unlimited) showing credits, usage limits (7 categories), feature access (9 features with check/X marks), and credit costs. "CURRENT" badge on active plan. Contact-admin CTA.
+- **Low-Credits Modal**: Auto-triggers when non-owner user credits drop below 5 (once per session). Shows current balance, upgrade options, dismiss button.
+- **Live Data Fetch Isolation**: Audited — `useLivePrices.js` (WebSocket, non-blocking), `apiDedup.js` (request dedup), heatmap silent refresh all confirmed clean. No changes needed.
+- **admin.py Domain Extraction**: Extracted domain mapping CRUD (5 endpoints, ~210 lines) into `routes/admin_domains.py`. admin.py reduced from 1317→1107 lines.
+- **Type Hints**: `services/app_state.py` fully annotated with `Optional`, `dict`, `list`, `AsyncIOMotorDatabase`, return types.
+- **Payment History**: New `GET /admin/payments/history` endpoint with pagination. AdminPaymentsPanel enhanced with Pending/History tabs + history table (User, Amount, Method, Status, Purpose, Date).
+- **Fraud History Dashboard**: AdminFraudPanel enhanced with 3 summary cards (Total/Pending/Resolved), filter tabs (All/Pending/Resolved), enriched incident cards with detection type and resolved date.
+- Test: iteration 87 — 26/26 backend, 100% frontend.
 
 ### Phase 32: Superadmin CRUD Expansion & Dynamic Plans (2026-04-12)
-- **User Suspend/Unsuspend**: `POST /admin/users/{user_ref}/suspend` toggles suspended status. UI shows Active/SUSPENDED badges + Suspend/Unsuspend buttons per user row.
-- **Credit Top-up**: `POST /admin/users/{user_ref}/topup` adds credits (positive only). Green "Top-up" button per user row opens inline form.
-- **Bulk Credit Adjustment**: `POST /admin/users/bulk-credits` adjusts credits for multiple users. Checkboxes on each row, "Select All", bulk panel with +/- credit delta.
-- **CSV Export**: `GET /admin/users/export` streams CSV with user_key, username, role, credits, package, suspended, created_by, created_at. "Export CSV" button in header.
-- **Dynamic Package CRUD**: Packages now stored in MongoDB (`system_meta` collection) with fallback to hardcoded defaults. `POST /admin/packages` creates/updates tiers. `DELETE /admin/packages/{key}` deletes (protects "free" tier, blocks deletion if users assigned). UI: "+ New Plan" button, inline form with key/label/credits/limits, hover edit/delete on tier cards.
-- **Global Feature Fee Management**: `PATCH /admin/feature-costs` updates global default credit costs per feature. UI: "Global Fees" button opens editor with all 9 features (fno_generate, multibagger, portfolio, etc.) with editable number inputs.
+- User suspend/unsuspend, credit top-up, bulk credit adjustment, CSV export
+- Dynamic package CRUD (MongoDB-backed), global feature fee management
 - Test: iteration 86 — 25/25 backend, 100% frontend.
 
-## Code Quality Completion Status
+### Phase 31: Component & Route Splitting (2026-04-12)
+- FNODashboard, OptionsHeatmap, routes/fno.py all split into sub-modules
+- Test: iteration 85 — 26/26 backend, 100% frontend.
+
+### Phase 28-30: Code Quality Report Fixes
+### Phase 22-27: Razorpay, WebRTC, Voice AI, Mobile, Permissions
+### Phase 19-21: Charts, Reports, Watchlist, Backtester, Alerts, CRM, Fraud
+### Phase 1-18: Core features through notification center
+
+## Navigation Structure
+- **Main Nav (9 tabs)**: Home, Multibagger, F&O Projections, Portfolio, Market HeatMap, Reports, Watchlist, Plans, Admin
+- **Admin Sub-tabs (10)**: User Management, Permissions & Packages, Payments, CRM, Fraud Detection, Advanced Controls, Macro Events, Gen Performance, API Connect, CSV Seeds
+- **F&O Sub-tabs (6)**: Signals, Alert Rules, Trading Journal, Backtester, Performance, IV Analytics
+
+## Code Quality Status
 | Item | Status |
 |------|--------|
-| Circular import chain | FIXED |
-| Auth function complexity | FIXED (15→5) |
-| Alert system complexity | FIXED (34→<10) |
-| App.js complexity | FIXED (68→~25) |
-| AdminDashboard complexity | FIXED (96→~20) |
-| CRM admin_send_message | FIXED |
-| Empty catch blocks | FIXED |
-| Hook dependencies | FIXED |
-| FNODashboard split | DONE (Phase 31) |
-| OptionsHeatmap split | DONE (Phase 31) |
-| routes/fno.py split | DONE (Phase 31) |
-| Superadmin CRUD | DONE (Phase 32) |
-| Dynamic Plans & Fees | DONE (Phase 32) |
-| Type hint coverage | BACKLOG |
-| admin.py complexity | BACKLOG |
-
-## Key API Endpoints
-- `/api/health` — Comprehensive health check
-- `/api/fno/generate` — NDJSON streaming F&O signals
-- `/api/fno/bbe-alerts` — Real-time BBE zone monitoring
-- `/api/fno/run-backtest` — Strategy backtester
-- `/api/fno/iv-cone/{symbol}` — IV Cone percentile bands
-- `/api/fno/generation-timings` — Phase timing metrics
-- `/api/fno/custom-positions` — Custom position CRUD
-- `/api/ws/prices` — WebSocket live price streaming
-- `/api/watchlist` — Watchlist CRUD with price alerts
-- `/api/notifications` — Notification CRUD
-- `/api/journal` — Trading journal CRUD
-- `/api/reports/daily-summary` — Daily P&L report
-- `/api/alerts/rules` — Custom Alert Rules CRUD
-- `/api/admin/packages` — Package tiers CRUD (GET/POST/DELETE)
-- `/api/admin/feature-costs` — Global feature costs (PATCH)
-- `/api/admin/users/{ref}/suspend` — Toggle suspend (POST)
-- `/api/admin/users/{ref}/topup` — Credit topup (POST)
-- `/api/admin/users/bulk-credits` — Bulk credit adjustment (POST)
-- `/api/admin/users/export` — CSV export (GET)
-- `/api/admin/users/{ref}/permissions` — User permission management
-- `/api/payments/*` — Razorpay + offline QR payments
-- `/api/livehelp/*` — WebRTC live help + AI support
-- `/api/crm/*` — CRM messaging
+| Circular imports | FIXED |
+| Auth/Alert/CRM complexity | FIXED |
+| FNODashboard/OptionsHeatmap split | DONE |
+| routes/fno.py split | DONE |
+| admin.py domain extraction | DONE |
+| Superadmin CRUD | DONE |
+| Dynamic Plans & Fees | DONE |
+| Type hints (app_state.py) | DONE |
+| Live data isolation audit | DONE (clean) |
+| Plans comparison page | DONE |
+| Payment/Fraud history | DONE |
 
 ## Future/Backlog
-- P1: Isolate live data fetching logic (WebSocket/API perf optimization)
-- P2: `admin.py` complexity reduction (`admin_map_domain`, `get_user_permissions`)
-- P2: Type hints on public APIs (models + services first)
+- P2: Type hints on models/__init__.py + remaining services
 - P2: Security review of dynamic imports in test files
-- P3: Payment history accumulation as users reactivate
-- P3: Fraud incidents accumulation tracking
+- P3: Multi-currency payment support
