@@ -296,6 +296,11 @@ Future capabilities (zero additional cost):
 - **Bug Fixes**: RiskDashboard null crash, watchlist cooldown datetime type, position_service regex parser, stray 'ed' in position_service.py, CRM inbox limit increased to 200.
 - **Performance**: Parallel NIFTY+BANKNIFTY generation via asyncio.wait, reports event_type filter in MongoDB query.
 
+### Phase 26: Mobile Responsiveness + Permissions CRUD (2026-04-12)
+- **MOBILE FIX: White Background** — Added `overflow-x: hidden` to `html`, `body`, `#root`, and `<main>`. Set background `#020617` on root elements. Changed container padding from `px-4` to `px-3` for mobile. No more white bars on sides or bottom.
+- **MOBILE FIX: Sub-Tab Scrolling** — Both `SubTabs` and `AppSidebar` now use `overflow-x-auto` with `scrollbar-hide` CSS utility. Inner div has `min-w-max` so all tabs maintain size and are reachable by horizontal swipe. All 10 admin tabs and 6 F&O tabs accessible on mobile.
+- **PERMISSIONS PANEL REBUILD** — Full granular CRUD: Available Tiers overview (Free/Basic/Pro/Unlimited cards with credits and limits), user selector with credit count, Edit toggle revealing: (1) Package tier dropdown, (2) Usage limit number inputs (7 fields), (3) Feature credit cost inputs (9 fields), (4) Feature restriction toggles (9 Allowed/Blocked buttons). Save All sends package + limits + costs + restrictions in single PATCH.
+
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage
 - Payment history accumulates as users reactivate accounts
