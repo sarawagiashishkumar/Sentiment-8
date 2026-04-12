@@ -198,25 +198,122 @@ async def get_user_session_logs(user_key: str, admin_user: dict = Depends(get_cu
     return {"logs": logs, "suggestions": suggestions, "count": len(logs)}
 
 
-# ── Chat History Persistence ──────────────────────────────────────────────────
 
-@livehelp_router.get("/livehelp/ice-servers")
-async def get_ice_servers():
-    """Return ICE server config for WebRTC peer connections."""
-    WEBRTC_ICE_SERVERS = [
-        {"urls": "stun:stun.l.google.com:19302"},
-        {"urls": "stun:stun1.l.google.com:19302"},
-        {"urls": "stun:stun2.l.google.com:19302"},
-        {"urls": "stun:stun3.l.google.com:19302"},
-        {"urls": "stun:stun4.l.google.com:19302"},
-    ]
-    return {"iceServers": WEBRTC_ICE_SERVERS}
-    """Get recent chat messages for the current user."""
+# ── AI Support Agent ──────────────────────────────────────────────────────────
+
+SUPPORT_SYSTEM_PROMPT = """You are an AI Support Agent for a Trading Research & Analytics Platform. You help users with:
+
+1. PLATFORM NAVIGATION — Guide users to the right section (Multibagger, F&O Projections, Portfolio, Market Heatmap, Reports, Watchlist, Admin)
+2. FEATURE EXPLANATION — Explain how signals, confluence scores, targets, stop-losses, and position sizing work at a high level
+3. TROUBLESHOOTING — Help with common issues like "no signals found", stale data, credit usage, account access
+4. TRADING CONCEPTS — Explain F&O basics, options Greeks, risk management concepts in educational context
+
+STRICT RULES:
+- NEVER reveal backend implementation details, code, algorithms, or mathematical formulas
+- NEVER mention "Kite", "Kite Connect", or any API provider names — refer to it as "Market Data Feed" or "Data Source"
+- NEVER discuss proprietary scoring algorithms, confluence calculation methods, or signal generation internals
+- NEVER provide specific trading advice or recommendations — always add educational disclaimer
+- Keep responses concise (2-4 sentences for simple questions, max 6 for complex ones)
+- Be friendly, professional, and supportive
+- If you detect a bug from the user's description, say "I'll create a support ticket for our team" and use the ticket system
+
+COMMON ANSWERS:
+- "No signals" = Market conditions don't meet quality threshold. This protects from low-conviction trades.
+- "Stale data" = Market data feed needs re-authentication from Admin panel.
+- "Credits" = Each feature costs credits. Contact admin for top-up.
+- "API Authentication Failed" = Data source session expired. Admin needs to reconnect from the Admin > API Connect tab.
+"""
+
+
+from pydantic import BaseModel as _BaseModel
+
+
+class AIChatRequest(_BaseModel):
+    message: str
+    session_id: str = ""
+    context: list[dict] | None = None
+
+
+class AIChatResponse(_BaseModel):
+    reply: str
+    auto_ticket: bool = False
+    suggestions: list[str] | None = None
+
+
+@livehelp_router.post("/livehelp/ai-chat")
+async def ai_chat(
+    req: AIChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """AI Support Agent — answers user questions intelligently."""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        return {"reply": "AI support is temporarily unavailable. Please contact admin directly via the CRM.", "auto_ticket": False}
+
     user_key = current_user.get("user_key", "")
-    cursor = _state.db.livehelp_messages.find(
-        {"$or": [{"from_user_key": user_key}, {"to_user_key": user_key}]},
-        {"_id": 0},
-    ).sort("ts_epoch", -1).limit(50)
-    messages = await cursor.to_list(50)
-    messages.reverse()
-    return {"messages": messages}
+    username = current_user.get("username", "User")
+
+    # Get session analysis for context
+    suggestions = _analyze_session_log(user_key)
+    session_context = ""
+    if suggestions:
+        session_context = "\n\nSYSTEM CONTEXT (user's recent issues, do NOT share raw data):\n"
+        for s in suggestions[:3]:
+            session_context += f"- {s['message']}\n"
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"support_{user_key}_{req.session_id}",
+            system_message=SUPPORT_SYSTEM_PROMPT + session_context,
+        )
+        chat.with_model("openai", "gpt-4o-mini")
+
+        user_msg = UserMessage(text=req.message)
+        reply_text = await chat.send_message(user_msg)
+
+        # Detect bug-related keywords for auto-ticket
+        bug_keywords = ["error", "crash", "broken", "not working", "bug", "failed", "stuck", "blank"]
+        should_ticket = any(kw in req.message.lower() for kw in bug_keywords)
+
+        if should_ticket:
+            await _auto_generate_ticket(user_key, f"AI-detected issue from user '{username}': {req.message[:200]}")
+
+        # Store AI conversation
+        now = datetime.now(timezone.utc)
+        await _state.db.livehelp_messages.insert_one({
+            "session_id": req.session_id,
+            "from_role": "user",
+            "from_user_key": user_key,
+            "from_username": username,
+            "text": req.message,
+            "ts": now.isoformat(),
+            "ts_epoch": now.timestamp(),
+        })
+        await _state.db.livehelp_messages.insert_one({
+            "session_id": req.session_id,
+            "from_role": "ai_agent",
+            "from_user_key": "system",
+            "from_username": "AI Support",
+            "text": reply_text,
+            "ts": now.isoformat(),
+            "ts_epoch": now.timestamp(),
+        })
+
+        suggestion_list = [s["message"][:80] for s in suggestions[:2]] if suggestions else None
+
+        return {"reply": reply_text, "auto_ticket": should_ticket, "suggestions": suggestion_list}
+
+    except Exception as exc:
+        logger.warning("AI chat failed: %s", exc)
+        # Fallback: use rule-based suggestions
+        fallback = _analyze_session_log(user_key)
+        if fallback:
+            return {"reply": fallback[0]["message"], "auto_ticket": False, "suggestions": [s["message"][:80] for s in fallback[:2]]}
+        return {"reply": "I'm having trouble connecting right now. Please try again or use the Contact Support button for direct admin assistance.", "auto_ticket": False}

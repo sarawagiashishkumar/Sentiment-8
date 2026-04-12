@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import "@/App.css";
 
@@ -14,24 +14,13 @@ import { useNotifications, NotificationBell, NotificationPanel } from "@/compone
 import { usePushNotifications, PushNotifToggle } from "@/components/Shared/PushNotifications";
 import { LiveHelpModule } from "@/components/Shared/LiveHelpModule";
 import { UserCrmInbox } from "@/components/Shared/UserCrmInbox";
-
-// Lazy-loaded heavy dashboard components (~40% initial bundle reduction)
-const MultibaggerDashboard = lazy(() => import("@/components/Multibagger/MultibaggerDashboard").then(m => ({ default: m.MultibaggerDashboard })));
-const FNODashboard = lazy(() => import("@/components/FNO/FNODashboard").then(m => ({ default: m.FNODashboard })));
-const PortfolioDashboard = lazy(() => import("@/components/Portfolio/PortfolioDashboard").then(m => ({ default: m.PortfolioDashboard })));
-const AdminDashboard = lazy(() => import("@/components/Admin/AdminDashboard").then(m => ({ default: m.AdminDashboard })));
-const MarketHeatmapDashboard = lazy(() => import("@/components/MarketHeatmap/MarketHeatmapDashboard").then(m => ({ default: m.MarketHeatmapDashboard })));
-const ReportsDashboard = lazy(() => import("@/components/Reports/ReportsDashboard").then(m => ({ default: m.ReportsDashboard })));
-const WatchlistPanel = lazy(() => import("@/components/Watchlist/WatchlistPanel").then(m => ({ default: m.WatchlistPanel })));
-
-function LazyFallback() {
-  return (
-    <div className="flex items-center justify-center py-20">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
-      <span className="ml-3 text-sm text-slate-400">Loading...</span>
-    </div>
-  );
-}
+import { MultibaggerDashboard } from "@/components/Multibagger/MultibaggerDashboard";
+import { FNODashboard } from "@/components/FNO/FNODashboard";
+import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
+import { AdminDashboard } from "@/components/Admin/AdminDashboard";
+import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
+import { ReportsDashboard } from "@/components/Reports/ReportsDashboard";
+import { WatchlistPanel } from "@/components/Watchlist/WatchlistPanel";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -308,7 +297,6 @@ export default function App() {
 
         <ErrorBoundary>
         <UserCrmInbox authHeaders={authHeaders} />
-        <Suspense fallback={<LazyFallback />}>
         {currentPage === "multibagger" ? (
           <MultibaggerDashboard authHeaders={authHeaders} syncCredits={syncCredits} />
         ) : null}
@@ -345,7 +333,6 @@ export default function App() {
         {currentPage === "watchlist" ? (
           <WatchlistPanel authHeaders={authHeaders} />
         ) : null}
-        </Suspense>
         </ErrorBoundary>
 
         <AppFooter />
