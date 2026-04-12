@@ -10,11 +10,14 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Any, List, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 
 from deps import get_admin_user, get_owner_user, _is_owner
+import services.app_state as _state
 from models import (
     AdminCreateUserRequest,
     AdminSetCreditsRequest,
@@ -819,3 +822,199 @@ async def delete_csv_seed_endpoint(
     if result.get("error"):
         raise HTTPException(404, detail=result["error"])
     return result
+
+
+# ── Permission & Package Management (Tiered System) ──────────────────────────
+
+DEFAULT_FEATURE_COSTS = {
+    "fno_generate": 2.0,
+    "multibagger_generate": 2.0,
+    "portfolio_analyze": 0.2,
+    "custom_position": 1.0,
+    "backtest_run": 0.5,
+    "iv_collect": 0.0,
+    "reports_view": 0.0,
+    "watchlist_add": 0.0,
+    "alert_rule_create": 0.0,
+}
+
+DEFAULT_USAGE_LIMITS = {
+    "fno_generate_daily": 50,
+    "multibagger_generate_daily": 20,
+    "portfolio_analyze_daily": 100,
+    "custom_position_total": 50,
+    "backtest_run_daily": 20,
+    "alert_rules_total": 10,
+    "watchlist_items_total": 50,
+}
+
+PACKAGES = {
+    "free": {"label": "Free Tier", "credits": 10, "limits": {**DEFAULT_USAGE_LIMITS, "fno_generate_daily": 5, "multibagger_generate_daily": 3, "alert_rules_total": 3, "watchlist_items_total": 10}},
+    "basic": {"label": "Basic", "credits": 100, "limits": {**DEFAULT_USAGE_LIMITS, "fno_generate_daily": 20, "multibagger_generate_daily": 10}},
+    "pro": {"label": "Pro", "credits": 500, "limits": DEFAULT_USAGE_LIMITS},
+    "unlimited": {"label": "Unlimited", "credits": 999999, "limits": {k: 999999 for k in DEFAULT_USAGE_LIMITS}},
+}
+
+
+class PermissionUpdate(BaseModel):
+    feature_costs: dict | None = None  # Override per-feature credit costs
+    usage_limits: dict | None = None   # Override usage caps
+    package: str | None = None         # Assign a package tier
+    feature_restrictions: list[str] | None = None  # List of disabled features
+
+
+@admin_router.get("/admin/packages")
+async def get_available_packages(admin_user: dict = Depends(get_admin_user)):
+    """List all available service packages with costs and limits."""
+    return {
+        "packages": PACKAGES,
+        "default_feature_costs": DEFAULT_FEATURE_COSTS,
+        "default_usage_limits": DEFAULT_USAGE_LIMITS,
+    }
+
+
+@admin_router.get("/admin/users/{user_ref}/permissions")
+async def get_user_permissions(
+    user_ref: str,
+    admin_user: dict = Depends(get_admin_user),
+):
+    """Get a user's current permissions, package, and usage."""
+    import server as _srv
+
+    target = await _srv._get_user_by_ref(user_ref)
+    if not target:
+        raise HTTPException(404, "User not found")
+
+    package = target.get("package", "free")
+    pkg_config = PACKAGES.get(package, PACKAGES["free"])
+
+    # Merge custom overrides with package defaults
+    feature_costs = {**DEFAULT_FEATURE_COSTS, **(pkg_config.get("feature_costs", {})), **(target.get("feature_costs", {}))}
+    usage_limits = {**pkg_config.get("limits", DEFAULT_USAGE_LIMITS), **(target.get("usage_limits", {}))}
+    restrictions = target.get("feature_restrictions", [])
+
+    # Get current day usage
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0).timestamp()
+    usage = {}
+    for feature in ["fno_generate", "multibagger_generate", "portfolio_analyze", "backtest_run"]:
+        count = await _state.db.usage_tracking.count_documents({
+            "user_key": target["user_key"],
+            "feature": feature,
+            "ts_epoch": {"$gte": today_start},
+        })
+        usage[f"{feature}_today"] = count
+
+    # Total counts
+    for feature in ["custom_position", "alert_rules", "watchlist_items"]:
+        if feature == "custom_position":
+            count = await _state.db.custom_positions.count_documents({"user_key": target["user_key"], "status": "OPEN"})
+        elif feature == "alert_rules":
+            count = await _state.db.alert_rules.count_documents({"user_key": target["user_key"]})
+        elif feature == "watchlist_items":
+            count = await _state.db.user_watchlist.count_documents({"user_key": target["user_key"]})
+        else:
+            count = 0
+        usage[f"{feature}_total"] = count
+
+    return {
+        "user_key": target["user_key"],
+        "username": target.get("username"),
+        "package": package,
+        "package_label": pkg_config.get("label", "Free"),
+        "feature_costs": feature_costs,
+        "usage_limits": usage_limits,
+        "feature_restrictions": restrictions,
+        "current_usage": usage,
+        "suspended": target.get("suspended", False),
+    }
+
+
+@admin_router.patch("/admin/users/{user_ref}/permissions")
+async def update_user_permissions(
+    user_ref: str,
+    payload: PermissionUpdate,
+    admin_user: dict = Depends(get_admin_user),
+):
+    """Update a user's permissions, package tier, or feature restrictions."""
+    import server as _srv
+    from pymongo import ReturnDocument
+
+    target = await _srv._get_user_by_ref(user_ref)
+    if not target:
+        raise HTTPException(404, "User not found")
+
+    if target["role"] == "owner" and not _is_owner(admin_user):
+        raise HTTPException(403, "Only Owner can modify Owner permissions")
+
+    updates = {}
+    if payload.package is not None:
+        if payload.package not in PACKAGES:
+            raise HTTPException(400, f"Invalid package. Options: {list(PACKAGES.keys())}")
+        updates["package"] = payload.package
+        # Apply package credits
+        pkg = PACKAGES[payload.package]
+        updates["credits"] = max(float(target.get("credits", 0)), pkg["credits"])
+
+    if payload.feature_costs is not None:
+        # Validate keys
+        invalid = [k for k in payload.feature_costs if k not in DEFAULT_FEATURE_COSTS]
+        if invalid:
+            raise HTTPException(400, f"Invalid feature cost keys: {invalid}")
+        updates["feature_costs"] = payload.feature_costs
+
+    if payload.usage_limits is not None:
+        invalid = [k for k in payload.usage_limits if k not in DEFAULT_USAGE_LIMITS]
+        if invalid:
+            raise HTTPException(400, f"Invalid usage limit keys: {invalid}")
+        updates["usage_limits"] = payload.usage_limits
+
+    if payload.feature_restrictions is not None:
+        updates["feature_restrictions"] = payload.feature_restrictions
+
+    if not updates:
+        raise HTTPException(400, "No changes provided")
+
+    updated = await _state.db.app_users.find_one_and_update(
+        {"user_key": target["user_key"]},
+        {"$set": updates},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+
+    return {"updated": True, "user_key": target["user_key"], "changes": list(updates.keys())}
+
+
+async def check_usage_limit(user: dict, feature: str) -> bool:
+    """Check if a user has exceeded their usage limit for a feature. Returns True if OK."""
+    package = user.get("package", "free")
+    pkg_config = PACKAGES.get(package, PACKAGES["free"])
+    limits = {**pkg_config.get("limits", DEFAULT_USAGE_LIMITS), **(user.get("usage_limits", {}))}
+
+    # Check feature restrictions
+    restrictions = user.get("feature_restrictions", [])
+    if feature in restrictions:
+        return False
+
+    daily_key = f"{feature}_daily"
+    total_key = f"{feature}_total"
+
+    if daily_key in limits:
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0).timestamp()
+        count = await _state.db.usage_tracking.count_documents({
+            "user_key": user["user_key"],
+            "feature": feature,
+            "ts_epoch": {"$gte": today_start},
+        })
+        if count >= limits[daily_key]:
+            return False
+
+    return True
+
+
+async def track_usage(user_key: str, feature: str):
+    """Record a feature usage event for limit tracking."""
+    await _state.db.usage_tracking.insert_one({
+        "user_key": user_key,
+        "feature": feature,
+        "ts_epoch": datetime.now(timezone.utc).timestamp(),
+    })

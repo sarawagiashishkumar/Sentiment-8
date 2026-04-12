@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from deps import get_current_user
 from models import AccessRequest, AccessResponse, MeResponse, UserSettingsUpdate
@@ -25,7 +25,7 @@ def _srv():
 
 
 @auth_router.post("/auth/access", response_model=AccessResponse)
-async def auth_access(payload: AccessRequest):
+async def auth_access(payload: AccessRequest, request: Request):
     _s = _srv()
     from services.user_service import _ensure_owner_exists, _get_user_by_username
     from services.validators import _validate_username
@@ -45,6 +45,41 @@ async def auth_access(payload: AccessRequest):
         user = await _ensure_owner_exists()
     if not user:
         raise HTTPException(status_code=404, detail="Username not found. Please contact admin.")
+
+    # ── Check if account is suspended ──
+    if user.get("suspended"):
+        fee = user.get("reactivation_fee", 2500)
+        raise HTTPException(
+            status_code=403,
+            detail=f"ACCOUNT_SUSPENDED|Your account has been suspended due to a Fraud Login Attempt. "
+                   f"A reactivation fee of INR {fee} is required. "
+                   f"Please use the contact form below to request reactivation.",
+        )
+
+    # ── Geospatial fraud detection (non-admin users only) ──
+    if user.get("role") not in ("owner", "sub_admin"):
+        ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if not ip and request.client:
+            ip = request.client.host
+        user_agent = request.headers.get("User-Agent", "")
+
+        try:
+            from routes.fraud import check_impossible_travel, suspend_account_for_fraud
+            fraud_info = await check_impossible_travel(user["user_key"], ip, user_agent)
+            if fraud_info:
+                await suspend_account_for_fraud(user["user_key"], fraud_info)
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"ACCOUNT_SUSPENDED|Fraud Login Attempt detected. "
+                           f"Impossible travel from {fraud_info.get('previous_location', 'Unknown')} "
+                           f"to {fraud_info.get('current_location', 'Unknown')} "
+                           f"({fraud_info.get('distance_km', 0)} km in {fraud_info.get('elapsed_hours', 0)} hours). "
+                           f"Account suspended. Reactivation fee: INR 2,500.",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.debug("Fraud check failed (non-fatal): %s", exc)
 
     token = str(uuid.uuid4())
     _s.SESSION_STORE[token] = {

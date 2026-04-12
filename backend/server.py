@@ -517,6 +517,9 @@ from routes.journal import journal_router
 from routes.reports import reports_router
 from routes.watchlist import watchlist_router
 from routes.risk import risk_router
+from routes.alerts import alerts_router
+from routes.fraud import fraud_router
+from routes.crm import crm_router
 api_router.include_router(fno_router)
 api_router.include_router(admin_router)
 api_router.include_router(market_data_router)
@@ -529,6 +532,9 @@ api_router.include_router(journal_router)
 api_router.include_router(reports_router)
 api_router.include_router(watchlist_router)
 api_router.include_router(risk_router)
+api_router.include_router(alerts_router)
+api_router.include_router(fraud_router)
+api_router.include_router(crm_router)
 
 app.include_router(api_router)
 
@@ -749,6 +755,26 @@ async def startup_tasks():
         logger.info("Watchlist price alert monitor started (60s intervals during market hours)")
     except Exception as exc:
         logger.warning("Watchlist monitor start failed (non-fatal): %s", exc)
+
+    # ── Custom Alert Rule Monitor ─────────────────────────────────────
+    try:
+        from routes.alerts import run_alert_rule_monitor
+        asyncio.create_task(run_alert_rule_monitor())
+        logger.info("Custom alert rule monitor started (30s intervals during market hours)")
+    except Exception as exc:
+        logger.warning("Alert rule monitor start failed (non-fatal): %s", exc)
+
+    # ── CRM/Fraud DB indexes ──────────────────────────────────────────
+    try:
+        await db.alert_rules.create_index([("user_key", 1), ("enabled", 1)])
+        await db.login_sessions.create_index([("user_key", 1), ("ts_epoch", -1)])
+        await db.fraud_incidents.create_index([("user_key", 1), ("status", 1)])
+        await db.crm_messages.create_index([("to", 1), ("ts_epoch", -1)])
+        await db.crm_messages.create_index([("to_user_key", 1), ("dismissed", 1)])
+        await db.usage_tracking.create_index([("user_key", 1), ("feature", 1), ("ts_epoch", -1)])
+        logger.info("CRM/Fraud/Alert indexes ensured")
+    except Exception as exc:
+        logger.warning("CRM/Fraud index creation failed (non-fatal): %s", exc)
 
     try:
         import asyncio as _aio
