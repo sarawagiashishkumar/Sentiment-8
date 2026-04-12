@@ -15,6 +15,7 @@ import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
 import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
 import { ErrorBoundary } from "@/components/Shared/ErrorBoundary";
+import { useNotifications, NotificationBell, NotificationPanel } from "@/components/Shared/NotificationCenter";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -28,6 +29,9 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState("home");
   const [customPositions, setCustomPositions] = useState([]);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+
+  const { notifications, unreadCount, addNotification, markRead, markAllRead, dismiss: dismissNotif, clearAll: clearAllNotifs } = useNotifications();
 
   const audioContextRef = useRef(null);
   const urgentBuzzedRef = useRef(new Set());
@@ -150,19 +154,28 @@ export default function App() {
     const freshUrgent = customPositions.filter((p) => urgentAlertSet.has(p.alert) && !urgentBuzzedRef.current.has(p.id));
     if (freshUrgent.length > 0) {
       playAlertSound("urgent");
-      freshUrgent.forEach((p) => urgentBuzzedRef.current.add(p.id));
+      freshUrgent.forEach((p) => {
+        urgentBuzzedRef.current.add(p.id);
+        addNotification("critical", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
+      });
     }
 
     const freshTargets = customPositions.filter((p) => targetStateSet.has(p.signal_state) && !targetBuzzedRef.current.has(`${p.id}_${p.signal_state}`));
     if (freshTargets.length > 0) {
       playAlertSound("target");
-      freshTargets.forEach((p) => targetBuzzedRef.current.add(`${p.id}_${p.signal_state}`));
+      freshTargets.forEach((p) => {
+        targetBuzzedRef.current.add(`${p.id}_${p.signal_state}`);
+        addNotification("success", p.signal_state.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.signal_state}`, { symbol: p.symbol });
+      });
     }
 
     const freshWarnings = customPositions.filter((p) => warningAlertSet.has(p.alert) && !warningBuzzedRef.current.has(p.id));
     if (freshWarnings.length > 0 && freshUrgent.length === 0) {
       playAlertSound("warning");
-      freshWarnings.forEach((p) => warningBuzzedRef.current.add(p.id));
+      freshWarnings.forEach((p) => {
+        warningBuzzedRef.current.add(p.id);
+        addNotification("warning", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customPositions, alertSoundEnabled]);
@@ -199,7 +212,10 @@ export default function App() {
     <main className="min-h-screen dashboard-dark-bg text-slate-100" data-testid="app-shell">
       <div className="dashboard-grid-overlay" />
       <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <AppHeader me={me} onLogout={handleLogout} authHeaders={authHeaders} />
+        <AppHeader
+          me={me} onLogout={handleLogout} authHeaders={authHeaders}
+          notifBell={<NotificationBell unreadCount={unreadCount} onClick={() => setNotifPanelOpen(prev => !prev)} />}
+        />
         <AppSidebar
           currentPage={currentPage} setCurrentPage={setCurrentPage}
           isAdmin={isAdmin}
@@ -212,7 +228,7 @@ export default function App() {
 
         {/* Market Data API Warning for all data-dependent sections */}
         {["multibagger", "fno", "portfolio", "heatmap"].includes(currentPage) && (
-          <KiteLiveWarning authHeaders={authHeaders} />
+          <KiteLiveWarning authHeaders={authHeaders} addNotification={addNotification} />
         )}
 
         <ErrorBoundary>
@@ -247,6 +263,13 @@ export default function App() {
         </ErrorBoundary>
 
         <AppFooter />
+
+        <NotificationPanel
+          notifications={notifications} isOpen={notifPanelOpen}
+          onClose={() => setNotifPanelOpen(false)}
+          onMarkRead={markRead} onMarkAllRead={markAllRead}
+          onDismiss={dismissNotif} onClearAll={clearAllNotifs}
+        />
       </div>
     </main>
   );

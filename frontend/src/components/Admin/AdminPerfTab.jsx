@@ -6,18 +6,30 @@ import { RefreshCw, Clock, Zap, TrendingUp } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-function PhaseBar({ label, ms, maxMs, color }) {
+// Phase timing thresholds (ms) — visual warning when exceeded
+const THRESHOLDS = {
+  nifty_ms: 10000,
+  banknifty_ms: 10000,
+  stocks_ms: 30000,
+  assembly_ms: 5000,
+  total_ms: 60000,
+  scan_ms: 30000,
+};
+
+function PhaseBar({ label, ms, maxMs, color, threshold }) {
   const pct = maxMs > 0 ? Math.min((ms / maxMs) * 100, 100) : 0;
+  const overThreshold = threshold && ms > threshold;
   return (
     <div className="flex items-center gap-2" data-testid={`perf-bar-${label.toLowerCase().replace(/\s/g, "-")}`}>
       <span className="text-[10px] text-slate-400 w-20 text-right truncate">{label}</span>
       <div className="flex-1 h-5 bg-slate-800 rounded-md overflow-hidden relative">
         <div
-          className="h-full rounded-md transition-all duration-500 ease-out"
-          style={{ width: `${pct}%`, backgroundColor: color }}
+          className={`h-full rounded-md transition-all duration-500 ease-out ${overThreshold ? "animate-pulse" : ""}`}
+          style={{ width: `${pct}%`, backgroundColor: overThreshold ? "rgb(239, 68, 68)" : color }}
         />
         <span className="absolute inset-0 flex items-center px-2 text-[10px] font-mono text-white/90">
           {ms > 0 ? `${(ms / 1000).toFixed(2)}s` : "--"}
+          {overThreshold && <span className="ml-1 text-rose-300 font-bold">SLOW</span>}
         </span>
       </div>
     </div>
@@ -76,10 +88,10 @@ export function AdminPerfTab({ authHeaders }) {
           </div>
           {hasFNO ? (
             <div className="space-y-1.5">
-              <PhaseBar label="NIFTY" ms={fno.nifty_ms || 0} maxMs={fnoMax} color="rgb(6, 182, 212)" />
-              <PhaseBar label="BANKNIFTY" ms={fno.banknifty_ms || 0} maxMs={fnoMax} color="rgb(139, 92, 246)" />
-              <PhaseBar label="Stocks" ms={fno.stocks_ms || 0} maxMs={fnoMax} color="rgb(16, 185, 129)" />
-              <PhaseBar label="Assembly" ms={fno.assembly_ms || 0} maxMs={fnoMax} color="rgb(251, 146, 60)" />
+              <PhaseBar label="NIFTY" ms={fno.nifty_ms || 0} maxMs={fnoMax} color="rgb(6, 182, 212)" threshold={THRESHOLDS.nifty_ms} />
+              <PhaseBar label="BANKNIFTY" ms={fno.banknifty_ms || 0} maxMs={fnoMax} color="rgb(139, 92, 246)" threshold={THRESHOLDS.banknifty_ms} />
+              <PhaseBar label="Stocks" ms={fno.stocks_ms || 0} maxMs={fnoMax} color="rgb(16, 185, 129)" threshold={THRESHOLDS.stocks_ms} />
+              <PhaseBar label="Assembly" ms={fno.assembly_ms || 0} maxMs={fnoMax} color="rgb(251, 146, 60)" threshold={THRESHOLDS.assembly_ms} />
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-800">
                 <span className="text-xs text-slate-400">Total</span>
                 <span className="text-sm font-bold font-mono text-white" data-testid="perf-fno-total">
@@ -88,6 +100,11 @@ export function AdminPerfTab({ authHeaders }) {
               </div>
               {fno.signal_count != null && (
                 <span className="text-[10px] text-slate-500">Signals generated: {fno.signal_count}</span>
+              )}
+              {fno.total_ms > THRESHOLDS.total_ms && (
+                <div className="rounded-md bg-rose-900/30 border border-rose-500/30 p-2 text-[10px] text-rose-300 mt-1" data-testid="perf-fno-slow-warning">
+                  Total generation exceeded {(THRESHOLDS.total_ms / 1000)}s threshold. Check Market Data API latency.
+                </div>
               )}
             </div>
           ) : (
@@ -108,7 +125,7 @@ export function AdminPerfTab({ authHeaders }) {
           </div>
           {hasMB ? (
             <div className="space-y-1.5">
-              <PhaseBar label="Scan" ms={mb.scan_ms || 0} maxMs={mb.total_ms || 1} color="rgb(16, 185, 129)" />
+              <PhaseBar label="Scan" ms={mb.scan_ms || 0} maxMs={mb.total_ms || 1} color="rgb(16, 185, 129)" threshold={THRESHOLDS.scan_ms} />
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-800">
                 <span className="text-xs text-slate-400">Total</span>
                 <span className="text-sm font-bold font-mono text-white" data-testid="perf-mb-total">

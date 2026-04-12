@@ -52,7 +52,7 @@ function showBrowserNotification(title, body) {
 
 // ── Main Component: Background API Health Polling ────────────────────────────
 
-export function KiteLiveWarning({ authHeaders }) {
+export function KiteLiveWarning({ authHeaders, addNotification }) {
   const [disconnected, setDisconnected] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [lastDisconnectTime, setLastDisconnectTime] = useState(null);
@@ -76,6 +76,9 @@ export function KiteLiveWarning({ authHeaders }) {
             "API Authentication Failed",
             "Market data connection lost. Please re-authenticate immediately."
           );
+          if (addNotification) {
+            addNotification("critical", "API Disconnected", "Market Data API connection lost. Re-authenticate in Admin panel.");
+          }
           alarmPlayedRef.current = true;
           setLastDisconnectTime(new Date());
         }

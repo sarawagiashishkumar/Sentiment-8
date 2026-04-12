@@ -2,7 +2,7 @@ import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SessionHealthIndicator } from "./SessionHealthIndicator";
 
-export function AppHeader({ me, onLogout, authHeaders }) {
+export function AppHeader({ me, onLogout, authHeaders, notifBell }) {
   return (
     <header className="mb-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-3 sm:p-4 shadow-lg" data-testid="app-header">
       <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
@@ -12,6 +12,7 @@ export function AppHeader({ me, onLogout, authHeaders }) {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <SessionHealthIndicator authHeaders={authHeaders} />
+          {notifBell}
           <Button
             type="button"
             onClick={onLogout}

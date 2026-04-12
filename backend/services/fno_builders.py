@@ -25,8 +25,6 @@ from models import (
 
 from services.fno_signal_engine import (
     _srv,
-    _compute_report_from_rows,
-    _format_script,
     build_fno_signal,
     _build_signal_for_contract,
     _safe_signal,
@@ -35,6 +33,7 @@ from services.fno_signal_engine import (
     log_batch1_features,
     _calculate_confluence_score_master_spec,
 )
+from services.fno_utils import _compute_report_from_rows, _format_script
 from services.technical_core import compute_full_technical_snapshot
 from services.iv_history import capture_atm_iv, get_iv_stats_52w
 from services.confluence_score_v2 import CONFLUENCE_THRESHOLD
