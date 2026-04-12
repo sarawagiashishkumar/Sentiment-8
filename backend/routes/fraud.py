@@ -224,12 +224,16 @@ async def list_fraud_incidents(
     ).sort("created_at", -1).limit(100)
     incidents = await cursor.to_list(100)
 
-    # Enrich with username
+    # Batch fetch usernames to avoid N+1 queries
+    user_keys = list(set(inc.get("user_key", "") for inc in incidents if inc.get("user_key")))
+    username_map = {}
+    if user_keys:
+        users = await _state.db.app_users.find(
+            {"user_key": {"$in": user_keys}}, {"_id": 0, "user_key": 1, "username": 1}
+        ).to_list(len(user_keys))
+        username_map = {u["user_key"]: u.get("username", "Unknown") for u in users}
     for inc in incidents:
-        user = await _state.db.app_users.find_one(
-            {"user_key": inc.get("user_key", "")}, {"_id": 0, "username": 1}
-        )
-        inc["username"] = (user or {}).get("username", "Unknown")
+        inc["username"] = username_map.get(inc.get("user_key", ""), "Unknown")
 
     return {"incidents": incidents, "count": len(incidents)}
 

@@ -121,9 +121,14 @@ async def log_session_action(
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     _session_logs[user_key].append(entry)
-    # Keep only last 100 entries per user
+    # Keep only last 100 entries per user, and cap total tracked users at 500
     if len(_session_logs[user_key]) > 100:
         _session_logs[user_key] = _session_logs[user_key][-100:]
+    if len(_session_logs) > 500:
+        # Evict oldest entries (users who haven't logged activity recently)
+        oldest_key = min(_session_logs.keys(), key=lambda k: _session_logs[k][-1].get("ts", "") if _session_logs[k] else "")
+        if oldest_key != user_key:
+            del _session_logs[oldest_key]
 
     # Auto-detect errors and generate tickets
     if action.get("status") in ("500", "502", "503") or action.get("error"):

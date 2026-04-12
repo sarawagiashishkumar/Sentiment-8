@@ -122,10 +122,16 @@ async def list_pending_payments(admin_user: dict = Depends(get_current_user)):
         {"_id": 0, "proof_image": 0},  # Exclude large image from list
     ).sort("created_at", -1).limit(50)
     payments = await cursor.to_list(50)
-    # Enrich with username
+    # Batch fetch usernames to avoid N+1 queries
+    user_keys = list(set(p.get("user_key", "") for p in payments if p.get("user_key")))
+    username_map = {}
+    if user_keys:
+        users = await _state.db.app_users.find(
+            {"user_key": {"$in": user_keys}}, {"_id": 0, "user_key": 1, "username": 1}
+        ).to_list(len(user_keys))
+        username_map = {u["user_key"]: u.get("username", "Unknown") for u in users}
     for p in payments:
-        user = await _state.db.app_users.find_one({"user_key": p.get("user_key", "")}, {"_id": 0, "username": 1})
-        p["username"] = (user or {}).get("username", "Unknown")
+        p["username"] = username_map.get(p.get("user_key", ""), "Unknown")
     return {"payments": payments, "count": len(payments)}
 
 
@@ -195,9 +201,16 @@ async def get_payment_history(
     ).sort("created_at", -1).skip(skip).limit(limit)
     payments = await cursor.to_list(limit)
     total = await _state.db.payments.count_documents({})
+    # Batch fetch usernames to avoid N+1 queries
+    user_keys = list(set(p.get("user_key", "") for p in payments if p.get("user_key")))
+    username_map = {}
+    if user_keys:
+        users = await _state.db.app_users.find(
+            {"user_key": {"$in": user_keys}}, {"_id": 0, "user_key": 1, "username": 1}
+        ).to_list(len(user_keys))
+        username_map = {u["user_key"]: u.get("username", "Unknown") for u in users}
     for p in payments:
-        user = await _state.db.app_users.find_one({"user_key": p.get("user_key", "")}, {"_id": 0, "username": 1})
-        p["username"] = (user or {}).get("username", "Unknown")
+        p["username"] = username_map.get(p.get("user_key", ""), "Unknown")
     return {"payments": payments, "count": len(payments), "total": total}
 
 

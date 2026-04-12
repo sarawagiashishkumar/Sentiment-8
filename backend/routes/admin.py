@@ -1039,7 +1039,8 @@ async def update_user_permissions(
 async def check_usage_limit(user: dict, feature: str) -> bool:
     """Check if a user has exceeded their usage limit for a feature. Returns True if OK."""
     package = user.get("package", "free")
-    pkg_config = PACKAGES.get(package, PACKAGES["free"])
+    all_pkgs = await _get_packages()
+    pkg_config = all_pkgs.get(package, all_pkgs.get("free", PACKAGES["free"]))
     limits = {**pkg_config.get("limits", DEFAULT_USAGE_LIMITS), **(user.get("usage_limits", {}))}
 
     # Check feature restrictions
@@ -1147,17 +1148,21 @@ async def purge_usage_tracking(admin_user: dict = Depends(get_owner_user)):
 @admin_router.get("/admin/data/stats")
 async def get_data_stats(admin_user: dict = Depends(get_admin_user)):
     """Get document counts for all data collections."""
+    import asyncio as _aio
     collections = [
         "crm_messages", "user_notifications", "livehelp_messages",
         "fraud_incidents", "payments", "login_sessions", "usage_tracking",
         "alert_rules", "trading_journal", "fno_signal_log",
     ]
-    stats = {}
-    for col in collections:
+
+    async def _count(col_name: str):
         try:
-            stats[col] = await _state.db[col].count_documents({})
+            return col_name, await _state.db[col_name].count_documents({})
         except Exception:
-            stats[col] = -1
+            return col_name, -1
+
+    results = await _aio.gather(*[_count(c) for c in collections])
+    stats = {name: count for name, count in results}
     return {"stats": stats}
 
 
@@ -1167,9 +1172,10 @@ async def search_users(
     admin_user: dict = Depends(get_admin_user),
 ):
     """Search users by username (partial match)."""
+    import server as _srv
     cursor = _state.db.app_users.find(
         {"username": {"$regex": q, "$options": "i"}},
         {"_id": 0},
     ).limit(20)
     users = await cursor.to_list(20)
-    return {"users": users, "count": len(users)}
+    return {"users": [_srv._map_user_view(u) for u in users], "count": len(users)}

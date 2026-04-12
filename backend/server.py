@@ -796,8 +796,11 @@ async def startup_tasks():
         await db.usage_tracking.create_index([("user_key", 1), ("feature", 1), ("ts_epoch", -1)])
         await db.payments.create_index([("user_key", 1), ("status", 1)])
         await db.livehelp_messages.create_index([("session_id", 1), ("ts_epoch", -1)])
-        # Performance indexes for heavy queries
-        await db.fno_signal_log.create_index([("generated_at", -1)])
+        # Performance indexes for heavy queries (use background=True to avoid conflicts)
+        try:
+            await db.fno_signal_log.create_index([("generated_at", -1)], background=True)
+        except Exception:
+            pass  # Index may already exist with different name
         await db.trading_journal.create_index([("user_key", 1), ("ts_epoch", -1)])
         await db.trading_journal.create_index([("user_key", 1), ("event_type", 1)])
         await db.user_notifications.create_index([("user_key", 1), ("ts", -1)])
@@ -805,6 +808,45 @@ async def startup_tasks():
         logger.info("All database indexes ensured")
     except Exception as exc:
         logger.warning("CRM/Fraud index creation failed (non-fatal): %s", exc)
+
+    # ── Session cleanup: purge stale sessions every 30 minutes ────────
+    async def _session_cleanup_task():
+        while True:
+            await asyncio.sleep(1800)  # 30 minutes
+            try:
+                now = datetime.now(timezone.utc)
+                stale_tokens = []
+                for token, session in SESSION_STORE.items():
+                    created_str = session.get("created_at", "")
+                    try:
+                        created = datetime.fromisoformat(created_str)
+                        if (now - created).total_seconds() > 86400:  # 24h max session lifetime
+                            stale_tokens.append(token)
+                    except (ValueError, TypeError):
+                        stale_tokens.append(token)
+                for token in stale_tokens:
+                    SESSION_STORE.pop(token, None)
+                if stale_tokens:
+                    logger.info("Session cleanup: purged %d stale sessions", len(stale_tokens))
+            except Exception as exc:
+                logger.debug("Session cleanup failed: %s", exc)
+    asyncio.create_task(_session_cleanup_task())
+    logger.info("Session cleanup task started (30-min intervals, 24h TTL)")
+
+    # ── LiveHelp room cleanup: purge stale rooms every 10 minutes ─────
+    async def _help_room_cleanup_task():
+        while True:
+            await asyncio.sleep(600)  # 10 minutes
+            try:
+                stale = [sid for sid, room in _help_rooms.items()
+                         if not room.get("user_ws") and not room.get("admin_ws")]
+                for sid in stale:
+                    _help_rooms.pop(sid, None)
+                if stale:
+                    logger.info("LiveHelp cleanup: purged %d stale rooms", len(stale))
+            except Exception:
+                pass
+    asyncio.create_task(_help_room_cleanup_task())
 
     try:
         import asyncio as _aio
@@ -1044,7 +1086,3 @@ async def ws_livehelp(websocket: WebSocket, session_id: str):
     except Exception as exc:
         logger.debug("LiveHelp WS error: %s", exc)
         _help_rooms.pop(session_id, None)
-
-        logger.debug("WS client disconnected")
-    except Exception as exc:
-        logger.debug("WS error: %s", exc)
