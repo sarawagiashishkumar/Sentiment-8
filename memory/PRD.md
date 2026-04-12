@@ -315,8 +315,30 @@ Future capabilities (zero additional cost):
 - **Empty Catch Blocks**: All 9 empty `catch {}` blocks across AdminPaymentsPanel, UserCrmInbox, and LiveHelpModule replaced with `console.error()` logging.
 - **Console Cleanup**: Verified zero `console.log` statements in production code, only `console.error` retained.
 
+### Phase 29: Component Refactor — Code Quality Report Completion (2026-04-12)
+- **App.js Split (68→~25 complexity)**: Extracted alert sound engine + alert monitor + position tracking into `useAlertEngine.js` custom hook (114 lines). App.js reduced from 352→156 lines (56% reduction).
+- **AdminDashboard Split (96→~20 complexity)**: Extracted `AdminControlsTab.jsx` (131 lines: API controls, domain CRUD, DNS instructions) and `AdminMacroTab.jsx` (79 lines: macro event toggles with intensity colors). AdminDashboard reduced from 344→167 lines (51% reduction).
+- **Cloudflare Verification**: NOT a code bug — CDN-level bot protection on preview URLs. User checks the box once per session.
+
+## Code Quality Completion Status
+| Item | Status |
+|------|--------|
+| Circular import chain | FIXED (app_state expanded, auth uses app_state) |
+| Auth function complexity | FIXED (15→5, split into 5 functions) |
+| Alert system complexity | FIXED (34→<10, split into 6 functions) |
+| App.js complexity | FIXED (68→~25, useAlertEngine extracted) |
+| AdminDashboard complexity | FIXED (96→~20, Controls+Macro extracted) |
+| Empty catch blocks | FIXED (all 9 replaced) |
+| Console statement cleanup | DONE (0 console.log, only console.error) |
+| Type hint coverage | BACKLOG |
+| FNODashboard split | BACKLOG |
+| OptionsHeatmap split | BACKLOG |
+
 ## Future/Backlog
-- All remaining items are data-dependent and auto-resolve with live market usage
-- Remaining code quality items from report: type hints coverage, AdminDashboard/FNODashboard component splits, security review of test dynamic imports
+- Type hints on all public APIs (models + services first)
+- FNODashboard component split (377 lines)
+- OptionsHeatmap component split (378 lines)
+- AdminPerfTab complexity reduction (206 lines)
+- Security review of test dynamic imports
 - Payment history accumulates as users reactivate accounts
 - Fraud incidents accumulate as multi-device logins trigger impossible travel checks
