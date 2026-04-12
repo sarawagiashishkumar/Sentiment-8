@@ -9,19 +9,21 @@ import { AdminApiTab } from "./AdminApiTab";
 import { AdminCsvTab } from "./AdminCsvTab";
 import { AdminPerfTab } from "./AdminPerfTab";
 import { AdminCrmPanel, AdminFraudPanel, AdminPermissionsPanel } from "./AdminCrmPanel";
+import { AdminPaymentsPanel } from "./AdminPaymentsPanel";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const ADMIN_TABS = [
   { id: "users", label: "User Management" },
   { id: "permissions", label: "Permissions & Packages" },
+  { id: "payments", label: "Payments" },
   { id: "crm", label: "CRM Messages" },
   { id: "fraud", label: "Fraud Detection" },
   { id: "controls", label: "Advanced Controls" },
   { id: "macro", label: "Active Macro Events" },
   { id: "perf", label: "Generation Performance" },
-  { id: "kite", label: "API Connect Integration" },
-  { id: "csv", label: "OHLCV CSV Seed Management" },
+  { id: "kite", label: "API Connect" },
+  { id: "csv", label: "CSV Seeds" },
 ];
 
 export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydrateMe }) {
@@ -185,6 +187,10 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
 
       {activeTab === "permissions" && isOwner && (
         <AdminPermissionsPanel authHeaders={authHeaders} />
+      )}
+
+      {activeTab === "payments" && isOwner && (
+        <AdminPaymentsPanel authHeaders={authHeaders} />
       )}
 
       {activeTab === "crm" && (

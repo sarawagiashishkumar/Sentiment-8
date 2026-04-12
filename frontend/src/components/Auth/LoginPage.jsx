@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { KeyRound, Sparkles, AlertTriangle, Send } from "lucide-react";
+import { useState, useRef } from "react";
+import { KeyRound, Sparkles, AlertTriangle, Send, CreditCard, QrCode, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,10 @@ export function LoginPage({ loginUsername, setLoginUsername, loginLoading, login
   const [reactivationMsg, setReactivationMsg] = useState("");
   const [reactivationSent, setReactivationSent] = useState(false);
   const [reactivationLoading, setReactivationLoading] = useState(false);
+  const [paymentTab, setPaymentTab] = useState("razorpay"); // razorpay | qr | offline
+  const [qrData, setQrData] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState("");
+  const fileInputRef = useRef(null);
 
   const handleReactivation = async (e) => {
     e.preventDefault();
@@ -72,28 +76,116 @@ export function LoginPage({ loginUsername, setLoginUsername, loginLoading, login
               <div className="rounded-md border border-rose-700/40 bg-rose-950/60 p-3">
                 <p className="text-xs text-rose-300 font-semibold">Reactivation Fee: INR 2,500</p>
                 <p className="text-[10px] text-rose-400/70 mt-1">
-                  To reactivate your account, submit the form below. An administrator will review your request.
+                  Pay below to instantly reactivate, or upload proof for manual verification.
                 </p>
               </div>
-              {!reactivationSent ? (
-                <form onSubmit={handleReactivation} className="space-y-2" data-testid="reactivation-form">
-                  <textarea
-                    value={reactivationMsg}
-                    onChange={(e) => setReactivationMsg(e.target.value)}
-                    placeholder="Explain the situation (e.g., I was traveling, VPN change, etc.)"
-                    rows={3}
-                    className="w-full rounded border border-rose-700/40 bg-rose-950/60 text-rose-100 text-xs p-2 resize-none placeholder:text-rose-400/50"
-                    data-testid="reactivation-message"
-                  />
-                  <Button type="submit" disabled={reactivationLoading} className="h-8 bg-rose-600 text-white hover:bg-rose-500 text-xs" data-testid="reactivation-submit">
-                    <Send size={12} className="mr-1" />
-                    {reactivationLoading ? "Submitting..." : "Submit Reactivation Request"}
+
+              {/* Payment Method Tabs */}
+              <div className="flex gap-1 border-b border-rose-700/30 pb-1">
+                {[
+                  { id: "razorpay", label: "Pay Online", icon: CreditCard },
+                  { id: "qr", label: "QR Code", icon: QrCode },
+                  { id: "offline", label: "Upload Proof", icon: Upload },
+                ].map(tab => (
+                  <button key={tab.id} onClick={() => setPaymentTab(tab.id)} className={`flex items-center gap-1 px-3 py-1 rounded-t text-[10px] ${paymentTab === tab.id ? "bg-rose-700/30 text-rose-200" : "text-rose-400/60"}`} data-testid={`pay-tab-${tab.id}`}>
+                    <tab.icon size={11} /> {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Razorpay Online */}
+              {paymentTab === "razorpay" && !reactivationSent && (
+                <div className="space-y-2" data-testid="razorpay-section">
+                  <Button onClick={async () => {
+                    setReactivationLoading(true);
+                    try {
+                      const res = await axios.post(`${API}/payments/create-order`, { purpose: "reactivation" });
+                      const { order_id, amount, key_id } = res.data;
+                      if (!key_id) { setUploadStatus("Razorpay not configured. Use QR or upload proof."); setReactivationLoading(false); return; }
+                      const options = {
+                        key: key_id, amount, currency: "INR", order_id,
+                        name: "Trading Platform", description: "Account Reactivation",
+                        handler: async (response) => {
+                          await axios.post(`${API}/payments/verify`, {
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature,
+                            user_key: "",
+                          });
+                          setReactivationSent(true);
+                        },
+                        theme: { color: "#7c3aed" },
+                      };
+                      const rzp = new window.Razorpay(options);
+                      rzp.open();
+                    } catch (err) {
+                      setUploadStatus(err?.response?.data?.detail || "Payment gateway unavailable. Use QR or upload.");
+                    }
+                    setReactivationLoading(false);
+                  }} disabled={reactivationLoading} className="h-9 w-full bg-violet-600 text-white hover:bg-violet-500 text-xs" data-testid="razorpay-pay-btn">
+                    <CreditCard size={14} className="mr-1.5" />
+                    {reactivationLoading ? "Processing..." : "Pay INR 2,500 via Razorpay"}
                   </Button>
-                </form>
-              ) : (
+                  {uploadStatus && <p className="text-[10px] text-amber-300">{uploadStatus}</p>}
+                </div>
+              )}
+
+              {/* QR Code */}
+              {paymentTab === "qr" && !reactivationSent && (
+                <div className="space-y-2 text-center" data-testid="qr-section">
+                  {!qrData ? (
+                    <Button onClick={async () => {
+                      try {
+                        const res = await axios.get(`${API}/payments/qr-code`);
+                        setQrData(res.data);
+                      } catch {}
+                    }} className="h-8 bg-slate-700 text-white hover:bg-slate-600 text-xs" data-testid="qr-load-btn">
+                      <QrCode size={12} className="mr-1" /> Load QR Code
+                    </Button>
+                  ) : qrData.qr_available ? (
+                    <div className="space-y-2">
+                      <img src={qrData.qr_image} alt="UPI QR" className="mx-auto w-48 h-48 rounded-lg" data-testid="qr-image" />
+                      <p className="text-[10px] text-rose-300">UPI: <span className="font-mono text-white">{qrData.upi_id}</span></p>
+                      <p className="text-[10px] text-rose-300">Amount: <span className="font-mono text-white">INR {qrData.amount}</span></p>
+                      <p className="text-[10px] text-rose-400/60">Scan with any UPI app, then upload screenshot as proof</p>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-amber-300">{qrData.message}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Offline Upload */}
+              {paymentTab === "offline" && !reactivationSent && (
+                <div className="space-y-2" data-testid="offline-section">
+                  <p className="text-[10px] text-rose-300">Upload a screenshot of your payment (UPI/NEFT/IMPS)</p>
+                  <input ref={fileInputRef} type="file" accept="image/*" className="text-[10px] text-rose-200 file:bg-rose-700/30 file:text-rose-200 file:border-0 file:rounded file:px-3 file:py-1 file:text-[10px] file:mr-2" data-testid="offline-file-input" />
+                  <textarea value={reactivationMsg} onChange={(e) => setReactivationMsg(e.target.value)} placeholder="Add notes (optional)" rows={2} className="w-full rounded border border-rose-700/40 bg-rose-950/60 text-rose-100 text-xs p-2 resize-none" data-testid="offline-notes" />
+                  <Button onClick={async () => {
+                    const file = fileInputRef.current?.files?.[0];
+                    if (!file) { setUploadStatus("Please select a screenshot"); return; }
+                    setReactivationLoading(true);
+                    try {
+                      const formData = new FormData();
+                      formData.append("file", file);
+                      formData.append("user_key", "");
+                      formData.append("notes", reactivationMsg);
+                      await axios.post(`${API}/payments/offline-upload?user_key=&notes=${encodeURIComponent(reactivationMsg)}`, formData, { headers: { "Content-Type": "multipart/form-data" } });
+                      setReactivationSent(true);
+                    } catch (err) { setUploadStatus(err?.response?.data?.detail || "Upload failed"); }
+                    setReactivationLoading(false);
+                  }} disabled={reactivationLoading} className="h-8 w-full bg-rose-600 text-white hover:bg-rose-500 text-xs" data-testid="offline-submit">
+                    <Upload size={12} className="mr-1" />
+                    {reactivationLoading ? "Uploading..." : "Upload Payment Proof"}
+                  </Button>
+                  {uploadStatus && <p className="text-[10px] text-amber-300">{uploadStatus}</p>}
+                </div>
+              )}
+
+              {reactivationSent && (
                 <div className="rounded-md border border-emerald-700/40 bg-emerald-950/30 p-3" data-testid="reactivation-success">
-                  <p className="text-xs text-emerald-300 font-semibold">Request Submitted</p>
-                  <p className="text-[10px] text-emerald-400/70 mt-0.5">An administrator will review your case and contact you.</p>
+                  <p className="text-xs text-emerald-300 font-semibold">{paymentTab === "razorpay" ? "Payment Successful — Account Reactivated!" : "Proof Uploaded — Pending Admin Verification"}</p>
+                  <p className="text-[10px] text-emerald-400/70 mt-0.5">{paymentTab === "razorpay" ? "You can now log in again." : "An administrator will verify your payment within 24 hours."}</p>
                 </div>
               )}
             </CardContent>

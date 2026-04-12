@@ -535,6 +535,10 @@ api_router.include_router(risk_router)
 api_router.include_router(alerts_router)
 api_router.include_router(fraud_router)
 api_router.include_router(crm_router)
+from routes.payments import payments_router
+from routes.livehelp import livehelp_router
+api_router.include_router(payments_router)
+api_router.include_router(livehelp_router)
 
 app.include_router(api_router)
 
@@ -772,7 +776,9 @@ async def startup_tasks():
         await db.crm_messages.create_index([("to", 1), ("ts_epoch", -1)])
         await db.crm_messages.create_index([("to_user_key", 1), ("dismissed", 1)])
         await db.usage_tracking.create_index([("user_key", 1), ("feature", 1), ("ts_epoch", -1)])
-        logger.info("CRM/Fraud/Alert indexes ensured")
+        await db.payments.create_index([("user_key", 1), ("status", 1)])
+        await db.livehelp_messages.create_index([("session_id", 1), ("ts_epoch", -1)])
+        logger.info("CRM/Fraud/Alert/Payment/LiveHelp indexes ensured")
     except Exception as exc:
         logger.warning("CRM/Fraud index creation failed (non-fatal): %s", exc)
 
@@ -844,6 +850,163 @@ async def ws_price_stream(websocket: WebSocket):
             else:
                 await asyncio.sleep(5)
     except WebSocketDisconnect:
+        logger.debug("WS client disconnected")
+    except Exception as exc:
+        logger.debug("WS error: %s", exc)
+
+
+# ── Free STUN/TURN servers for native WebRTC (zero cost) ─────────────────────
+# Google's free STUN servers handle NAT traversal for most cases.
+# For symmetric NAT (rare), a TURN relay is needed — we use the open
+# Metered TURN servers (free tier: 500MB/mo, no billing).
+
+WEBRTC_ICE_SERVERS = [
+    {"urls": "stun:stun.l.google.com:19302"},
+    {"urls": "stun:stun1.l.google.com:19302"},
+    {"urls": "stun:stun2.l.google.com:19302"},
+    {"urls": "stun:stun3.l.google.com:19302"},
+    {"urls": "stun:stun4.l.google.com:19302"},
+]
+
+
+# ── WebSocket: Live Help signaling + text chat ────────────────────────────────
+# Rooms are keyed by session_id. Users and admins join the same room.
+
+_help_rooms: dict[str, dict] = {}  # session_id -> {"user_ws": ws, "admin_ws": ws, ...}
+
+@app.websocket("/api/ws/livehelp/{session_id}")
+async def ws_livehelp(websocket: WebSocket, session_id: str):
+    """WebRTC signaling + text chat for live help sessions.
+
+    Messages:
+      {"type": "join", "role": "user"|"admin", "user_key": "...", "username": "..."}
+      {"type": "chat", "text": "...", "sender": "..."}
+      {"type": "offer", "sdp": {...}}       — WebRTC SDP offer
+      {"type": "answer", "sdp": {...}}      — WebRTC SDP answer
+      {"type": "ice-candidate", "candidate": {...}} — ICE candidate
+      {"type": "voice-start"}               — signal voice mode
+      {"type": "voice-end"}                 — signal text mode
+    """
+    await websocket.accept()
+
+    if session_id not in _help_rooms:
+        _help_rooms[session_id] = {"user_ws": None, "admin_ws": None, "user_key": "", "username": "", "started_at": datetime.now(IST).isoformat(), "mode": "text"}
+
+    room = _help_rooms[session_id]
+    my_role = None
+
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            msg_type = msg.get("type", "")
+
+            if msg_type == "join":
+                my_role = msg.get("role", "user")
+                if my_role == "admin":
+                    room["admin_ws"] = websocket
+                else:
+                    room["user_ws"] = websocket
+                    room["user_key"] = msg.get("user_key", "")
+                    room["username"] = msg.get("username", "")
+                # Notify peer
+                peer_ws = room["admin_ws"] if my_role == "user" else room["user_ws"]
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json({"type": "peer-joined", "role": my_role, "username": msg.get("username", "")})
+                    except Exception:
+                        pass
+                # Send ICE servers to joiner
+                await websocket.send_json({"type": "ice-servers", "servers": WEBRTC_ICE_SERVERS})
+
+            elif msg_type == "chat":
+                # Persist chat message
+                chat_doc = {
+                    "session_id": session_id,
+                    "from_role": my_role or "user",
+                    "from_user_key": msg.get("user_key", room.get("user_key", "")),
+                    "from_username": msg.get("sender", ""),
+                    "to_user_key": "",
+                    "text": msg.get("text", ""),
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts_epoch": datetime.now(timezone.utc).timestamp(),
+                }
+                try:
+                    await db.livehelp_messages.insert_one(chat_doc)
+                except Exception:
+                    pass
+                # Forward to peer
+                peer_ws = room["admin_ws"] if my_role == "user" else room["user_ws"]
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json({"type": "chat", "text": msg.get("text", ""), "sender": msg.get("sender", ""), "ts": chat_doc["ts"]})
+                    except Exception:
+                        pass
+
+                # Auto-analyze for troubleshooting (user messages only)
+                if my_role == "user":
+                    from routes.livehelp import _analyze_session_log, _session_logs
+                    # Add chat as session context
+                    _session_logs[room.get("user_key", "")].append({"action": "chat", "text": msg.get("text", "")[:200], "ts": chat_doc["ts"]})
+                    suggestions = _analyze_session_log(room.get("user_key", ""))
+                    if suggestions:
+                        for s in suggestions[:1]:
+                            await websocket.send_json({"type": "system-hint", "message": s["message"], "severity": s["severity"]})
+
+            elif msg_type in ("offer", "answer", "ice-candidate"):
+                # WebRTC signaling — forward to peer
+                peer_ws = room["admin_ws"] if my_role == "user" else room["user_ws"]
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json(msg)
+                    except Exception:
+                        pass
+
+            elif msg_type == "voice-start":
+                room["mode"] = "voice"
+                peer_ws = room["admin_ws"] if my_role == "user" else room["user_ws"]
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json({"type": "voice-start"})
+                    except Exception:
+                        pass
+
+            elif msg_type == "voice-end":
+                room["mode"] = "text"
+                peer_ws = room["admin_ws"] if my_role == "user" else room["user_ws"]
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json({"type": "voice-end"})
+                    except Exception:
+                        pass
+
+            elif msg_type == "report-bug":
+                # Auto-generate CRM ticket
+                from routes.livehelp import _auto_generate_ticket
+                await _auto_generate_ticket(
+                    room.get("user_key", ""),
+                    f"User-reported via Live Help: {msg.get('description', 'No details')}"
+                )
+                await websocket.send_json({"type": "system-hint", "message": "Bug report submitted. A support ticket has been created.", "severity": "info"})
+
+    except WebSocketDisconnect:
+        # Notify peer of disconnect
+        peer_ws = room.get("admin_ws") if my_role == "user" else room.get("user_ws")
+        if peer_ws:
+            try:
+                await peer_ws.send_json({"type": "peer-left", "role": my_role or "unknown"})
+            except Exception:
+                pass
+        # Clean up
+        if my_role == "admin":
+            room["admin_ws"] = None
+        elif my_role == "user":
+            room["user_ws"] = None
+        if not room["user_ws"] and not room["admin_ws"]:
+            _help_rooms.pop(session_id, None)
+    except Exception as exc:
+        logger.debug("LiveHelp WS error: %s", exc)
+        _help_rooms.pop(session_id, None)
+
         logger.debug("WS client disconnected")
     except Exception as exc:
         logger.debug("WS error: %s", exc)

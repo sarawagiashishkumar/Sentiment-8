@@ -12,6 +12,7 @@ import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
 import { ErrorBoundary } from "@/components/Shared/ErrorBoundary";
 import { useNotifications, NotificationBell, NotificationPanel } from "@/components/Shared/NotificationCenter";
 import { usePushNotifications, PushNotifToggle } from "@/components/Shared/PushNotifications";
+import { LiveHelpModule } from "@/components/Shared/LiveHelpModule";
 
 // Lazy-loaded heavy dashboard components (~40% initial bundle reduction)
 const MultibaggerDashboard = lazy(() => import("@/components/Multibagger/MultibaggerDashboard").then(m => ({ default: m.MultibaggerDashboard })));
@@ -353,6 +354,8 @@ export default function App() {
           onMarkRead={markRead} onMarkAllRead={handleMarkAllRead}
           onDismiss={dismissNotif} onClearAll={handleClearAll}
         />
+
+        <LiveHelpModule authHeaders={authHeaders} me={me} />
       </div>
     </main>
   );
