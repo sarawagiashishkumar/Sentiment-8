@@ -3,6 +3,7 @@ import axios from "axios";
 import { LayoutGrid, List, Search, X } from "lucide-react";
 import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
 import { HeatmapSkeleton } from "@/components/Shared/Skeletons";
+import { MiniChartPopup } from "@/components/Shared/MiniChartPopup";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -40,6 +41,7 @@ export function StocksHeatmap({ authHeaders, onFetchError }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [changeRange, setChangeRange] = useState([0, 0]);
   const [sliderValue, setSliderValue] = useState([0, 0]);
+  const [chartSymbol, setChartSymbol] = useState(null);
   const intervalRef = useRef(null);
   const filterRef = useRef(activeFilter);
   const PAGE_SIZE = 50;
@@ -219,9 +221,10 @@ export function StocksHeatmap({ authHeaders, onFetchError }) {
             <div
               key={s.symbol}
               data-testid={`stock-tile-${s.symbol.toLowerCase()}`}
-              className="p-2 flex flex-col items-center justify-center text-white transition-all hover:brightness-125"
+              className="p-2 flex flex-col items-center justify-center text-white transition-all hover:brightness-125 cursor-pointer"
               style={{ backgroundColor: getTileColor(s.change_pct) }}
-              title={`${s.symbol}: Rs.${s.ltp?.toFixed(2) || 0} (${s.change_pct >= 0 ? "+" : ""}${s.change_pct?.toFixed(2)}%)`}
+              title={`${s.symbol}: Rs.${s.ltp?.toFixed(2) || 0} (${s.change_pct >= 0 ? "+" : ""}${s.change_pct?.toFixed(2)}%) — Click for chart`}
+              onClick={() => setChartSymbol(s.symbol)}
             >
               <span className="font-mono text-[9px] font-bold truncate w-full text-center">{s.symbol}</span>
               {s.ltp > 0 && <span className="text-[8px] opacity-70 font-mono">Rs.{s.ltp.toFixed(1)}</span>}
@@ -276,6 +279,10 @@ export function StocksHeatmap({ authHeaders, onFetchError }) {
 
       {data && filteredStocks.length === 0 && !loading && (
         <p className="text-sm text-slate-400 py-4 text-center" data-testid="stocks-no-results">No stocks match the selected filters.</p>
+      )}
+
+      {chartSymbol && (
+        <MiniChartPopup symbol={chartSymbol} authHeaders={authHeaders} onClose={() => setChartSymbol(null)} />
       )}
     </div>
   );

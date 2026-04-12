@@ -1,4 +1,4 @@
-import { Home, BarChart3, TrendingUp, FileUp, Shield, Grid3X3 } from "lucide-react";
+import { Home, BarChart3, TrendingUp, FileUp, Shield, Grid3X3, FileText, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function AppSidebar({ currentPage, setCurrentPage, isAdmin, onAdminClick }) {
@@ -23,6 +23,12 @@ export function AppSidebar({ currentPage, setCurrentPage, isAdmin, onAdminClick 
       </Button>
       <Button type="button" onClick={() => setCurrentPage("heatmap")} className={`text-xs sm:text-sm ${navClass("heatmap")}`} data-testid="nav-heatmap">
         <Grid3X3 size={14} /> <span className="hidden sm:inline">Market HeatMap</span><span className="sm:hidden">Heat</span>
+      </Button>
+      <Button type="button" onClick={() => setCurrentPage("reports")} className={`text-xs sm:text-sm ${navClass("reports")}`} data-testid="nav-reports">
+        <FileText size={14} /> <span className="hidden sm:inline">Reports</span><span className="sm:hidden">Rep</span>
+      </Button>
+      <Button type="button" onClick={() => setCurrentPage("watchlist")} className={`text-xs sm:text-sm ${navClass("watchlist")}`} data-testid="nav-watchlist">
+        <Eye size={14} /> <span className="hidden sm:inline">Watchlist</span><span className="sm:hidden">Watch</span>
       </Button>
       {isAdmin ? (
         <Button type="button" onClick={() => { setCurrentPage("admin"); onAdminClick(); }} className={`text-xs sm:text-sm ${navClass("admin")}`} data-testid="nav-admin">

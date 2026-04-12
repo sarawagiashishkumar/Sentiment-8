@@ -17,6 +17,7 @@ import { FNOIVAnalytics } from "./FNOIVAnalytics";
 import { FNOMultiTimeframe } from "./FNOMultiTimeframe";
 import { BBEAlertMonitor } from "./BBEAlertMonitor";
 import { TradingJournal } from "./TradingJournal";
+import { StrategyBacktester } from "./StrategyBacktester";
 import { SubTabs } from "@/components/Layout/SubTabs";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -24,6 +25,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const FNO_TABS = [
   { id: "signals", label: "Custom Script & F&O Generation" },
   { id: "journal", label: "Trading Journal" },
+  { id: "backtester", label: "Strategy Backtester" },
   { id: "performance", label: "Signal Performance Tracking" },
   { id: "analytics", label: "IV Analytics & Multi-Timeframe" },
 ];
@@ -382,6 +384,10 @@ export function FNODashboard({
 
       {activeTab === "journal" && (
         <TradingJournal authHeaders={authHeaders} />
+      )}
+
+      {activeTab === "backtester" && (
+        <StrategyBacktester authHeaders={authHeaders} />
       )}
 
       {activeTab === "performance" && (

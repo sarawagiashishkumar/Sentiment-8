@@ -16,6 +16,7 @@ from typing import AsyncGenerator, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from deps import get_current_user, get_owner_user
 from models import (
@@ -608,6 +609,105 @@ async def list_strategy_backtests_endpoint(
     for r in rows:
         r["enabled"] = is_backtest_enabled(r)
     return {"backtests": rows, "count": len(rows)}
+
+
+class RunBacktestRequest(BaseModel):
+    symbol: str
+    strategy: str
+    date_from: str
+    date_to: str
+
+
+@fno_router.post("/fno/run-backtest")
+async def run_single_backtest(
+    req: RunBacktestRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Run a single strategy backtest for the given symbol and date range."""
+    import server as _srv
+    from services.kite_client import fetch_kite_historical_candles
+
+    symbol = req.symbol.strip().upper()
+    if not symbol:
+        raise HTTPException(400, "Symbol required")
+
+    # Fetch historical candles for the date range
+    try:
+        from datetime import datetime as _dt
+        d_from = _dt.strptime(req.date_from, "%Y-%m-%d")
+        d_to = _dt.strptime(req.date_to, "%Y-%m-%d")
+        days = max((d_to - d_from).days, 1)
+    except ValueError:
+        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD")
+
+    candles = await fetch_kite_historical_candles(symbol, interval="day", days=min(days + 5, 365))
+    if not candles:
+        return {"summary": {}, "trades": [], "equity_curve": [],
+                "error": f"No historical data available for {symbol}. Ensure Market Data API is connected."}
+
+    # Simple momentum backtest simulation
+    trades = []
+    equity = 100000
+    equity_curve = []
+    is_bullish = req.strategy in ("momentum_ce", "straddle", "iron_condor")
+
+    for i in range(1, len(candles)):
+        prev = candles[i - 1]
+        curr = candles[i]
+        equity_curve.append({"date": curr["date"][:10] if isinstance(curr["date"], str) else str(curr["date"]), "equity": round(equity, 2)})
+
+        # Simple signal: close > prev close + threshold = long, else short
+        if i < 2:
+            continue
+        prev2 = candles[i - 2]
+        momentum = (curr["close"] - prev2["close"]) / prev2["close"] * 100
+
+        if (is_bullish and momentum > 0.5) or (not is_bullish and momentum < -0.5):
+            entry = curr["close"]
+            # Simulate exit at next candle
+            if i + 1 < len(candles):
+                exit_c = candles[i + 1]
+                exit_price = exit_c["close"]
+                pnl = (exit_price - entry) if is_bullish else (entry - exit_price)
+                pnl_pct = pnl / entry * 100
+                equity += pnl * 10  # 10 shares
+                trades.append({
+                    "entry_date": curr["date"][:10] if isinstance(curr["date"], str) else str(curr["date"]),
+                    "exit_date": exit_c["date"][:10] if isinstance(exit_c["date"], str) else str(exit_c["date"]),
+                    "direction": "LONG" if is_bullish else "SHORT",
+                    "entry_price": round(entry, 2),
+                    "exit_price": round(exit_price, 2),
+                    "pnl": round(pnl * 10, 2),
+                    "pnl_pct": round(pnl_pct, 2),
+                    "holding_days": 1,
+                })
+
+    wins = [t for t in trades if t["pnl"] > 0]
+    losses = [t for t in trades if t["pnl"] < 0]
+    total_pnl = sum(t["pnl"] for t in trades)
+
+    # Drawdown calculation
+    peak = 100000
+    max_dd = 0
+    for pt in equity_curve:
+        if pt["equity"] > peak:
+            peak = pt["equity"]
+        dd = (peak - pt["equity"]) / peak * 100
+        if dd > max_dd:
+            max_dd = dd
+
+    summary = {
+        "total_trades": len(trades),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(len(wins) / max(len(trades), 1) * 100, 1),
+        "total_pnl": round(total_pnl, 2),
+        "max_drawdown": round(max_dd, 1),
+        "profit_factor": round(sum(t["pnl"] for t in wins) / max(abs(sum(t["pnl"] for t in losses)), 0.01), 2) if losses else 0,
+        "sharpe_ratio": round(total_pnl / max(len(trades), 1) / max(1, (sum((t["pnl"] - total_pnl/max(len(trades),1))**2 for t in trades) / max(len(trades),1))**0.5), 2) if trades else 0,
+    }
+
+    return {"summary": summary, "trades": trades, "equity_curve": equity_curve}
 
 
 # ── /fno/position-sizing ─────────────────────────────────────────────────────

@@ -13,6 +13,8 @@ import { FNODashboard } from "@/components/FNO/FNODashboard";
 import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
 import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
+import { ReportsDashboard } from "@/components/Reports/ReportsDashboard";
+import { WatchlistPanel } from "@/components/Watchlist/WatchlistPanel";
 import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
 import { ErrorBoundary } from "@/components/Shared/ErrorBoundary";
 import { useNotifications, NotificationBell, NotificationPanel } from "@/components/Shared/NotificationCenter";
@@ -270,7 +272,7 @@ export default function App() {
         ) : null}
 
         {/* Market Data API Warning for all data-dependent sections */}
-        {["multibagger", "fno", "portfolio", "heatmap"].includes(currentPage) && (
+        {["multibagger", "fno", "portfolio", "heatmap", "reports", "watchlist"].includes(currentPage) && (
           <KiteLiveWarning authHeaders={authHeaders} addNotification={addNotification} />
         )}
 
@@ -302,6 +304,14 @@ export default function App() {
 
         {currentPage === "heatmap" ? (
           <MarketHeatmapDashboard authHeaders={authHeaders} />
+        ) : null}
+
+        {currentPage === "reports" ? (
+          <ReportsDashboard authHeaders={authHeaders} />
+        ) : null}
+
+        {currentPage === "watchlist" ? (
+          <WatchlistPanel authHeaders={authHeaders} />
         ) : null}
         </ErrorBoundary>
 

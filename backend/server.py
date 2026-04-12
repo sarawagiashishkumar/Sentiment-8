@@ -463,6 +463,8 @@ from routes.batch_jobs import batch_router
 from routes.auth import auth_router
 from routes.notifications import notification_router
 from routes.journal import journal_router
+from routes.reports import reports_router
+from routes.watchlist import watchlist_router
 api_router.include_router(fno_router)
 api_router.include_router(admin_router)
 api_router.include_router(market_data_router)
@@ -472,6 +474,8 @@ api_router.include_router(batch_router, prefix="/batch")
 api_router.include_router(auth_router)
 api_router.include_router(notification_router)
 api_router.include_router(journal_router)
+api_router.include_router(reports_router)
+api_router.include_router(watchlist_router)
 
 app.include_router(api_router)
 
@@ -668,6 +672,14 @@ async def startup_tasks():
         logger.info("IV background collector started (30-min intervals during market hours)")
     except Exception as exc:
         logger.warning("IV background collector start failed (non-fatal): %s", exc)
+
+    # ── Watchlist Price Alert Monitor ─────────────────────────────────
+    try:
+        from routes.watchlist import run_watchlist_monitor
+        asyncio.create_task(run_watchlist_monitor())
+        logger.info("Watchlist price alert monitor started (60s intervals during market hours)")
+    except Exception as exc:
+        logger.warning("Watchlist monitor start failed (non-fatal): %s", exc)
 
     try:
         import asyncio as _aio

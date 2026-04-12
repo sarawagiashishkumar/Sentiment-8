@@ -748,3 +748,33 @@ async def industry_sectors(
     sectors.sort(key=lambda x: x["avg_change_pct"], reverse=True)
     kite_live = any(q.get("ltp", 0) > 0 for q in quotes.values())
     return {"sectors": sectors, "count": len(sectors), "kite_live": kite_live}
+
+
+@market_data_router.get("/market/stock-chart/{symbol}")
+async def get_stock_chart(symbol: str, current_user: dict = Depends(get_current_user)):
+    """Return historical OHLCV candles for charting. Uses Kite historical data API."""
+    from services.kite_client import fetch_kite_batch_quotes, fetch_kite_historical_candles
+
+    symbol = symbol.strip().upper()
+    if not symbol:
+        raise HTTPException(400, "Symbol required")
+
+    # Try to get historical candles
+    candles = []
+    try:
+        candles = await fetch_kite_historical_candles(symbol, interval="15minute", days=5)
+    except Exception:
+        pass
+
+    # Fallback: if no candles, try to build from current quote
+    info = None
+    if not candles:
+        try:
+            quotes = await fetch_kite_batch_quotes([symbol])
+            q = quotes.get(symbol, {})
+            if q.get("ltp"):
+                info = {"open": q.get("open", 0), "high": q.get("high", 0), "low": q.get("low", 0), "volume": q.get("volume", 0)}
+        except Exception:
+            pass
+
+    return {"symbol": symbol, "candles": candles, "info": info}

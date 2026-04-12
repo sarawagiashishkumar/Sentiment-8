@@ -853,3 +853,45 @@ async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: s
             return None
 
     return await asyncio.to_thread(_fetch_candles)
+
+
+async def fetch_kite_historical_candles(symbol: str, interval: str = "15minute", days: int = 5) -> list[dict]:
+    """Fetch historical OHLCV candles for an equity symbol (for charting)."""
+    access_token = await _get_kite_access_token()
+    if not access_token or not _state.KITE_API_KEY:
+        return []
+
+    # Resolve instrument token for the equity symbol
+    instrument = None
+    row = await _state.db.kite_script_master.find_one(
+        {"tradingsymbol": symbol, "exchange": "NSE", "segment": "NSE"},
+        {"_id": 0, "instrument_token": 1},
+    )
+    if row:
+        instrument = row["instrument_token"]
+    if not instrument:
+        return []
+
+    def _fetch():
+        try:
+            from_date = datetime.now(_state.IST) - timedelta(days=days)
+            to_date = datetime.now(_state.IST)
+            resp = requests.get(
+                f"https://api.kite.trade/instruments/historical/{instrument}/{interval}",
+                params={"from": from_date.strftime("%Y-%m-%d %H:%M:%S"), "to": to_date.strftime("%Y-%m-%d %H:%M:%S")},
+                headers={"X-Kite-Version": "3", "Authorization": f"token {_state.KITE_API_KEY}:{access_token}"},
+                timeout=(5, 10),
+            )
+            if resp.status_code != 200:
+                return []
+            candles_raw = resp.json().get("data", {}).get("candles", [])
+            parsed = []
+            for c in candles_raw:
+                if len(c) >= 6:
+                    parsed.append({"date": c[0], "open": float(c[1]), "high": float(c[2]), "low": float(c[3]), "close": float(c[4]), "volume": int(c[5])})
+            return parsed
+        except Exception as exc:
+            logger.warning("Historical candles fetch failed for %s: %s", symbol, exc)
+            return []
+
+    return await asyncio.to_thread(_fetch)
