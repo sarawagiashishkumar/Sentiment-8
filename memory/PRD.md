@@ -163,6 +163,47 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Strategy Backtester**: `/api/fno/run-backtest` POST endpoint with momentum simulation. Frontend "Strategy Backtester" sub-tab in F&O with strategy selector (Momentum CE/PE, Straddle, Iron Condor), date range, equity curve via TradingView area chart, trade-by-trade log, summary cards (Win Rate, P&L, Max Drawdown, Sharpe, Profit Factor).
 - **Navigation**: Expanded to 8 buttons (added Reports, Watchlist). F&O now has 5 sub-tabs (added Strategy Backtester).
 
+### Phase 20: Senior Code Audit — Bug Fixes, Performance & Enhancements (2026-04-12)
+- **Bug Fix: BBE Alerts Duplicate Key**: `fno.py` MongoDB query had duplicate `best_budget_entry` keys (second overwrites first). Fixed to single `{"$gt": 0}` condition. Prevented missed BBE alerts.
+- **Bug Fix: Watchlist Alert Cooldown**: Added 1-hour cooldown (`ALERT_COOLDOWN_SECS=3600`) in watchlist monitor. Checks `last_triggered` timestamp before re-firing. Eliminates notification spam for persistent price breaches.
+- **Bug Fix: Adaptive Position Polling**: Custom positions polling changed from fixed 5s to adaptive: 5s during market hours (9:15-15:30 IST), 60s off-hours. Reduces unnecessary server load 24/7 by ~92% off-hours.
+- **Bug Fix: WebSocket Reconnect Stale Closure**: `useLivePrices.js` reconnection timer now uses `reconnectTimerRef` and reads from `symbolsRef.current` instead of captured stale `symbols`. Prevents reconnection with outdated symbol list.
+- **Performance: GZip Compression**: Added `GZipMiddleware(minimum_size=1000)` — compresses JSON responses >1KB. Measured 74.5% payload reduction (6179→1576 bytes) on stock heatmap endpoint.
+- **Performance: X-Response-Time Header**: New HTTP middleware adds `X-Response-Time: Xms` header to every response for monitoring/diagnostics.
+- **Performance: Frontend Lazy Loading**: 7 heavy dashboard components (`MultibaggerDashboard`, `FNODashboard`, `PortfolioDashboard`, `AdminDashboard`, `MarketHeatmapDashboard`, `ReportsDashboard`, `WatchlistPanel`) wrapped with `React.lazy()` + `Suspense`. Reduces initial bundle load.
+- **Performance: Reports MongoDB Aggregation**: `_aggregate_report` in `reports.py` now uses `$group` pipeline for symbol counts, quality distribution, and perf averages instead of fetching all docs and computing in Python.
+- **Performance: Options Heatmap Sync Removal**: Removed redundant `_sync_kite_option_master_daily()` call on every options heatmap request (already runs at startup, saves ~200ms/request).
+- **Enhancement: Health Check Endpoint**: New `GET /api/health` returns comprehensive status: DB connectivity, Kite session status, background task health (IV collector, watchlist monitor, news monitor), and data metrics (user count, signals logged).
+- **Enhancement: Request Deduplication**: New `utils/apiDedup.js` with `dedupGet()` function prevents concurrent identical API calls during fast navigation.
+- **Enhancement: Stale Data Timer**: `StaleDataTimer` component in `KiteLiveWarning.jsx` shows live-updating elapsed time since disconnect ("Data stale: 2m 15s ago").
+
+## Key API Endpoints
+- `/api/health` — Comprehensive health check (DB, Kite, background tasks, data metrics)
+- `/api/fno/generate` — NDJSON streaming F&O signals
+- `/api/fno/bbe-alerts` — Real-time BBE zone monitoring
+- `/api/fno/performance-stats` — Aggregated performance statistics
+- `/api/fno/signal-log` — All generated signals log
+- `/api/heartbeat` — Keep-alive ping (now returns 'active' field)
+- `/api/kite/status` — Session health check
+- `/api/sector-momentum` — 18 NSE index sectors
+- `/api/market/sector-stocks?sector=X` — Sector drill-down (7 columns)
+- `/api/market/stock-heatmap` — Stock heatmap data (OHLCV fields)
+- `/api/market/options-heatmap` — Options heatmap data
+- `/api/market/industry-sectors` — Industry sector aggregation
+- `/api/portfolio/analyze-upload` — Multi-file portfolio upload
+- `/api/fno/generation-timings` — Last generation phase timings
+- `/api/fno/iv-collect-now` — One-shot IV snapshot collection (POST)
+- `/api/fno/iv-cone/{symbol}` — IV Cone percentile bands
+- `/api/fno/iv-term-structure/{symbol}` — IV term structure
+- `/api/fno/run-backtest` — Strategy backtester
+- `/api/ws/prices` — WebSocket live price streaming
+- `/api/watchlist` — Watchlist CRUD with price alerts
+- `/api/notifications` — Notification CRUD
+- `/api/journal` — Trading journal CRUD
+- `/api/reports/daily-summary` — Daily P&L report
+- `/api/reports/weekly-summary` — Weekly P&L report
+- `/api/risk/portfolio-summary` — Risk dashboard metrics
+
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage:
   - Performance benchmarking data populates with each generation run
