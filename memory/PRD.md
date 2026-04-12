@@ -289,6 +289,13 @@ Future capabilities (zero additional cost):
 - **Performance: CRM Inbox Limit** — Increased from 100 to 200 messages with `total` count field for pagination awareness.
 - **Full Tab Parity Verified**: All 8 main nav tabs (Home, Multibagger, F&O, Portfolio, HeatMap, Reports, Watchlist, Admin), 10 admin sub-tabs, 6 F&O sub-tabs, LiveHelp module — all rendering correctly with matching backend data.
 
+### Phase 25: Critical Chunk Loading Fix + AI Support Agent (2026-04-12)
+- **CRITICAL FIX: Chunk Loading Errors** — React.lazy() code splitting created chunks with hashes that broke when webpack dev server rebuilt. Users on mobile/tablet got "Loading chunk failed" errors on Watchlist, Reports, Portfolio tabs. Fix: Removed ALL React.lazy imports and Suspense wrappers, reverted to direct imports. All 8 tabs now load reliably.
+- **AI Support Agent (GPT-4o-mini)** — LiveHelp module converted from basic chat to AI-powered support agent. Uses emergentintegrations LlmChat with GPT-4o-mini. System prompt enforces strict confidentiality (never reveals backend logic, Kite API, or proprietary algorithms). Auto-generates CRM tickets for bug-related queries.
+- **Voice Input (Mic Button)** — Web Speech API integration (webkitSpeechRecognition) for voice-to-text. Mic button toggles listening, interim results show in input, final transcript auto-sends to AI agent. Supports English (en-IN).
+- **Bug Fixes**: RiskDashboard null crash, watchlist cooldown datetime type, position_service regex parser, stray 'ed' in position_service.py, CRM inbox limit increased to 200.
+- **Performance**: Parallel NIFTY+BANKNIFTY generation via asyncio.wait, reports event_type filter in MongoDB query.
+
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage
 - Payment history accumulates as users reactivate accounts
