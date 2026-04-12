@@ -301,6 +301,13 @@ Future capabilities (zero additional cost):
 - **MOBILE FIX: Sub-Tab Scrolling** — Both `SubTabs` and `AppSidebar` now use `overflow-x-auto` with `scrollbar-hide` CSS utility. Inner div has `min-w-max` so all tabs maintain size and are reachable by horizontal swipe. All 10 admin tabs and 6 F&O tabs accessible on mobile.
 - **PERMISSIONS PANEL REBUILD** — Full granular CRUD: Available Tiers overview (Free/Basic/Pro/Unlimited cards with credits and limits), user selector with credit count, Edit toggle revealing: (1) Package tier dropdown, (2) Usage limit number inputs (7 fields), (3) Feature credit cost inputs (9 fields), (4) Feature restriction toggles (9 Allowed/Blocked buttons). Save All sends package + limits + costs + restrictions in single PATCH.
 
+### Phase 27: Voice-Enabled Multilingual AI Support Agent (2026-04-12)
+- **TEXT-TO-SPEECH OUTPUT** — AI responses spoken aloud via native `SpeechSynthesis` API. Voice matching per language. Toggle to mute/unmute AI voice.
+- **VOICE CONVERSATION MODE** — Continuous hands-free mode: user speaks → AI listens → AI processes → AI speaks response → auto-resumes listening. Large mic button with pulse animation. Status indicator (Listening/Speaking/Ready). Exit Voice button to return to text.
+- **MULTILINGUAL** — 11 languages: English (IN), Hindi, Tamil, Telugu, Marathi, Bengali, Gujarati, Kannada, Malayalam, Punjabi, English (US). Language picker in header. Both STT input and TTS output respect selected language.
+- **AUTO-RESUME** — In voice mode, `utterance.onend` callback triggers `startListening()` after 300ms delay, creating seamless conversation flow without manual button presses.
+- **RESPONSIVE PANEL** — Width `calc(100vw-2rem)` on mobile, `24rem` on desktop. All controls accessible on small screens.
+
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage
 - Payment history accumulates as users reactivate accounts
