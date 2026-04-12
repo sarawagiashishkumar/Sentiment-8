@@ -149,6 +149,13 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Notification Analytics**: `/api/notifications/analytics` endpoint returns alert frequency (7-day by category), total 24h alerts, average response latency (time from alert to read), and read count. Admin Performance tab shows analytics section with 4 metric cards.
 - **Signal Engine Profiling**: `build_fno_signal` in `fno_signal_builder.py` instrumented with `time.monotonic()` for per-function timing. Phase timings logged at DEBUG level.
 
+### Phase 18: Code Quality Report Fixes (2026-04-12)
+- **Circular Import Broken**: `kite_client.py` migrated from `_srv().db`/`_srv().KITE_API_KEY` to `_state.db`/`_state.KITE_API_KEY` directly. Only 1 `_srv()` call remains for complex server functions (`_get_api_controls`, `_get_stock_core_cached`). Added `KITE_OPTION_MASTER_LAST_SYNC_DATE`, `KITE_SCRIPT_MASTER_URL`, `LOT_SIZE_MAP` to `app_state.py`.
+- **Hook Dependencies Fixed**: `useAuth.js` uses `useRef` for token/loginUsername to avoid stale closures. `PushNotifications.jsx` has proper `useCallback` dependencies. All empty catch blocks now log errors.
+- **FNO Complexity Reduced**: Extracted `_post_generation_effects()` helper from `_stream_generate()` — handles perf tracking, signal logging, journal, and IV capture. Reduced nesting and local variable count.
+- **Test Quality**: `random` → `secrets` module in test files. `is` → `==` comparison anti-patterns fixed across all test files.
+- **Frontend Quality**: Stable keys in `Skeletons.jsx` (prefixed `skel-grid-`, `skel-th-`, `skel-row-`). Nested ternaries refactored to helper functions. Environment-aware `logger.js` utility created (silences debug/warn in production).
+
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage:
   - Performance benchmarking data populates with each generation run
