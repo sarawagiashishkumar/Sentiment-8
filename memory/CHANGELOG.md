@@ -1,5 +1,14 @@
 # CHANGELOG — Trading Signals & F&O Platform
 
+## 2026-04-12 — Phase 34: Deep Code Review & Bug Fixes
+- Fixed dead/unreachable code in server.py WebSocket handler
+- Fixed check_usage_limit to use DB packages, search_users to sanitize output
+- Parallelized get_data_stats with asyncio.gather (10x faster)
+- Fixed N+1 queries in payments.py and fraud.py (batch $in usernames)
+- Added session cleanup (30m/24h TTL), help room cleanup (10m), session logs memory cap
+- Fixed duplicate fno_signal_log index conflict
+- Test: iteration 92 — 16/16 backend, 100% frontend
+
 ## 2026-04-12 — Phase 33: Clean Desk Protocol + 7 Items
 - Plan Comparison Page: New /plans nav tab with 4 tier cards, feature comparison, low-credits modal
 - admin.py domain extraction: 5 endpoints moved to admin_domains.py (1317→1107 lines)

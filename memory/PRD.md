@@ -149,6 +149,19 @@ Build an AI-driven trading research platform for Indian NSE F&O (Futures & Optio
 - P3: Advanced analytics dashboard with usage graphs
 - P3: SessionStorage → httpOnly cookie migration (major auth rewrite)
 
+## Latest Change (2026-04-12 — Phase 34: Deep Code Review & Bug Fixes)
+- Fixed dead/unreachable code in server.py WebSocket handler (duplicate except block)
+- Fixed `check_usage_limit` to use DB-backed packages instead of hardcoded PACKAGES dict
+- Fixed `search_users` to return sanitized user views via `_map_user_view`
+- Parallelized `get_data_stats` queries using `asyncio.gather` (10x faster)
+- Fixed N+1 queries in payments.py `list_pending_payments` and `get_payment_history` (batch $in)
+- Fixed N+1 queries in fraud.py `list_fraud_incidents` (batch $in)
+- Added session cleanup background task (30-min intervals, 24h TTL) to prevent SESSION_STORE memory leak
+- Added _help_rooms stale cleanup background task (10-min intervals)
+- Added `_session_logs` memory cap (100 entries/user, 500 users max) to prevent unbounded growth
+- Fixed duplicate index conflict on `fno_signal_log` collection
+- Test: iteration 92 — 16/16 backend (100%), frontend verified
+
 ## Key MongoDB Collections
 - `app_users` — User accounts with roles, credits, packages, permissions
 - `equity_master_cache` — 60+ field equity data cache per symbol

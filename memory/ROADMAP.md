@@ -1,6 +1,7 @@
 # ROADMAP — Trading Signals & F&O Platform
 
 ## Completed (All Done)
+- [x] Phase 34: Deep Code Review & Bug Fixes (session cleanup, N+1 fixes, parallel queries, memory caps)
 - [x] Phase 33: Clean Desk + Plans page + Payment/Fraud history + Domain extraction + Type hints
 - [x] Phase 32: Superadmin CRUD, Dynamic Plans, Global Fees
 - [x] Phase 31: Component & Route Splitting
