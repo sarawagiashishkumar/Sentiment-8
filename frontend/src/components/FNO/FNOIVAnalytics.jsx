@@ -41,15 +41,29 @@ export function FNOIVAnalytics({ authHeaders }) {
   const hasConeData = coneData && coneData.data_points > 0;
   const hasTermData = termData && termData.data_points > 0;
 
+  // Quick symbol presets
+  const SYMBOL_PRESETS = ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK"];
+
   return (
     <div className="space-y-3" data-testid="fno-iv-analytics">
       {/* Controls */}
       <div className="flex items-center gap-2 flex-wrap">
+        {/* Quick presets */}
+        {SYMBOL_PRESETS.map((s) => (
+          <button
+            key={s}
+            onClick={() => { setSymbol(s); }}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+              symbol === s ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+            data-testid={`iv-preset-${s.toLowerCase()}`}
+          >{s}</button>
+        ))}
         <Input
           value={symbol}
           onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-          placeholder="Symbol (e.g. NIFTY, RELIANCE)"
-          className="w-44 border-slate-700 bg-slate-800 text-slate-100 text-xs h-8"
+          placeholder="Custom symbol..."
+          className="w-32 border-slate-700 bg-slate-800 text-slate-100 text-xs h-8"
           data-testid="iv-symbol-input"
         />
         <Button
@@ -80,6 +94,13 @@ export function FNOIVAnalytics({ authHeaders }) {
           ))}
         </div>
       </div>
+
+      {/* Data collection status */}
+      {coneData && coneData.data_points < 30 && coneData.data_points > 0 && (
+        <div className="rounded-lg border border-amber-600/30 bg-amber-950/20 p-2.5 text-xs text-amber-300" data-testid="iv-data-status">
+          Collecting IV data: {coneData.data_points}/30 days minimum. Percentile bands become more reliable with 30+ days of history. Data accumulates as signals are generated.
+        </div>
+      )}
 
       {/* IV Cone View */}
       {activeView === "cone" && (

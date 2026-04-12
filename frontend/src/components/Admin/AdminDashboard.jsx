@@ -3,15 +3,12 @@ import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SubTabs } from "@/components/Layout/SubTabs";
-import { UserCog, RefreshCw, Trash2, Shield, CreditCard } from "lucide-react";
+import { AdminUsersTab } from "./AdminUsersTab";
+import { AdminApiTab } from "./AdminApiTab";
+import { AdminCsvTab } from "./AdminCsvTab";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const roles = [
-  { value: "user", label: "Basic User" },
-  { value: "sub_admin", label: "Sub-Admin" },
-];
 
 const ADMIN_TABS = [
   { id: "users", label: "User Management & Security" },
@@ -53,6 +50,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Data loaders ──────────────────────────────────────────────────
   const checkKiteStatus = async () => {
     try { const r = await axios.get(`${API}/kite/status`, { headers: authHeaders }); setKiteStatus(r.data); } catch { setKiteStatus({ connected: false }); }
   };
@@ -75,15 +73,8 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
   const loadMacroEvents = async () => {
     try { const r = await axios.get(`${API}/admin/macro-events`, { headers: authHeaders }); setMacroEventsData(r.data); } catch {}
   };
-  const toggleMacroEvent = async (key) => {
-    const current = macroEventsData.active_events || [];
-    const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
-    setMacroEventsData((prev) => ({ ...prev, active_events: next }));
-    setMacroEventsSaving(true);
-    try { await axios.post(`${API}/admin/macro-events/update`, { events: next }, { headers: authHeaders }); }
-    catch { setMacroEventsData((prev) => ({ ...prev, active_events: current })); }
-    finally { setMacroEventsSaving(false); }
-  };
+
+  // ── User actions ──────────────────────────────────────────────────
   const createUser = async (event) => {
     event.preventDefault(); setAdminError("");
     try { await axios.post(`${API}/admin/users`, createForm, { headers: authHeaders }); setCreateForm({ username: "", role: "user", initial_credits: 0, quota_limit: 10 }); await loadAdminUsers(); }
@@ -109,6 +100,8 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
     try { await axios.delete(`${API}/admin/users/${userRef}`, { headers: authHeaders }); await loadAdminUsers(); }
     catch (e) { setAdminError(e?.response?.data?.detail || "Unable to delete user"); }
   };
+
+  // ── Controls actions ──────────────────────────────────────────────
   const saveApiControls = async () => {
     try { await axios.patch(`${API}/admin/api-controls`, apiControlsEdit, { headers: authHeaders }); await loadAdminConfig(); }
     catch (e) { setAdminError(e?.response?.data?.detail || "Unable to update API controls"); }
@@ -131,6 +124,17 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
     try { const resp = await axios.post(`${API}/admin/domain-mappings/${encodeURIComponent(domain)}/map`, {}, { headers: authHeaders }); setDomainMapStatus((prev) => ({ ...prev, [domain]: { loading: false, result: resp.data } })); await loadAdminConfig(); }
     catch (e) { setDomainMapStatus((prev) => ({ ...prev, [domain]: { loading: false, result: { error: e?.response?.data?.detail || "Map failed" } } })); }
   };
+  const toggleMacroEvent = async (key) => {
+    const current = macroEventsData.active_events || [];
+    const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+    setMacroEventsData((prev) => ({ ...prev, active_events: next }));
+    setMacroEventsSaving(true);
+    try { await axios.post(`${API}/admin/macro-events/update`, { events: next }, { headers: authHeaders }); }
+    catch { setMacroEventsData((prev) => ({ ...prev, active_events: current })); }
+    finally { setMacroEventsSaving(false); }
+  };
+
+  // ── CSV actions ───────────────────────────────────────────────────
   const loadCsvSeeds = async () => {
     setCsvSeedLoading(true); setCsvSeedMsg("");
     try { const r = await axios.get(`${API}/admin/csv-seeds`, { headers: authHeaders }); setCsvSeeds(r.data.seeds || []); }
@@ -157,85 +161,23 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
     <section className="space-y-4" data-testid="admin-page">
       <SubTabs tabs={ADMIN_TABS} active={activeTab} onChange={setActiveTab} />
 
-      {/* User Management */}
       {activeTab === "users" && (
-      <Card className="result-card border-slate-800 bg-slate-950/70">
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-          <CardTitle className="text-white">User Management & Security</CardTitle>
-          <Button type="button" onClick={loadAdminUsers} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="admin-refresh-users-button">
-            <UserCog size={16} /> Refresh Users
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form onSubmit={createUser} className="grid grid-cols-1 gap-3 md:grid-cols-5" data-testid="admin-create-user-form">
-            <Input value={createForm.username} onChange={(e) => setCreateForm((prev) => ({ ...prev, username: e.target.value }))} placeholder="Username" data-testid="admin-create-username" className="border-slate-700 bg-slate-900 text-slate-100" />
-            <select value={createForm.role} onChange={(e) => setCreateForm((prev) => ({ ...prev, role: e.target.value }))} className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100" data-testid="admin-create-role">
-              {roles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
-            </select>
-            <Input type="number" min="0" value={createForm.initial_credits} onChange={(e) => setCreateForm((prev) => ({ ...prev, initial_credits: Number(e.target.value) }))} placeholder="Initial Credits" data-testid="admin-create-credits" className="border-slate-700 bg-slate-900 text-slate-100" />
-            <Input type="number" min="1" value={createForm.quota_limit} onChange={(e) => setCreateForm((prev) => ({ ...prev, quota_limit: Number(e.target.value) }))} placeholder="Quota" data-testid="admin-create-quota" className="border-slate-700 bg-slate-900 text-slate-100" disabled={createForm.role !== "sub_admin"} />
-            <Button type="submit" className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="admin-create-submit">Create</Button>
-          </form>
-          {adminError ? <p className="text-sm text-rose-400" data-testid="admin-error">{adminError}</p> : null}
-          {adminLoading ? (
-            <p className="text-sm text-slate-400" data-testid="admin-loading">Loading users...</p>
-          ) : (
-            <div className="relative w-full overflow-auto rounded-lg border border-slate-800" data-testid="admin-users-table-wrapper">
-              <Table data-testid="admin-users-table">
-                <TableHeader className="bg-slate-900">
-                  <TableRow>
-                    <TableHead>Credential</TableHead><TableHead>Role</TableHead><TableHead>Credits</TableHead><TableHead>Quota</TableHead><TableHead>Created By</TableHead><TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {adminUsers.map((row) => (
-                    <TableRow key={row.user_key} className="result-row" data-testid={`admin-row-${row.user_key}`}>
-                      <TableCell>
-                        <Input value={usernameEdit[row.user_key] ?? row.username} onChange={(e) => setUsernameEdit((prev) => ({ ...prev, [row.user_key]: e.target.value }))} className="h-8 w-44 border-slate-700 bg-slate-900 text-xs text-cyan-200" data-testid={`admin-username-input-${row.user_key}`} disabled={!isOwner && row.user_key !== me?.user_key} />
-                      </TableCell>
-                      <TableCell>
-                        {isOwner ? (
-                          <select value={roleEdit[row.user_key] ?? row.role} onChange={(e) => setRoleEdit((prev) => ({ ...prev, [row.user_key]: e.target.value }))} className="h-8 rounded-md border border-slate-700 bg-slate-900 px-2 text-xs text-slate-100" data-testid={`admin-role-select-${row.user_key}`}>
-                            <option value="owner">Owner</option><option value="sub_admin">Sub-Admin</option><option value="user">User</option>
-                          </select>
-                        ) : <span>{row.role}</span>}
-                      </TableCell>
-                      <TableCell>
-                        <Input type="number" min="0" value={creditEdit[row.user_key] ?? row.credits} onChange={(e) => setCreditEdit((prev) => ({ ...prev, [row.user_key]: Number(e.target.value) }))} className="h-8 w-24 border-slate-700 bg-slate-900 text-slate-100" data-testid={`admin-credit-input-${row.user_key}`} />
-                      </TableCell>
-                      <TableCell>
-                        {row.role === "sub_admin" ? (
-                          <div className="flex items-center gap-2">
-                            <Input type="number" min="1" value={quotaEdit[row.user_key] ?? row.quota_limit} onChange={(e) => setQuotaEdit((prev) => ({ ...prev, [row.user_key]: Number(e.target.value) }))} className="h-8 w-24 border-slate-700 bg-slate-900 text-slate-100" data-testid={`admin-quota-input-${row.user_key}`} disabled={!isOwner} />
-                            <span className="text-xs text-slate-400">used {row.quota_used}</span>
-                          </div>
-                        ) : <span className="text-xs text-slate-500">-</span>}
-                      </TableCell>
-                      <TableCell className="text-xs text-slate-400">{row.created_by}</TableCell>
-                      <TableCell className="space-x-2">
-                        <Button type="button" onClick={() => updateCredits(row.user_key)} className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700" data-testid={`admin-update-credit-${row.user_key}`}>Update Credits</Button>
-                        {isOwner && row.role === "sub_admin" ? <Button type="button" onClick={() => updateQuota(row.user_key)} className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700" data-testid={`admin-update-quota-${row.user_key}`}>Update Quota</Button> : null}
-                        {isOwner ? (
-                          <Button type="button" onClick={() => updateUserProfile(row.user_key)} className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700" data-testid={`admin-update-profile-${row.user_key}`}>Update Profile</Button>
-                        ) : row.user_key === me?.user_key ? (
-                          <Button type="button" onClick={updateOwnUsername} className="h-8 bg-slate-800 px-3 text-xs text-slate-100 hover:bg-slate-700" data-testid={`admin-update-own-username-${row.user_key}`}>Update My Login</Button>
-                        ) : null}
-                        {row.role !== "owner" ? (
-                          <Button type="button" onClick={() => deleteUser(row.user_key)} className="h-8 border border-rose-600 bg-transparent px-3 text-xs text-rose-300 hover:bg-rose-500/10" data-testid={`admin-delete-${row.user_key}`}>Delete</Button>
-                        ) : null}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        <AdminUsersTab
+          adminUsers={adminUsers} adminError={adminError} adminLoading={adminLoading}
+          isOwner={isOwner} me={me}
+          createForm={createForm} setCreateForm={setCreateForm}
+          usernameEdit={usernameEdit} setUsernameEdit={setUsernameEdit}
+          roleEdit={roleEdit} setRoleEdit={setRoleEdit}
+          creditEdit={creditEdit} setCreditEdit={setCreditEdit}
+          quotaEdit={quotaEdit} setQuotaEdit={setQuotaEdit}
+          loadAdminUsers={loadAdminUsers} createUser={createUser}
+          updateCredits={updateCredits} updateQuota={updateQuota}
+          updateUserProfile={updateUserProfile} updateOwnUsername={updateOwnUsername}
+          deleteUser={deleteUser}
+        />
       )}
 
-      {/* Advanced Controls */}
-      {activeTab === "controls" && isOwner ? (
+      {activeTab === "controls" && isOwner && (
         <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="admin-advanced-controls-card">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
             <CardTitle className="text-white">Advanced Controls</CardTitle>
@@ -256,28 +198,20 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
             <Button type="button" onClick={saveApiControls} className="bg-slate-800 text-slate-100 hover:bg-slate-700" data-testid="admin-save-api-controls">Save API Controls</Button>
 
             <form onSubmit={addDomainMapping} className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="admin-domain-form">
-              <Input value={domainForm.domain} onChange={(e) => setDomainForm((prev) => ({ ...prev, domain: e.target.value }))} placeholder="Domain or Subdomain (example.com / trade.example.com)" className="border-slate-700 bg-slate-900 text-slate-100" data-testid="admin-domain-input" />
+              <Input value={domainForm.domain} onChange={(e) => setDomainForm((prev) => ({ ...prev, domain: e.target.value }))} placeholder="Domain or Subdomain" className="border-slate-700 bg-slate-900 text-slate-100" data-testid="admin-domain-input" />
               <Input value={domainForm.target_record} onChange={(e) => setDomainForm((prev) => ({ ...prev, target_record: e.target.value }))} placeholder="A-Record target (IP/host)" className="border-slate-700 bg-slate-900 text-slate-100" data-testid="admin-domain-target-input" />
               <Button type="submit" className="bg-slate-800 text-slate-100 hover:bg-slate-700" data-testid="admin-domain-submit">Save Domain Mapping</Button>
             </form>
 
-            {adminConfig?.hosting_dns_reference ? (
+            {adminConfig?.hosting_dns_reference && (
               <div className="rounded-md border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300" data-testid="admin-hosting-dns-reference">
                 <p>Hosting Domain: <span className="font-mono text-cyan-300">{adminConfig.hosting_dns_reference.hosting_domain || "-"}</span></p>
                 <p>Resolved IPv4: <span className="font-mono text-cyan-300">{adminConfig.hosting_dns_reference.resolved_ipv4 || "Unavailable"}</span></p>
-                <p>Record Type: <span className="font-mono text-cyan-300">A</span></p>
-                <p>Apex Host Label: <span className="font-mono text-cyan-300">@</span> | Subdomain Host Label Example: <span className="font-mono text-cyan-300">trade</span></p>
               </div>
-            ) : null}
-            <p className="text-xs text-slate-400" data-testid="admin-dns-note">{adminConfig?.dns_note || "A-record update must be done in your registrar DNS settings."}</p>
-            {(adminConfig?.dns_instructions || []).length ? (
-              <ul className="list-disc space-y-1 pl-5 text-xs text-slate-300" data-testid="admin-dns-instructions-list">
-                {(adminConfig?.dns_instructions || []).map((step, idx) => <li key={`dns-step-${idx}`}>{step}</li>)}
-              </ul>
-            ) : null}
+            )}
 
             <div className="space-y-3" data-testid="admin-domain-list">
-              {(adminConfig?.domain_mappings || []).length === 0 && <p className="text-xs text-slate-500">No domain mappings yet. Add one above.</p>}
+              {(adminConfig?.domain_mappings || []).length === 0 && <p className="text-xs text-slate-500">No domain mappings yet.</p>}
               {(adminConfig?.domain_mappings || []).map((row) => {
                 const mapInfo = domainMapStatus[row.domain];
                 const statusColor = row.status === "ACTIVE" ? "bg-emerald-600" : row.status === "PENDING_DNS" || row.status === "NGINX_CONFIG_GENERATED" ? "bg-yellow-600" : row.status === "FAILED" ? "bg-rose-600" : "bg-slate-600";
@@ -298,22 +232,18 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
                         <p className="font-semibold text-cyan-300 mb-1">DNS Setup Instructions</p>
                         <p>1. Open your domain registrar / DNS provider</p>
                         <p>2. Add an <strong>A Record</strong>: Host = <code className="text-yellow-300">{row.host_label || "@"}</code>, Value = <code className="text-yellow-300">{row.resolved_target_ip || row.target_record || "[server IP]"}</code>, TTL = 300</p>
-                        <p>3. Delete any conflicting A record for the same host label</p>
-                        <p>4. Wait 5\u201330 minutes for propagation</p>
-                        <p>5. After DNS resolves, click <strong>MAP</strong> above to configure the server proxy</p>
+                        <p>3. Wait 5-30 minutes for propagation, then click <strong>MAP</strong></p>
                       </div>
                     )}
                     {mapInfo?.result && (
-                      <div className={`rounded-md p-2 text-xs ${mapInfo.result.error ? "bg-rose-900/40 text-rose-300" : "bg-emerald-900/40 text-emerald-300"}`} data-testid={`admin-domain-map-result-${row.domain}`}>
-                        {mapInfo.result.error ? `Map error: ${mapInfo.result.error}` : `Mapped (${mapInfo.result.nginx_status}) \u2014 DNS must point to server IP`}
-                      </div>
+                      <div className={`rounded-md p-2 text-xs ${mapInfo.result.error ? "bg-rose-900/40 text-rose-300" : "bg-emerald-900/40 text-emerald-300"}`}>{mapInfo.result.error ? `Error: ${mapInfo.result.error}` : `Mapped (${mapInfo.result.nginx_status})`}</div>
                     )}
                     {domainDeleteConfirm === row.domain && (
-                      <div className="rounded-md border border-rose-700 bg-rose-950/60 p-3 text-xs space-y-2" data-testid={`admin-domain-delete-confirm-${row.domain}`}>
-                        <p className="text-rose-300 font-semibold">Confirm delete domain mapping: <span className="font-mono">{row.domain}</span>?</p>
+                      <div className="rounded-md border border-rose-700 bg-rose-950/60 p-3 text-xs space-y-2">
+                        <p className="text-rose-300 font-semibold">Confirm delete: <span className="font-mono">{row.domain}</span>?</p>
                         <div className="flex gap-2">
-                          <Button size="sm" onClick={() => deleteDomainMapping(row.domain)} className="h-7 bg-rose-600 px-3 text-xs text-white hover:bg-rose-500" data-testid="admin-domain-delete-confirm-yes">Yes, Delete</Button>
-                          <Button size="sm" onClick={() => setDomainDeleteConfirm(null)} className="h-7 bg-slate-700 px-3 text-xs text-white hover:bg-slate-600" data-testid="admin-domain-delete-confirm-no">Cancel</Button>
+                          <Button size="sm" onClick={() => deleteDomainMapping(row.domain)} className="h-7 bg-rose-600 px-3 text-xs text-white hover:bg-rose-500">Yes, Delete</Button>
+                          <Button size="sm" onClick={() => setDomainDeleteConfirm(null)} className="h-7 bg-slate-700 px-3 text-xs text-white hover:bg-slate-600">Cancel</Button>
                         </div>
                       </div>
                     )}
@@ -323,18 +253,17 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
             </div>
           </CardContent>
         </Card>
-      ) : null}
+      )}
 
-      {/* Macro Events */}
       {activeTab === "macro" && isOwner && (
         <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="admin-macro-events-card">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
             <div>
               <CardTitle className="text-white">Active Macro Events</CardTitle>
-              <p className="mt-1 text-xs text-slate-400">Toggle events to influence sector macro bias in F&amp;O signals and Multibagger analysis. Changes apply instantly.</p>
+              <p className="mt-1 text-xs text-slate-400">Toggle events to influence sector macro bias. Changes apply instantly.</p>
             </div>
             <div className="flex items-center gap-2">
-              {macroEventsSaving && <span className="text-xs text-cyan-400" data-testid="macro-events-saving">Saving\u2026</span>}
+              {macroEventsSaving && <span className="text-xs text-cyan-400" data-testid="macro-events-saving">Saving...</span>}
               <Button type="button" onClick={loadMacroEvents} className="bg-slate-800 text-slate-100 hover:bg-slate-700 h-8 px-3 text-xs" data-testid="admin-macro-events-refresh">Refresh</Button>
             </div>
           </CardHeader>
@@ -370,91 +299,16 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
         </Card>
       )}
 
-      {/* Market Data API Connect */}
       {activeTab === "kite" && isOwner && (
-        <Card className="result-card border-slate-800 bg-slate-950/70">
-          <CardHeader><CardTitle className="text-white">Market Data API Integration</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-              <div className="space-y-2">
-                <p className="text-sm font-semibold text-slate-200">Connection Status</p>
-                <div className="flex items-center gap-2">
-                  {kiteStatus?.connected ? (
-                    <><span className="inline-block h-3 w-3 rounded-full bg-green-500"></span><span className="text-sm text-green-400">{"\u2705"} Connected</span><span className="text-xs text-slate-400">| User: {kiteStatus.user_id}</span></>
-                  ) : (
-                    <><span className="inline-block h-3 w-3 rounded-full bg-red-500"></span><span className="text-sm text-red-400">{"\u274c"} Disconnected</span></>
-                  )}
-                </div>
-                {kiteStatus?.date && <p className="text-xs text-slate-500">Last authenticated: {kiteStatus.date}</p>}
-              </div>
-              <Button type="button" onClick={async () => {
-                try { const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/kite/auth-url`, { headers: { Authorization: `Bearer ${token}` } }); const data = await res.json(); if (data.auth_url) { window.open(data.auth_url, '_blank'); setTimeout(() => checkKiteStatus(), 3000); } } catch (err) { console.error('Market Data API auth error:', err); }
-              }} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400">Connect Market Data API</Button>
-            </div>
-            <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
-              <p className="text-xs font-semibold text-slate-300 mb-2">OAuth URL:</p>
-              <p className="text-xs text-cyan-400 break-all font-mono">https://kite.zerodha.com/connect/login?v=3&api_key=wgbgees3zbjpn254</p>
-              <p className="text-xs text-slate-500 mt-2">Note: Market Data API authentication expires daily. Re-authenticate each trading day for live data.</p>
-            </div>
-            <Button type="button" onClick={checkKiteStatus} className="bg-slate-800 text-slate-100 hover:bg-slate-700">Refresh Status</Button>
-          </CardContent>
-        </Card>
+        <AdminApiTab kiteStatus={kiteStatus} checkKiteStatus={checkKiteStatus} token={token} />
       )}
 
-      {/* CSV Seed Management */}
       {activeTab === "csv" && (
-      <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="csv-seed-card">
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-          <CardTitle className="text-white">OHLCV CSV Seed Management</CardTitle>
-          <Button type="button" onClick={loadCsvSeeds} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="csv-seed-refresh-btn">Refresh Seeds</Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200" data-testid="csv-seed-guide">
-            <p className="font-semibold mb-1">Admin Guide: CSV Seed Files</p>
-            <ul className="list-disc pl-4 space-y-0.5">
-              <li>Upload verified CSV files with columns: <code className="bg-slate-800 px-1 rounded">date,open,high,low,close,volume</code></li>
-              <li>Files are named by symbol (e.g., NIFTY.csv, RELIANCE.csv)</li>
-              <li>Used ONLY when Market Data API is unavailable (offline fallback)</li>
-              <li>Data must be manually verified before upload — no auto-scraping</li>
-              <li>Primary source is always Market Data API Historical Data</li>
-            </ul>
-          </div>
-          <form onSubmit={uploadCsvSeed} className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="csv-seed-upload-form">
-            <Input value={csvUploadSymbol} onChange={(e) => setCsvUploadSymbol(e.target.value)} placeholder="Symbol (e.g., NIFTY)" className="border-slate-700 bg-slate-900 text-slate-100" data-testid="csv-seed-symbol-input" />
-            <input type="file" accept=".csv" className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-300 file:mr-2 file:rounded file:border-0 file:bg-cyan-500/20 file:px-2 file:py-1 file:text-xs file:text-cyan-300" data-testid="csv-seed-file-input" />
-            <Button type="submit" className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" disabled={csvSeedLoading} data-testid="csv-seed-upload-btn">Upload CSV</Button>
-          </form>
-          {csvSeedMsg ? <p className="text-sm text-cyan-300" data-testid="csv-seed-msg">{csvSeedMsg}</p> : null}
-          {csvSeedLoading ? (
-            <p className="text-sm text-slate-400">Loading...</p>
-          ) : csvSeeds.length > 0 ? (
-            <div className="relative w-full overflow-auto rounded-lg border border-slate-800">
-              <Table data-testid="csv-seed-table">
-                <TableHeader>
-                  <TableRow className="border-slate-800 hover:bg-slate-900/50">
-                    <TableHead className="text-slate-400">Symbol</TableHead><TableHead className="text-slate-400">File</TableHead><TableHead className="text-right text-slate-400">Rows</TableHead><TableHead className="text-right text-slate-400">Size (KB)</TableHead><TableHead className="text-right text-slate-400">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {csvSeeds.map((seed) => (
-                    <TableRow key={seed.symbol} className="border-slate-800 hover:bg-slate-900/50">
-                      <TableCell className="font-medium text-white">{seed.symbol}</TableCell>
-                      <TableCell className="text-slate-300">{seed.file}</TableCell>
-                      <TableCell className="text-right text-slate-300">{seed.rows}</TableCell>
-                      <TableCell className="text-right text-slate-300">{seed.size_kb}</TableCell>
-                      <TableCell className="text-right">
-                        <Button type="button" onClick={() => deleteCsvSeed(seed.symbol)} className="bg-rose-500/20 text-rose-300 hover:bg-rose-500/40 text-xs h-7 px-2" data-testid={`csv-seed-delete-${seed.symbol}`}>Delete</Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500" data-testid="csv-seed-empty">No CSV seeds uploaded. Backtests will use Market Data API only.</p>
-          )}
-        </CardContent>
-      </Card>
+        <AdminCsvTab
+          csvSeeds={csvSeeds} csvSeedLoading={csvSeedLoading} csvSeedMsg={csvSeedMsg}
+          csvUploadSymbol={csvUploadSymbol} setCsvUploadSymbol={setCsvUploadSymbol}
+          loadCsvSeeds={loadCsvSeeds} uploadCsvSeed={uploadCsvSeed} deleteCsvSeed={deleteCsvSeed}
+        />
       )}
     </section>
   );

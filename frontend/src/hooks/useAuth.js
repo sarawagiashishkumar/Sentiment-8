@@ -45,23 +45,36 @@ export function useAuth() {
       const response = await axios.post(`${API}/auth/access`, { username: trimmed });
       sessionStorage.setItem("stock_auth_token", response.data.token);
       setToken(response.data.token);
-      await hydrateMe(response.data.token);
+      setMe({
+        role: response.data.role, credits: response.data.credits,
+        user_key: response.data.user_key, username: response.data.username,
+        admin_exempt: response.data.admin_exempt,
+        fno_budget: response.data.fno_budget || 500000,
+        account_risk_pct: response.data.account_risk_pct || 2.0,
+      });
+      setLoginUsername("");
     } catch (err) {
       setLoginError(err?.response?.data?.detail || "Login failed");
     } finally {
       setLoginLoading(false);
     }
-  }, [loginUsername, hydrateMe]);
+  }, [loginUsername]);
 
-  const onLogout = useCallback(() => {
+  const onLogout = useCallback(async () => {
+    try { await axios.post(`${API}/auth/logout`, {}, { headers: authHeaders }); }
+    catch { /* ignore */ }
     sessionStorage.removeItem("stock_auth_token");
     setToken("");
     setMe(null);
+  }, [authHeaders]);
+
+  const syncCredits = useCallback((credits) => {
+    setMe((prev) => (prev ? { ...prev, credits } : prev));
   }, []);
 
   return {
-    token, me, authHeaders, isAdmin, isOwner,
+    token, me, setMe, authHeaders, isAdmin, isOwner,
     loginUsername, setLoginUsername, loginLoading, loginError,
-    onLogin, onLogout,
+    onLogin, onLogout, hydrateMe, syncCredits,
   };
 }

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import "@/App.css";
 
+import { useAuth } from "@/hooks/useAuth";
 import { LoginPage } from "@/components/Auth/LoginPage";
 import { AppHeader } from "@/components/Layout/AppHeader";
 import { AppSidebar } from "@/components/Layout/AppSidebar";
@@ -12,16 +13,17 @@ import { FNODashboard } from "@/components/FNO/FNODashboard";
 import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
 import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
-import { KiteLiveWarning, DataFetchErrorPopup } from "@/components/Shared/KiteLiveWarning";
+import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function App() {
-  const [token, setToken] = useState(sessionStorage.getItem("stock_auth_token") || "");
-  const [me, setMe] = useState(null);
-  const [loginUsername, setLoginUsername] = useState("");
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState("");
+  const {
+    token, me, setMe, authHeaders, isAdmin, isOwner,
+    loginUsername, setLoginUsername, loginLoading, loginError,
+    onLogin, onLogout, hydrateMe, syncCredits,
+  } = useAuth();
+
   const [currentPage, setCurrentPage] = useState("home");
   const [customPositions, setCustomPositions] = useState([]);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
@@ -31,32 +33,7 @@ export default function App() {
   const targetBuzzedRef = useRef(new Set());
   const warningBuzzedRef = useRef(new Set());
 
-  const authHeaders = useMemo(
-    () => (token ? { Authorization: `Bearer ${token}` } : {}),
-    [token],
-  );
-  const isAdmin = me?.role === "owner" || me?.role === "sub_admin";
-  const isOwner = me?.role === "owner";
-
-  const hydrateMe = async (accessToken) => {
-    const response = await axios.get(`${API}/auth/me`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    setMe(response.data);
-    return response.data;
-  };
-
   useEffect(() => { document.title = "AI Trading Dashboard"; }, []);
-
-  useEffect(() => {
-    const bootstrap = async () => {
-      if (!token) return;
-      try { await hydrateMe(token); }
-      catch { sessionStorage.removeItem("stock_auth_token"); setToken(""); setMe(null); }
-    };
-    bootstrap();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── Custom Positions Polling ──────────────────────────────────────
   const loadCustomPositions = async () => {
@@ -64,7 +41,6 @@ export default function App() {
     try {
       const response = await axios.get(`${API}/fno/custom-positions`, { headers: authHeaders });
       setCustomPositions(response.data || []);
-      // Auto-fetch counts as active engagement — reset inactivity clock
       if (lastActivityRef.current) lastActivityRef.current = Date.now();
     } catch { /* keep silent during polling */ }
   };
@@ -78,13 +54,10 @@ export default function App() {
   }, [token]);
 
   // ── Keep-alive heartbeat with anti-sleep protocol ──────────────────
-  // Hard resets 10-min inactivity timer on EVERY user interaction
-  // (click, scroll, keypress, filter toggle, auto-fetch).
-  // Auto-fetch activity also counts as engagement — server stays awake.
   const lastActivityRef = useRef(Date.now());
   const heartbeatTimerRef = useRef(null);
-  const INACTIVITY_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
-  const HEARTBEAT_INTERVAL_MS = 60000; // 60s
+  const INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
+  const HEARTBEAT_INTERVAL_MS = 60000;
 
   useEffect(() => {
     if (!token) return undefined;
@@ -95,24 +68,20 @@ export default function App() {
 
     const resetActivity = () => { lastActivityRef.current = Date.now(); };
 
-    // Hard reset on every user interaction
     const interactionEvents = ["click", "scroll", "keydown", "mousemove", "touchstart", "focus"];
     interactionEvents.forEach(evt => window.addEventListener(evt, resetActivity, { passive: true }));
 
-    // Also reset on visibility change (user returns to tab)
     const handleVisibility = () => { if (!document.hidden) resetActivity(); };
     document.addEventListener("visibilitychange", handleVisibility);
 
-    // Axios interceptor: any API response = active engagement (covers auto-fetch)
     const axiosInterceptor = axios.interceptors.response.use(
       (response) => { resetActivity(); return response; },
       (error) => { resetActivity(); return Promise.reject(error); },
     );
 
-    ping(); // immediate first ping
+    ping();
     heartbeatTimerRef.current = setInterval(() => {
       const idleMs = Date.now() - lastActivityRef.current;
-      // Always ping if within inactivity limit, or if page is visible (anti-sleep)
       if (idleMs < INACTIVITY_LIMIT_MS || !document.hidden) {
         ping();
       }
@@ -197,10 +166,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customPositions, alertSoundEnabled]);
 
-  const syncCredits = (credits) => {
-    setMe((prev) => (prev ? { ...prev, credits } : prev));
-  };
-
   const enableAlertSound = async () => {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) throw new Error("Audio not supported");
@@ -212,35 +177,9 @@ export default function App() {
     setAlertSoundEnabled(true);
   };
 
-  const onLogin = async (event) => {
-    event.preventDefault();
-    setLoginError("");
-    setLoginLoading(true);
-    try {
-      const response = await axios.post(`${API}/auth/access`, { username: loginUsername.trim() });
-      sessionStorage.setItem("stock_auth_token", response.data.token);
-      setToken(response.data.token);
-      setMe({
-        role: response.data.role, credits: response.data.credits,
-        user_key: response.data.user_key, username: response.data.username,
-        admin_exempt: response.data.admin_exempt,
-        fno_budget: response.data.fno_budget || 500000,
-        account_risk_pct: response.data.account_risk_pct || 2.0,
-      });
-      setCurrentPage("home");
-      setLoginUsername("");
-    } catch (error) {
-      setLoginError(error?.response?.data?.detail || "Unable to login");
-    } finally {
-      setLoginLoading(false);
-    }
-  };
-
-  const onLogout = async () => {
-    try { await axios.post(`${API}/auth/logout`, {}, { headers: authHeaders }); }
-    catch { /* ignore */ }
-    sessionStorage.removeItem("stock_auth_token");
-    setToken(""); setMe(null); setCurrentPage("home");
+  const handleLogout = async () => {
+    await onLogout();
+    setCurrentPage("home");
     setCustomPositions([]);
   };
 
@@ -259,7 +198,7 @@ export default function App() {
     <main className="min-h-screen dashboard-dark-bg text-slate-100" data-testid="app-shell">
       <div className="dashboard-grid-overlay" />
       <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <AppHeader me={me} onLogout={onLogout} authHeaders={authHeaders} />
+        <AppHeader me={me} onLogout={handleLogout} authHeaders={authHeaders} />
         <AppSidebar
           currentPage={currentPage} setCurrentPage={setCurrentPage}
           isAdmin={isAdmin}
