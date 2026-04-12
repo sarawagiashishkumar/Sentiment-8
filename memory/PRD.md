@@ -132,6 +132,11 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Loading Skeleton States**: `HeatmapSkeleton` component replaces plain "Loading..." text in StocksHeatmap and OptionsHeatmap with animated pulse skeleton grid.
 - **Mobile Responsiveness**: Header uses 2-col grid on mobile, 4-col on desktop. Sidebar buttons show abbreviated labels on small screens (MB, F&O, Port, Heat). Home dashboard cards use responsive 2→4 column grid. Cost note abbreviated for mobile.
 
+### Phase 15: Notification Center, Final Modularization & Perf Thresholds (2026-04-12)
+- **Persistent Notification Center**: Bell icon in header with unread count badge. Click opens slide-out panel from right. Categorized notifications: Critical (BBE NOW BUY, EXIT_URGENT, API Disconnect), Warning (premium decay, approaching SL), Success (target watching, closed win), Info (general). Auto-clears read notifications after 24h. Connected to BBE alert monitor and KiteLiveWarning API failure detection.
+- **fno_utils.py Extracted**: 179 lines (`_format_script`, `_compute_report_from_rows`, `_infer_stock_option_type`, `_analyze_micro_dip_prediction`). Engine now 1632 lines — 41% total reduction from original 2787 across 4 extractions (fno_builders 684, fno_confluence 395, fno_utils 179).
+- **Performance Threshold Alerts**: PhaseBar component shows red "SLOW" warning with pulse animation when timing exceeds configurable thresholds (NIFTY >10s, BANKNIFTY >10s, Stocks >30s, Assembly >5s, Total >60s, Multibagger Scan >30s).
+
 ## Future/Backlog
 - Wait for 30+ days iv_history accumulation for meaningful IV cone percentile bands
 - Performance benchmarking during live market hours (timing data will populate during trading sessions)
