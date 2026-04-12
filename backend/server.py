@@ -461,6 +461,7 @@ from routes.portfolio import portfolio_router
 from routes.multibagger import multibagger_router
 from routes.batch_jobs import batch_router
 from routes.auth import auth_router
+from routes.notifications import notification_router
 api_router.include_router(fno_router)
 api_router.include_router(admin_router)
 api_router.include_router(market_data_router)
@@ -468,6 +469,7 @@ api_router.include_router(portfolio_router)
 api_router.include_router(multibagger_router)
 api_router.include_router(batch_router, prefix="/batch")
 api_router.include_router(auth_router)
+api_router.include_router(notification_router)
 
 app.include_router(api_router)
 

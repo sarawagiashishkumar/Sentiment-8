@@ -50,7 +50,7 @@ export function useNotifications() {
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  return { notifications, unreadCount, addNotification, markRead, markAllRead, dismiss, clearAll };
+  return { notifications, unreadCount, addNotification, markRead, markAllRead, dismiss, clearAll, setNotifications };
 }
 
 export function NotificationBell({ unreadCount, onClick }) {

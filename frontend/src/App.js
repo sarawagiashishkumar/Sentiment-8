@@ -16,6 +16,7 @@ import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmap
 import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
 import { ErrorBoundary } from "@/components/Shared/ErrorBoundary";
 import { useNotifications, NotificationBell, NotificationPanel } from "@/components/Shared/NotificationCenter";
+import { usePushNotifications, PushNotifToggle } from "@/components/Shared/PushNotifications";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -31,7 +32,8 @@ export default function App() {
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
 
-  const { notifications, unreadCount, addNotification, markRead, markAllRead, dismiss: dismissNotif, clearAll: clearAllNotifs } = useNotifications();
+  const { notifications, unreadCount, addNotification, markRead, markAllRead, dismiss: dismissNotif, clearAll: clearAllNotifs, setNotifications } = useNotifications();
+  const { enabled: pushEnabled, permission: pushPermission, toggle: togglePush, sendPush } = usePushNotifications();
 
   const audioContextRef = useRef(null);
   const urgentBuzzedRef = useRef(new Set());
@@ -39,6 +41,20 @@ export default function App() {
   const warningBuzzedRef = useRef(new Set());
 
   useEffect(() => { document.title = "AI Trading Dashboard"; }, []);
+
+  // ── Load persisted notifications on login ─────────────────────────
+  useEffect(() => {
+    if (!token) return;
+    axios.get(`${API}/notifications`, { headers: authHeaders }).then((res) => {
+      const items = (res.data?.notifications || []).map((n) => ({
+        id: `db-${n.ts}-${Math.random().toString(36).slice(2, 6)}`,
+        category: n.category, title: n.title, message: n.message,
+        ts: n.ts * 1000, read: n.read, symbol: n.symbol,
+      }));
+      if (items.length > 0) setNotifications(items);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   // ── Custom Positions Polling ──────────────────────────────────────
   const loadCustomPositions = async () => {
@@ -157,6 +173,7 @@ export default function App() {
       freshUrgent.forEach((p) => {
         urgentBuzzedRef.current.add(p.id);
         addNotification("critical", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
+        sendPush(`CRITICAL: ${p.alert.replace(/_/g, " ")}`, `${p.symbol || "Position"}: ${p.alert}`, "critical");
       });
     }
 
@@ -175,7 +192,18 @@ export default function App() {
       freshWarnings.forEach((p) => {
         warningBuzzedRef.current.add(p.id);
         addNotification("warning", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
+        sendPush(`WARNING: ${p.alert.replace(/_/g, " ")}`, `${p.symbol || "Position"}: ${p.alert}`, "warning");
       });
+    }
+
+    // Persist new notifications to backend (debounced — only if we added any)
+    if (freshUrgent.length > 0 || freshTargets.length > 0 || freshWarnings.length > 0) {
+      const toSave = [
+        ...freshUrgent.map(p => ({ category: "critical", title: p.alert.replace(/_/g, " "), message: `${p.symbol || "Position"}: ${p.alert}`, symbol: p.symbol })),
+        ...freshTargets.map(p => ({ category: "success", title: p.signal_state.replace(/_/g, " "), message: `${p.symbol || "Position"}: ${p.signal_state}`, symbol: p.symbol })),
+        ...freshWarnings.map(p => ({ category: "warning", title: p.alert.replace(/_/g, " "), message: `${p.symbol || "Position"}: ${p.alert}`, symbol: p.symbol })),
+      ];
+      axios.post(`${API}/notifications`, { notifications: toSave }, { headers: authHeaders }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customPositions, alertSoundEnabled]);
@@ -189,6 +217,16 @@ export default function App() {
     const ctx = audioContextRef.current;
     if (ctx.state === "suspended") await ctx.resume();
     setAlertSoundEnabled(true);
+  };
+
+  const handleMarkAllRead = () => {
+    markAllRead();
+    axios.patch(`${API}/notifications/read-all`, {}, { headers: authHeaders }).catch(() => {});
+  };
+
+  const handleClearAll = () => {
+    clearAllNotifs();
+    axios.delete(`${API}/notifications`, { headers: authHeaders }).catch(() => {});
   };
 
   const handleLogout = async () => {
@@ -214,7 +252,12 @@ export default function App() {
       <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <AppHeader
           me={me} onLogout={handleLogout} authHeaders={authHeaders}
-          notifBell={<NotificationBell unreadCount={unreadCount} onClick={() => setNotifPanelOpen(prev => !prev)} />}
+          notifBell={
+            <>
+              <PushNotifToggle enabled={pushEnabled} permission={pushPermission} onToggle={togglePush} />
+              <NotificationBell unreadCount={unreadCount} onClick={() => setNotifPanelOpen(prev => !prev)} />
+            </>
+          }
         />
         <AppSidebar
           currentPage={currentPage} setCurrentPage={setCurrentPage}
@@ -267,8 +310,8 @@ export default function App() {
         <NotificationPanel
           notifications={notifications} isOpen={notifPanelOpen}
           onClose={() => setNotifPanelOpen(false)}
-          onMarkRead={markRead} onMarkAllRead={markAllRead}
-          onDismiss={dismissNotif} onClearAll={clearAllNotifs}
+          onMarkRead={markRead} onMarkAllRead={handleMarkAllRead}
+          onDismiss={dismissNotif} onClearAll={handleClearAll}
         />
       </div>
     </main>
