@@ -295,8 +295,11 @@ async def _refresh_open_position(position: dict) -> dict:
             _pos_entry = float(position.get("buy_price") or 0)
             _pos_vix = await _get_india_vix()
             if _pos_entry > 0:
-                _und_sym = (position.get("underlying") or
-                            position.get("script", "").split("2")[0][:10])
+                _und_sym = position.get("underlying") or ""
+                if not _und_sym:
+                    import re as _re
+                    _m = _re.match(r'^([A-Z&]+?)(?:\d)', position.get("script", ""))
+                    _und_sym = _m.group(1) if _m else position.get("script", "")[:10]
                 _und_ltp = 0.0
                 if _und_sym:
                     try:
@@ -359,7 +362,13 @@ async def _refresh_open_position(position: dict) -> dict:
         session_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
         mins_to_close = max(0, int((session_close - now_ist).total_seconds() / 60))
         india_vix_for_pos = await _get_india_vix()
-        underlying_sym = position.get("underlying") or position.get("script", "").split("2")[0][:10]
+        underlying_sym = position.get("underlying") or ""
+        if not underlying_sym:
+            # Extract underlying from script: e.g. "NIFTY12APR24000CE" → "NIFTY"
+            script = position.get("script", "")
+            import re as _re
+            match = _re.match(r'^([A-Z&]+?)(?:\d)', script)
+            underlying_sym = match.group(1) if match else script[:10]
         underlying_core = None
         if underlying_sym:
             try:

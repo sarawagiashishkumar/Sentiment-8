@@ -109,10 +109,14 @@ async def run_watchlist_monitor():
                 last_trig = item.get("last_triggered")
                 if last_trig:
                     try:
-                        last_dt = datetime.fromisoformat(last_trig.replace("Z", "+00:00"))
+                        if isinstance(last_trig, str):
+                            last_dt = datetime.fromisoformat(last_trig.replace("Z", "+00:00"))
+                        else:
+                            # MongoDB may store as datetime object
+                            last_dt = last_trig.replace(tzinfo=timezone.utc) if last_trig.tzinfo is None else last_trig
                         if (now_ts - last_dt).total_seconds() < ALERT_COOLDOWN_SECS:
                             continue
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError, AttributeError):
                         pass
 
                 triggered = False

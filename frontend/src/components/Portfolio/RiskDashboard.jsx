@@ -38,8 +38,9 @@ export function RiskDashboard({ authHeaders }) {
 
   useEffect(() => { fetchRisk(); }, [fetchRisk]);
 
-  const equityCurve = (data?.equity_curve || []).map((pt, i) => ({
-    time: Math.floor(Date.now() / 1000) - (data.equity_curve.length - i) * 86400,
+  const ecSource = data?.equity_curve || [];
+  const equityCurve = ecSource.map((pt, i) => ({
+    time: Math.floor(Date.now() / 1000) - (ecSource.length - i) * 86400,
     value: pt.equity,
   }));
 

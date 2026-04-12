@@ -48,11 +48,12 @@ async def admin_crm_inbox(
 
     cursor = _state.db.crm_messages.find(
         query, {"_id": 0}
-    ).sort("ts_epoch", -1).limit(100)
-    messages = await cursor.to_list(100)
+    ).sort("ts_epoch", -1).limit(200)
+    messages = await cursor.to_list(200)
 
     unread = await _state.db.crm_messages.count_documents({"to": "admin", "status": "unread"})
-    return {"messages": messages, "count": len(messages), "unread": unread}
+    total = await _state.db.crm_messages.count_documents({"to": "admin"})
+    return {"messages": messages, "count": len(messages), "unread": unread, "total": total}
 
 
 @crm_router.patch("/admin/crm/read/{message_id}")

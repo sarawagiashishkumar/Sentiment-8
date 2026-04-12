@@ -17,9 +17,10 @@ reports_router = APIRouter()
 async def _aggregate_report(user_key: str, from_ts: float, to_ts: float) -> dict:
     """Build aggregated report from journal + signals + perf history.
     Uses MongoDB aggregation pipelines for server-side computation."""
-    # Journal entries in range
+    # Journal entries in range — fetch only signal_generated and position_closed types
     journal_cursor = _state.db.trading_journal.find(
-        {"user_key": user_key, "ts_epoch": {"$gte": from_ts, "$lte": to_ts}},
+        {"user_key": user_key, "ts_epoch": {"$gte": from_ts, "$lte": to_ts},
+         "event_type": {"$in": ["signal_generated", "position_closed"]}},
         {"_id": 0},
     ).sort("ts_epoch", -1).limit(500)
     journal_entries = await journal_cursor.to_list(500)

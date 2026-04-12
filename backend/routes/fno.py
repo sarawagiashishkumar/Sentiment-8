@@ -156,15 +156,25 @@ async def generate_fno_signals(
         if not _is_market_hrs:
             yield _ndjson_line({"type": "progress", "phase": "market_hours", "message": "Market closed — using last available data"})
 
-        # ── Phase 1: NIFTY projection (with inline keepalive) ──────────────
+        # ── Phase 1+2: NIFTY + BANKNIFTY in parallel (with inline keepalive) ──
         _t0 = _time.monotonic()
-        yield _ndjson_line({"type": "progress", "phase": "nifty", "message": "Computing NIFTY projection..."})
+        yield _ndjson_line({"type": "progress", "phase": "nifty", "message": "Computing NIFTY & BANKNIFTY projections in parallel..."})
         nifty_task = asyncio.ensure_future(_build_index_phase("NIFTY", refreshed_at, _srv))
-        while not nifty_task.done():
+        bn_task = asyncio.ensure_future(_build_index_phase("BANKNIFTY", refreshed_at, _srv))
+
+        while not nifty_task.done() or not bn_task.done():
+            pending = []
+            if not nifty_task.done():
+                pending.append(nifty_task)
+            if not bn_task.done():
+                pending.append(bn_task)
             try:
-                await asyncio.wait_for(asyncio.shield(nifty_task), timeout=5)
-            except asyncio.TimeoutError:
+                await asyncio.wait(pending, timeout=5, return_when=asyncio.FIRST_COMPLETED)
+            except Exception:
+                pass
+            if not nifty_task.done() or not bn_task.done():
                 yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
+
         nifty_projection = nifty_task.result()
         _perf["nifty_ms"] = round((_time.monotonic() - _t0) * 1000)
         yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals ({_perf['nifty_ms']}ms)"})
@@ -176,15 +186,6 @@ async def generate_fno_signals(
         }
         yield _ndjson_line({"type": "partial", "phase": "nifty", "data": nifty_partial})
 
-        # ── Phase 2: BANKNIFTY projection (with inline keepalive) ──────────
-        _t0 = _time.monotonic()
-        yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY projection..."})
-        bn_task = asyncio.ensure_future(_build_index_phase("BANKNIFTY", refreshed_at, _srv))
-        while not bn_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(bn_task), timeout=5)
-            except asyncio.TimeoutError:
-                yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         banknifty_projection = bn_task.result()
         _perf["banknifty_ms"] = round((_time.monotonic() - _t0) * 1000)
         yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals ({_perf['banknifty_ms']}ms)"})
