@@ -6,7 +6,7 @@ Tests for Master Spec Batches 1-3 implementation:
 - Batch 2: MFE/MAE backtests, probability models, theta curves
 - Batch 3: 4-bucket Confluence Score V2 (A+B+C+D), probability-based T1/T2, forward MFE best exit
 
-All tests use the public API endpoint: https://backend-refactor-p2.preview.emergentagent.com
+All tests use the public API endpoint: https://sentiment-engine-ai.preview.emergentagent.com
 """
 import pytest
 import requests
