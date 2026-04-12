@@ -207,7 +207,7 @@ export function LiveHelpModule({ authHeaders, me }) {
   // ── Render ──────────────────────────────────────────────────────────
   if (!open) {
     return (
-      <button onClick={() => { setOpen(true); connectWS(); }} className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-violet-600 px-4 py-3 text-white shadow-lg shadow-violet-600/30 hover:bg-violet-500 transition-all" data-testid="livehelp-fab">
+      <button onClick={() => { setOpen(true); connectWS(); }} className="fixed bottom-20 right-6 z-50 flex items-center gap-2 rounded-full bg-violet-600 px-4 py-3 text-white shadow-lg shadow-violet-600/30 hover:bg-violet-500 transition-all" data-testid="livehelp-fab">
         <MessageCircle size={18} /> <span className="text-xs font-semibold hidden sm:inline">Live Help</span>
       </button>
     );
@@ -215,7 +215,7 @@ export function LiveHelpModule({ authHeaders, me }) {
 
   if (minimized) {
     return (
-      <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2 text-white shadow-lg cursor-pointer" onClick={() => setMinimized(false)} data-testid="livehelp-minimized">
+      <div className="fixed bottom-20 right-6 z-50 flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2 text-white shadow-lg cursor-pointer" onClick={() => setMinimized(false)} data-testid="livehelp-minimized">
         <MessageCircle size={14} />
         <span className="text-[10px] font-semibold">Live Help</span>
         {messages.filter(m => m.type === "incoming").length > 0 && <span className="bg-rose-500 text-[9px] rounded-full px-1">!</span>}
@@ -225,7 +225,7 @@ export function LiveHelpModule({ authHeaders, me }) {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 w-80 sm:w-96 rounded-xl border border-violet-500/40 bg-slate-950 shadow-2xl shadow-violet-600/10 flex flex-col" style={{ maxHeight: "70vh" }} data-testid="livehelp-panel">
+    <div className="fixed bottom-20 right-6 z-50 w-80 sm:w-96 rounded-xl border border-violet-500/40 bg-slate-950 shadow-2xl shadow-violet-600/10 flex flex-col" style={{ maxHeight: "70vh" }} data-testid="livehelp-panel">
       {/* Header */}
       <div className="flex items-center justify-between rounded-t-xl bg-violet-600/20 border-b border-violet-500/30 px-3 py-2">
         <div className="flex items-center gap-2">

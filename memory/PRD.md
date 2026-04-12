@@ -219,7 +219,51 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Admin Permissions & Tiered Packages**: 4 package tiers — Free (10 credits, limited), Basic (100 credits), Pro (500 credits), Unlimited. Each tier defines daily/total usage limits for every feature (fno_generate, multibagger, portfolio, backtest, alert rules, watchlist). Per-user feature cost overrides and feature restriction lists. Frontend "Permissions & Packages" tab in Admin with user selector and package assignment. Usage tracking via `usage_tracking` MongoDB collection.
 - **Geospatial Fraud Detection**: Login IP geolocation via ip-api.com. Haversine distance calculation between current and last session. Impossible travel detection (max 900 km/h air, 300 km/h rail, 120 km/h road). Auto-suspends non-admin accounts on fraud detection with INR 2,500 reactivation fee. Login page shows "Fraud Login Attempt Detected" notice with detailed travel info, reactivation fee, and contact form. Admin "Fraud Detection" tab shows incident list with Reactivate/Confirm actions.
 - **CRM Module**: Two-way messaging system. Admin can compose targeted messages to specific users or broadcast to all non-admin users. User inbox with read/dismiss/reply actions. Support contact form feeds into admin inbox. Message categories: admin_message, broadcast, fraud_alert, reactivation_request, user_reply, support_request. Notifications auto-pushed to user dashboard. Admin "CRM Messages" tab with inbox/sent tabs and compose form.
-- **Navigation**: Admin Dashboard expanded from 6 to 9 tabs (added Permissions & Packages, CRM Messages, Fraud Detection). F&O Dashboard expanded from 5 to 6 sub-tabs (added Alert Rules).
+- **Navigation**: Admin Dashboard expanded from 6 to 10 tabs (added Permissions & Packages, Payments, CRM Messages, Fraud Detection). F&O Dashboard expanded from 5 to 6 sub-tabs (added Alert Rules).
+
+### Phase 22: Razorpay, Offline QR Payments, WebRTC Live Help & Senior Audit (2026-04-12)
+- **Razorpay Payment Gateway**: Admin configures key_id/key_secret/upi_id via Admin Dashboard (stored in MongoDB `system_meta`, NOT .env). Create order, verify signature, auto-reactivate on payment. Frontend 3-tab payment flow: Razorpay online / UPI QR code / Offline screenshot upload.
+- **Offline QR Payment**: UPI QR code generated via `qrcode` Python library. Users scan and upload payment proof screenshot (base64 stored in MongoDB, max 5MB). Admin verifies via Payments panel with proof viewer and approve/reject buttons. Auto-creates CRM ticket on upload.
+- **Admin Payments Panel**: Configure Razorpay credentials, view config status (Razorpay/UPI), pending verifications list with proof viewer, approve/reject with auto-reactivation.
+- **Native WebRTC Live Help Module**: Zero third-party recurring costs. WebSocket signaling at `/api/ws/livehelp/{session_id}`. 5 free Google STUN servers (stun.l.google.com:19302). Text chat with message persistence + voice support via WebRTC media streams. Seamless text/voice toggle. Bug report button auto-generates CRM tickets.
+- **Session Log Analysis**: Frontend axios interceptor logs all API calls (status, errors). Backend rule-based troubleshooting engine (6 patterns: kite_disconnect, credit_exhausted, generation_timeout, no_signals, data_stale, upload_failed). Auto-generates CRM bug tickets on 500/502/503 errors. LiveHelp fetches session analysis hints on connect.
+- **User CRM Inbox (Parity Fix)**: Frontend component displaying admin messages with dismiss, reply, and contact support. Wired into App.js above main content area.
+- **Senior Technical Audit Findings & Fixes**:
+  - Mathematical Logic: Haversine formula verified (R=6371km, correct radians conversion), confluence scoring (0-100 with 8 sub-scores correctly capped), position sizing (dual-constraint min(allocation, risk)), MFE/MAE engine (13 strategy profiles, 4 DTE bands, 4 IV regimes).
+  - Frontend-Backend Parity: 119 backend endpoints, ~72 unique frontend API consumers. Gap fixed: User CRM inbox (GET/PATCH/POST /crm/*) now has frontend consumer.
+  - Latency Optimizations: Non-blocking geo-lookup (asyncio.run_in_executor), 7 new MongoDB compound indexes, timeout reduced from 5s to 3s on geo API.
+
+## Key API Endpoints
+- `/api/payments/create-order` — Razorpay order creation
+- `/api/payments/verify` — Razorpay signature verification + auto-reactivation
+- `/api/payments/qr-code` — UPI QR code generation (base64 PNG)
+- `/api/payments/offline-upload` — Payment proof screenshot upload
+- `/api/admin/payments/configure` — Admin sets Razorpay credentials
+- `/api/admin/payments/config-status` — Check Razorpay/UPI config
+- `/api/admin/payments/pending` — List pending offline payments
+- `/api/admin/payments/{id}/proof` — Get payment proof image
+- `/api/admin/payments/{id}/verify` — Approve/reject payment
+- `/api/livehelp/ice-servers` — WebRTC STUN server config
+- `/api/livehelp/log-action` — Log session action for analysis
+- `/api/livehelp/session-analysis` — Get troubleshooting suggestions
+- `/api/livehelp/chat-history` — Get chat messages
+- `/api/livehelp/active-sessions` — Admin list active help sessions
+- `/api/ws/livehelp/{session_id}` — WebRTC signaling + chat WebSocket
+- `/api/crm/inbox` — User CRM inbox (admin messages)
+- `/api/crm/dismiss/{id}` — Dismiss admin message
+- `/api/crm/reply/{id}` — Reply to admin message
+- `/api/crm/contact` — User support contact form
+
+## WebRTC Capabilities Unlocked by Native Framework
+Once established, this WebRTC framework enables:
+1. Screen sharing for remote debugging (add screen track to peer connection)
+2. Multi-party admin conferencing (mesh or SFU topology)
+3. Video support (toggle camera alongside voice)
+4. File transfer via RTCDataChannel (share screenshots, logs)
+5. Real-time market data streaming via DataChannel (bypass HTTP overhead)
+6. Co-browsing — admin sees user's dashboard in real-time
+7. Recording — capture audio/video sessions for compliance
+8. Push-to-talk walkie-talkie mode for trading floor communication
 
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage:
@@ -228,3 +272,4 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
   - Trading journal fills automatically with signal generation + position management
   - Notification analytics populate as alerts fire and users acknowledge them
   - Fraud incidents accumulate as multi-device logins trigger impossible travel checks
+  - Payment history accumulates as users reactivate accounts
