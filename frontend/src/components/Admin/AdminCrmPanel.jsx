@@ -218,9 +218,16 @@ export function AdminFraudPanel({ authHeaders }) {
 export function AdminPermissionsPanel({ authHeaders }) {
   const [users, setUsers] = useState([]);
   const [packages, setPackages] = useState({});
+  const [defaultCosts, setDefaultCosts] = useState({});
+  const [defaultLimits, setDefaultLimits] = useState({});
   const [selectedUser, setSelectedUser] = useState(null);
   const [perms, setPerms] = useState(null);
   const [editPackage, setEditPackage] = useState("");
+  const [editLimits, setEditLimits] = useState({});
+  const [editRestrictions, setEditRestrictions] = useState([]);
+  const [editCosts, setEditCosts] = useState({});
+  const [showEditor, setShowEditor] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -233,6 +240,8 @@ export function AdminPermissionsPanel({ authHeaders }) {
     try {
       const res = await axios.get(`${API}/admin/packages`, { headers: authHeaders });
       setPackages(res.data.packages || {});
+      setDefaultCosts(res.data.default_feature_costs || {});
+      setDefaultLimits(res.data.default_usage_limits || {});
     } catch (err) { console.error(err); }
   }, [authHeaders]);
 
@@ -244,15 +253,54 @@ export function AdminPermissionsPanel({ authHeaders }) {
       setPerms(res.data);
       setSelectedUser(userKey);
       setEditPackage(res.data.package || "free");
+      setEditLimits({ ...(res.data.usage_limits || {}) });
+      setEditCosts({ ...(res.data.feature_costs || {}) });
+      setEditRestrictions([...(res.data.feature_restrictions || [])]);
+      setShowEditor(false);
     } catch (err) { console.error(err); }
   };
 
-  const updatePackage = async () => {
+  const savePermissions = async () => {
     if (!selectedUser) return;
+    setSaving(true);
     try {
-      await axios.patch(`${API}/admin/users/${selectedUser}/permissions`, { package: editPackage }, { headers: authHeaders });
-      viewPermissions(selectedUser);
+      await axios.patch(`${API}/admin/users/${selectedUser}/permissions`, {
+        package: editPackage,
+        usage_limits: editLimits,
+        feature_costs: editCosts,
+        feature_restrictions: editRestrictions,
+      }, { headers: authHeaders });
+      await viewPermissions(selectedUser);
     } catch (err) { console.error(err); }
+    setSaving(false);
+  };
+
+  const toggleRestriction = (feature) => {
+    setEditRestrictions(prev =>
+      prev.includes(feature) ? prev.filter(f => f !== feature) : [...prev, feature]
+    );
+  };
+
+  const FEATURE_LABELS = {
+    fno_generate: "F&O Signal Generation",
+    multibagger_generate: "Multibagger Screener",
+    portfolio_analyze: "Portfolio Analysis",
+    custom_position: "Custom Position Tracking",
+    backtest_run: "Strategy Backtester",
+    iv_collect: "IV Data Collection",
+    reports_view: "Reports Access",
+    watchlist_add: "Watchlist Management",
+    alert_rule_create: "Alert Rule Creation",
+  };
+
+  const LIMIT_LABELS = {
+    fno_generate_daily: "F&O Generations / Day",
+    multibagger_generate_daily: "Multibagger Scans / Day",
+    portfolio_analyze_daily: "Portfolio Analyses / Day",
+    custom_position_total: "Max Custom Positions",
+    backtest_run_daily: "Backtests / Day",
+    alert_rules_total: "Max Alert Rules",
+    watchlist_items_total: "Max Watchlist Items",
   };
 
   return (
@@ -263,39 +311,140 @@ export function AdminPermissionsPanel({ authHeaders }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Package Tiers Overview */}
+        <div className="overflow-x-auto scrollbar-hide">
+          <p className="text-[10px] text-slate-400 font-semibold mb-2">Available Tiers</p>
+          <div className="flex gap-2 min-w-max pb-1">
+            {Object.entries(packages).map(([key, pkg]) => (
+              <div key={key} className="rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 min-w-[130px]" data-testid={`package-card-${key}`}>
+                <p className="text-xs font-bold text-white">{pkg.label}</p>
+                <p className="text-[10px] text-cyan-400">{pkg.credits === 999999 ? "Unlimited" : pkg.credits} credits</p>
+                <p className="text-[9px] text-slate-500 mt-0.5">FNO: {pkg.limits?.fno_generate_daily === 999999 ? "Unlim" : pkg.limits?.fno_generate_daily}/day</p>
+                <p className="text-[9px] text-slate-500">Alerts: {pkg.limits?.alert_rules_total === 999999 ? "Unlim" : pkg.limits?.alert_rules_total} max</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {/* User List */}
           <div className="space-y-1.5">
-            <p className="text-[10px] text-slate-400 font-semibold">Users</p>
+            <p className="text-[10px] text-slate-400 font-semibold">Select User</p>
             {users.map(u => (
-              <button key={u.user_key} onClick={() => viewPermissions(u.user_key)} className={`w-full text-left rounded px-2 py-1.5 text-xs ${selectedUser === u.user_key ? "bg-cyan-600/20 border border-cyan-500/40" : "bg-slate-900/40 border border-slate-700 hover:border-slate-600"}`} data-testid={`perm-user-${u.user_key}`}>
-                <span className="font-bold text-white">{u.username}</span>
-                <span className="ml-2 text-slate-400">{u.role}</span>
+              <button key={u.user_key} onClick={() => viewPermissions(u.user_key)} className={`w-full text-left rounded px-3 py-2 text-xs flex items-center justify-between ${selectedUser === u.user_key ? "bg-cyan-600/20 border border-cyan-500/40" : "bg-slate-900/40 border border-slate-700 hover:border-slate-600"}`} data-testid={`perm-user-${u.user_key}`}>
+                <div>
+                  <span className="font-bold text-white">{u.username}</span>
+                  <span className="ml-2 text-slate-500">{u.role}</span>
+                </div>
+                <span className="text-[9px] text-slate-600">{u.credits ?? 0} cr</span>
               </button>
             ))}
           </div>
 
+          {/* Permission Details + Editor */}
           {perms && (
-            <div className="space-y-2" data-testid="perm-details">
-              <p className="text-[10px] text-slate-400 font-semibold">{perms.username} - Permissions</p>
-              <div className="flex items-center gap-2">
-                <select value={editPackage} onChange={(e) => setEditPackage(e.target.value)} className="h-7 rounded border border-slate-700 bg-slate-800 text-slate-100 text-xs px-2" data-testid="perm-package-select">
-                  {Object.entries(packages).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-                <Button onClick={updatePackage} className="h-7 bg-cyan-600 text-white text-[10px] px-3" data-testid="perm-save-package">Apply</Button>
+            <div className="space-y-3" data-testid="perm-details">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-white font-bold">{perms.username}</p>
+                <div className="flex gap-1">
+                  <Button onClick={() => setShowEditor(!showEditor)} className="h-6 bg-slate-700 text-slate-200 text-[10px] px-2" data-testid="perm-edit-toggle">
+                    {showEditor ? "Cancel" : "Edit"}
+                  </Button>
+                  {showEditor && (
+                    <Button onClick={savePermissions} disabled={saving} className="h-6 bg-cyan-600 text-white text-[10px] px-2" data-testid="perm-save-all">
+                      {saving ? "Saving..." : "Save All"}
+                    </Button>
+                  )}
+                </div>
               </div>
-              {perms.suspended && <p className="text-[10px] text-rose-400 font-bold">ACCOUNT SUSPENDED</p>}
-              <div className="text-[10px] text-slate-400 space-y-0.5">
-                <p>Package: <span className="text-white font-bold">{perms.package_label}</span></p>
-                {Object.entries(perms.usage_limits || {}).map(([k, v]) => (
-                  <p key={k}>{k}: <span className="text-slate-200">{v === 999999 ? "Unlimited" : v}</span>
-                    {perms.current_usage?.[k.replace("_daily", "_today").replace("_total", "_total")] !== undefined && (
-                      <span className="ml-1 text-cyan-400">({perms.current_usage[k.replace("_daily", "_today").replace("_total", "_total")]} used)</span>
-                    )}
-                  </p>
-                ))}
-                {perms.feature_restrictions?.length > 0 && (
-                  <p className="text-rose-400">Restricted: {perms.feature_restrictions.join(", ")}</p>
-                )}
+
+              {perms.suspended && <p className="text-[10px] text-rose-400 font-bold bg-rose-950/30 rounded px-2 py-1">ACCOUNT SUSPENDED</p>}
+
+              {/* Package Assignment */}
+              <div>
+                <p className="text-[10px] text-slate-400 font-semibold mb-1">Package Tier</p>
+                <div className="flex items-center gap-2">
+                  <select value={editPackage} onChange={(e) => setEditPackage(e.target.value)} disabled={!showEditor} className="h-7 flex-1 rounded border border-slate-700 bg-slate-800 text-slate-100 text-xs px-2 disabled:opacity-50" data-testid="perm-package-select">
+                    {Object.entries(packages).map(([k, v]) => <option key={k} value={k}>{v.label} ({v.credits === 999999 ? "Unlim" : v.credits} credits)</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Usage Limits Editor */}
+              <div>
+                <p className="text-[10px] text-slate-400 font-semibold mb-1">Usage Limits</p>
+                <div className="space-y-1">
+                  {Object.entries(LIMIT_LABELS).map(([key, label]) => (
+                    <div key={key} className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="text-slate-300 flex-1">{label}</span>
+                      {showEditor ? (
+                        <input
+                          type="number"
+                          value={editLimits[key] ?? defaultLimits[key] ?? 0}
+                          onChange={(e) => setEditLimits(p => ({ ...p, [key]: parseInt(e.target.value) || 0 }))}
+                          className="w-20 h-6 rounded border border-slate-700 bg-slate-800 text-slate-100 text-[10px] px-1.5 text-right"
+                          data-testid={`limit-${key}`}
+                        />
+                      ) : (
+                        <span className="text-slate-200 font-mono">
+                          {(perms.usage_limits?.[key] ?? 0) === 999999 ? "Unlimited" : (perms.usage_limits?.[key] ?? 0)}
+                          {perms.current_usage?.[key.replace("_daily", "_today").replace("_total", "_total")] !== undefined && (
+                            <span className="ml-1 text-cyan-400">({perms.current_usage[key.replace("_daily", "_today").replace("_total", "_total")]} used)</span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Feature Credit Costs Editor */}
+              <div>
+                <p className="text-[10px] text-slate-400 font-semibold mb-1">Credit Cost per Feature</p>
+                <div className="space-y-1">
+                  {Object.entries(FEATURE_LABELS).map(([key, label]) => (
+                    <div key={key} className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="text-slate-300 flex-1">{label}</span>
+                      {showEditor ? (
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={editCosts[key] ?? defaultCosts[key] ?? 0}
+                          onChange={(e) => setEditCosts(p => ({ ...p, [key]: parseFloat(e.target.value) || 0 }))}
+                          className="w-20 h-6 rounded border border-slate-700 bg-slate-800 text-slate-100 text-[10px] px-1.5 text-right"
+                          data-testid={`cost-${key}`}
+                        />
+                      ) : (
+                        <span className="text-slate-200 font-mono">{perms.feature_costs?.[key] ?? defaultCosts[key] ?? 0} cr</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Feature Restrictions Toggle */}
+              <div>
+                <p className="text-[10px] text-slate-400 font-semibold mb-1">Feature Access (toggle to restrict)</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(FEATURE_LABELS).map(([key, label]) => {
+                    const restricted = showEditor ? editRestrictions.includes(key) : (perms.feature_restrictions || []).includes(key);
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => showEditor && toggleRestriction(key)}
+                        disabled={!showEditor}
+                        className={`rounded-md px-2 py-1 text-[9px] font-medium border transition-all ${
+                          restricted
+                            ? "bg-rose-950/40 border-rose-500/40 text-rose-300"
+                            : "bg-emerald-950/30 border-emerald-500/30 text-emerald-300"
+                        } ${showEditor ? "cursor-pointer hover:opacity-80" : "cursor-default opacity-70"}`}
+                        data-testid={`restrict-${key}`}
+                      >
+                        {restricted ? "Blocked" : "Allowed"}: {label.split(" ")[0]}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}

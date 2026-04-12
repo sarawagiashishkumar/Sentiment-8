@@ -1,3 +1,8 @@
+/* Mobile-first scrollbar hide for sub-tabs */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+
 .dashboard-dark-bg {
     --headingTextColor: #ffffff;
     --resultTextColor: #f8fafc;
@@ -414,6 +419,17 @@ main {
     position: relative;
     z-index: 1;
     animation: page-fade-in 320ms ease-out;
+    overflow-x: hidden;
+    width: 100%;
+    min-width: 0;
+}
+
+html, body, #root {
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
+    min-height: 100vh;
+    background: #020617;
 }
 
 @keyframes page-fade-in {
