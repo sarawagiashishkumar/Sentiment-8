@@ -498,8 +498,8 @@ async def options_heatmap(
                 pass
 
         # Get nearest expiry option tradingsymbols from kite_option_master
-        from services.kite_client import _sync_kite_option_master_daily
-        await _sync_kite_option_master_daily()
+        # Ensure option master is synced (uses daily check — no redundant sync)
+        # _sync_kite_option_master_daily is already called at startup and is idempotent
 
         # Find all available expiries
         from services.date_utils import today_ist as _tist

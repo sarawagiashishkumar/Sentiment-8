@@ -96,11 +96,24 @@ async def run_watchlist_monitor():
             from services.kite_client import fetch_kite_batch_quotes
             quotes = await fetch_kite_batch_quotes(symbols)
 
+            now_ts = datetime.now(timezone.utc)
+            ALERT_COOLDOWN_SECS = 3600  # 1-hour cooldown between re-triggers
+
             for item in all_items:
                 q = quotes.get(item["symbol"], {})
                 ltp = q.get("ltp", 0)
                 if ltp <= 0:
                     continue
+
+                # Skip if recently triggered (cooldown)
+                last_trig = item.get("last_triggered")
+                if last_trig:
+                    try:
+                        last_dt = datetime.fromisoformat(last_trig.replace("Z", "+00:00"))
+                        if (now_ts - last_dt).total_seconds() < ALERT_COOLDOWN_SECS:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
 
                 triggered = False
                 msg = ""
@@ -119,13 +132,13 @@ async def run_watchlist_monitor():
                         "title": f"Price Alert: {item['symbol']}",
                         "message": msg,
                         "symbol": item["symbol"],
-                        "ts": datetime.now(timezone.utc).timestamp(),
+                        "ts": now_ts.timestamp(),
                         "read": False,
                     })
-                    # Update last_triggered to avoid repeat alerts
+                    # Update last_triggered with cooldown tracking
                     await _state.db.user_watchlist.update_one(
                         {"user_key": item["user_key"], "symbol": item["symbol"]},
-                        {"$set": {"last_triggered": datetime.now(timezone.utc).isoformat()}},
+                        {"$set": {"last_triggered": now_ts.isoformat()}},
                     )
                     logger.info("Watchlist alert triggered: %s", msg)
         except Exception as exc:

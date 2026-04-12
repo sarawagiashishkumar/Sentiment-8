@@ -141,6 +141,7 @@ export function KiteLiveWarning({ authHeaders, addNotification }) {
           {lastDisconnectTime && (
             <p className="text-[10px] text-rose-400/60 mt-1 font-mono">
               Detected: {lastDisconnectTime.toLocaleTimeString("en-IN")}
+              <StaleDataTimer since={lastDisconnectTime} />
             </p>
           )}
         </div>
@@ -226,4 +227,31 @@ export function DataFetchErrorPopup({ show, onClose }) {
       </div>
     </div>
   );
+}
+
+
+
+// ── StaleDataTimer: Live-updating elapsed time since disconnect ───────────────
+
+function StaleDataTimer({ since }) {
+  const [elapsed, setElapsed] = useState("");
+
+  useEffect(() => {
+    if (!since) return;
+    const tick = () => {
+      const diff = Math.floor((Date.now() - since.getTime()) / 1000);
+      if (diff < 60) setElapsed(`${diff}s ago`);
+      else if (diff < 3600) setElapsed(`${Math.floor(diff / 60)}m ${diff % 60}s ago`);
+      else setElapsed(`${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m ago`);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+
+  return elapsed ? (
+    <span className="ml-2 text-rose-300 font-semibold" data-testid="stale-data-timer">
+      Data stale: {elapsed}
+    </span>
+  ) : null;
 }

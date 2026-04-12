@@ -13,8 +13,16 @@ export function useLivePrices(symbols = [], enabled = true) {
   const symbolsRef = useRef(symbols);
   symbolsRef.current = symbols;
 
+  const reconnectTimerRef = useRef(null);
+
   const connect = useCallback(() => {
-    if (!enabled || !WS_BASE || symbols.length === 0) return;
+    if (!enabled || !WS_BASE || symbolsRef.current.length === 0) return;
+
+    // Clear any pending reconnect
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     try {
       const ws = new WebSocket(`${WS_BASE}/api/ws/prices`);
@@ -22,7 +30,6 @@ export function useLivePrices(symbols = [], enabled = true) {
 
       ws.onopen = () => {
         setConnected(true);
-        // Send initial symbols
         ws.send(JSON.stringify({ symbols: symbolsRef.current }));
       };
 
@@ -39,9 +46,10 @@ export function useLivePrices(symbols = [], enabled = true) {
 
       ws.onclose = () => {
         setConnected(false);
-        // Auto-reconnect after 5s
-        if (enabled) {
-          setTimeout(() => connect(), 5000);
+        wsRef.current = null;
+        // Reconnect using fresh symbolsRef (avoids stale closure)
+        if (symbolsRef.current.length > 0) {
+          reconnectTimerRef.current = setTimeout(() => connect(), 5000);
         }
       };
 
@@ -51,7 +59,7 @@ export function useLivePrices(symbols = [], enabled = true) {
     } catch (err) {
       console.error("WS connect error:", err?.message);
     }
-  }, [enabled, symbols.length]);
+  }, [enabled]);
 
   // Connect on mount / symbol change
   useEffect(() => {
@@ -60,12 +68,20 @@ export function useLivePrices(symbols = [], enabled = true) {
         wsRef.current.close();
         wsRef.current = null;
       }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       return;
     }
 
     connect();
 
     return () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;

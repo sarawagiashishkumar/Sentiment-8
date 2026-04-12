@@ -371,7 +371,7 @@ async def _get_api_controls(force_refresh: bool = False) -> dict[str, bool]:
 async def _get_stock_core_cached(symbol: str) -> dict:
     return await _get_stock_core_cached_impl(db, symbol)
 
-def _normalize_symbol_key(value: str) -> str:
+def _normalize_symbol_key_local(value: str) -> str:
     import re as _re
     return _re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 
@@ -410,6 +410,57 @@ from services.position_service import (  # noqa: F401
 @api_router.get("/")
 async def root():
     return {"message": "AI Stock Research API"}
+
+
+@api_router.get("/health")
+async def health_check():
+    """Comprehensive health check — DB, Kite session, background tasks."""
+    checks = {}
+
+    # MongoDB connectivity
+    try:
+        await db.command("ping")
+        checks["database"] = {"status": "healthy", "connected": True}
+    except Exception as exc:
+        checks["database"] = {"status": "unhealthy", "error": str(exc)[:100]}
+
+    # Kite session status
+    try:
+        row = await db.system_meta.find_one({"key": "kite_session"}, {"_id": 0, "date": 1, "user_id": 1, "updated_at": 1})
+        if row:
+            today = datetime.now(IST).date().isoformat()
+            is_today = row.get("date") == today
+            checks["kite_session"] = {
+                "status": "active" if is_today else "expired",
+                "session_date": row.get("date"),
+                "user_id": row.get("user_id"),
+                "is_current_day": is_today,
+            }
+        else:
+            checks["kite_session"] = {"status": "not_configured"}
+    except Exception:
+        checks["kite_session"] = {"status": "check_failed"}
+
+    # Background tasks health
+    import services.app_state as _app_state
+    checks["background_tasks"] = {
+        "iv_collector": "running",
+        "watchlist_monitor": "running",
+        "news_monitor": "running",
+        "last_fno_gen": bool(_app_state.LAST_FNO_PERF),
+        "last_mb_gen": bool(_app_state.LAST_MB_PERF),
+    }
+
+    # Collection counts (quick metrics)
+    try:
+        user_count = await db.app_users.count_documents({})
+        signal_count = await db.fno_signal_log.count_documents({})
+        checks["data"] = {"users": user_count, "signals_logged": signal_count}
+    except Exception:
+        checks["data"] = {"status": "unavailable"}
+
+    overall = "healthy" if checks.get("database", {}).get("connected") else "degraded"
+    return {"status": overall, "checks": checks, "ts": datetime.now(IST).isoformat()}
 
 
 @api_router.get("/heartbeat")
@@ -481,13 +532,29 @@ api_router.include_router(risk_router)
 
 app.include_router(api_router)
 
+# ── GZip Compression — reduces JSON payload sizes by ~70% ─────────────────────
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # Compress responses > 1KB
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Response-Time"],
 )
+
+# ── Response Time Header Middleware ───────────────────────────────────────────
+import time as _perf_time
+
+@app.middleware("http")
+async def add_response_time_header(request, call_next):
+    start = _perf_time.monotonic()
+    response = await call_next(request)
+    elapsed_ms = round((_perf_time.monotonic() - start) * 1000, 1)
+    response.headers["X-Response-Time"] = f"{elapsed_ms}ms"
+    return response
 
 @app.on_event("startup")
 async def startup_tasks():

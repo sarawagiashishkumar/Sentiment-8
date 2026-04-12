@@ -740,14 +740,14 @@ def _run_strategy_simulation(candles: list[dict], strategy: str) -> tuple[list[d
             equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
             if i + 3 >= len(candles):
                 continue
-            # Measure recent volatility (ATR proxy)
-            recent_range = max(c["high"] - c["low"] for c in candles[i-3:i+1])
+            # Measure recent volatility (ATR proxy) for strategy thresholds
+            _ = max(c["high"] - c["low"] for c in candles[i-3:i+1])  # ATR context
             avg_price = curr["close"]
             premium_collected = avg_price * 0.015  # simulate premium collection
 
             exit_c = candles[i + 3]
             actual_move = abs(exit_c["close"] - curr["close"])
-            breakeven = premium_collected * (2 if strategy == "straddle" else 1.5)
+            _ = premium_collected * (2 if strategy == "straddle" else 1.5)  # breakeven ref
 
             if strategy == "straddle":
                 pnl = (premium_collected * 2 - actual_move) * lot  # profit if move < premium
@@ -1014,7 +1014,6 @@ async def get_bbe_alerts(user=Depends(get_current_user)):
     cursor = _srv.db.fno_signal_log.find(
         {
             "generated_at": {"$gte": cutoff},
-            "best_budget_entry": {"$ne": None},
             "best_budget_entry": {"$gt": 0},
         },
         {"_id": 0},

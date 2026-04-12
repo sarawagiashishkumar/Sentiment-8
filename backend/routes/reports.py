@@ -15,7 +15,8 @@ reports_router = APIRouter()
 
 
 async def _aggregate_report(user_key: str, from_ts: float, to_ts: float) -> dict:
-    """Build aggregated report from journal + signals + perf history."""
+    """Build aggregated report from journal + signals + perf history.
+    Uses MongoDB aggregation pipelines for server-side computation."""
     # Journal entries in range
     journal_cursor = _state.db.trading_journal.find(
         {"user_key": user_key, "ts_epoch": {"$gte": from_ts, "$lte": to_ts}},
@@ -33,27 +34,35 @@ async def _aggregate_report(user_key: str, from_ts: float, to_ts: float) -> dict
     best_trade = max(closed, key=lambda e: e.get("pnl", 0), default=None)
     worst_trade = min(closed, key=lambda e: e.get("pnl", 0), default=None)
 
-    # Sector/symbol exposure
-    symbol_counts = {}
-    for e in signals:
-        sym = e.get("symbol", "UNKNOWN")
-        symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
-    top_symbols = sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    # Symbol exposure via MongoDB aggregation pipeline (server-side grouping)
+    symbol_pipeline = [
+        {"$match": {"user_key": user_key, "ts_epoch": {"$gte": from_ts, "$lte": to_ts}, "event_type": "signal_generated"}},
+        {"$group": {"_id": "$symbol", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 10},
+    ]
+    symbol_cursor = _state.db.trading_journal.aggregate(symbol_pipeline)
+    top_symbols = [{"symbol": doc["_id"], "count": doc["count"]} async for doc in symbol_cursor]
 
-    # Quality distribution
-    quality_dist = {}
-    for e in signals:
-        q = e.get("signal_quality") or "UNKNOWN"
-        quality_dist[q] = quality_dist.get(q, 0) + 1
+    # Quality distribution via aggregation
+    quality_pipeline = [
+        {"$match": {"user_key": user_key, "ts_epoch": {"$gte": from_ts, "$lte": to_ts}, "event_type": "signal_generated"}},
+        {"$group": {"_id": {"$ifNull": ["$signal_quality", "UNKNOWN"]}, "count": {"$sum": 1}}},
+    ]
+    quality_cursor = _state.db.trading_journal.aggregate(quality_pipeline)
+    quality_dist = {doc["_id"]: doc["count"] async for doc in quality_cursor}
 
-    # Generation perf in range
-    perf_cursor = _state.db.generation_perf_history.find(
-        {"ts": {"$gte": datetime.fromtimestamp(from_ts, tz=timezone.utc).isoformat(),
-                "$lte": datetime.fromtimestamp(to_ts, tz=timezone.utc).isoformat()}},
-        {"_id": 0},
-    ).limit(100)
-    perf_entries = await perf_cursor.to_list(100)
-    avg_gen_time = round(sum(p.get("total_ms", 0) for p in perf_entries) / max(len(perf_entries), 1))
+    # Generation perf in range — use aggregation for avg
+    from_iso = datetime.fromtimestamp(from_ts, tz=timezone.utc).isoformat()
+    to_iso = datetime.fromtimestamp(to_ts, tz=timezone.utc).isoformat()
+    perf_pipeline = [
+        {"$match": {"ts": {"$gte": from_iso, "$lte": to_iso}}},
+        {"$group": {"_id": None, "avg_total_ms": {"$avg": "$total_ms"}, "count": {"$sum": 1}}},
+    ]
+    perf_cursor = _state.db.generation_perf_history.aggregate(perf_pipeline)
+    perf_docs = await perf_cursor.to_list(1)
+    avg_gen_time = round(perf_docs[0]["avg_total_ms"]) if perf_docs and perf_docs[0].get("avg_total_ms") else 0
+    gen_runs = perf_docs[0]["count"] if perf_docs else 0
 
     return {
         "total_signals": len(signals),
@@ -64,9 +73,9 @@ async def _aggregate_report(user_key: str, from_ts: float, to_ts: float) -> dict
         "win_rate": round(len(wins) / max(len(wins) + len(losses), 1) * 100, 1),
         "best_trade": {"symbol": best_trade.get("symbol"), "pnl": best_trade.get("pnl")} if best_trade else None,
         "worst_trade": {"symbol": worst_trade.get("symbol"), "pnl": worst_trade.get("pnl")} if worst_trade else None,
-        "top_symbols": [{"symbol": s, "count": c} for s, c in top_symbols],
+        "top_symbols": top_symbols,
         "quality_distribution": quality_dist,
-        "generation_runs": len(perf_entries),
+        "generation_runs": gen_runs,
         "avg_generation_ms": avg_gen_time,
         "journal_entries": journal_entries[:50],
     }
