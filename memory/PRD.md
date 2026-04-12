@@ -102,6 +102,11 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **fno_signal_engine.py Modularized**: Extracted `_build_report`, `_compute_enhanced_index_breadth`, `_build_index_projection`, `_build_stock_fno_signals` into new `services/fno_builders.py` (679 lines). Engine reduced from 2787 to 2152 lines.
 - **IV Analytics Enhanced**: Added 5 quick symbol presets (NIFTY, BANKNIFTY, RELIANCE, TCS, HDFCBANK) and data collection status indicator showing progress toward 30-day minimum for reliable percentile bands.
 
+### Phase 13: Confluence Extraction, Performance Profiling & IV Collection (2026-04-12)
+- **fno_confluence.py Extracted**: 394 lines of pure scoring functions (`_compute_initial_option_targets`, `_compute_initial_option_sl`, `_calculate_confluence_score_master_spec`, `_get_signal_quality`) extracted from fno_signal_engine.py. Engine now 1785 lines (down from original 2787 — 36% reduction across 3 extractions).
+- **Performance Profiling**: Added `time.monotonic()` instrumentation to all F&O generation phases (nifty_ms, banknifty_ms, stocks_ms, assembly_ms, total_ms) and multibagger (scan_ms, total_ms). New `/api/fno/generation-timings` endpoint returns last run timings. Tracking vars `LAST_FNO_PERF` and `LAST_MB_PERF` in `app_state.py`.
+- **Manual IV Collection**: New `/api/fno/iv-collect-now` POST endpoint does one-shot ATM IV snapshot for NIFTY/BANKNIFTY + term structure across all available expiries — without requiring full signal generation. Frontend "Collect IV Now" button in IV Analytics tab triggers collection and displays results.
+
 ## Key API Endpoints
 - `/api/fno/generate` — NDJSON streaming F&O signals
 - `/api/fno/bbe-alerts` — Real-time BBE zone monitoring
@@ -115,9 +120,13 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - `/api/market/options-heatmap` — Options heatmap data
 - `/api/market/industry-sectors` — Industry sector aggregation
 - `/api/portfolio/analyze-upload` — Multi-file portfolio upload
+- `/api/fno/generation-timings` — Last generation phase timings
+- `/api/fno/iv-collect-now` — One-shot IV snapshot collection (POST)
+- `/api/fno/iv-cone/{symbol}` — IV Cone percentile bands
+- `/api/fno/iv-term-structure/{symbol}` — IV term structure across expiries
 - `/api/admin/users` — User management
 
 ## Future/Backlog
-- Advanced IV analytics: Wait for 30+ days iv_history accumulation for meaningful percentile bands
-- Further fno_signal_engine.py modularization (confluence scoring → fno_confluence.py)
-- Performance profiling: benchmark F&O signal generation latency during market hours
+- Wait for 30+ days iv_history accumulation for meaningful IV cone percentile bands
+- Performance benchmarking during live market hours (timing data will populate during trading sessions)
+- Further signal engine optimization based on profiling data
