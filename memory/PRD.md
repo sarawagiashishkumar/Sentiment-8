@@ -156,6 +156,13 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Test Quality**: `random` → `secrets` module in test files. `is` → `==` comparison anti-patterns fixed across all test files.
 - **Frontend Quality**: Stable keys in `Skeletons.jsx` (prefixed `skel-grid-`, `skel-th-`, `skel-row-`). Nested ternaries refactored to helper functions. Environment-aware `logger.js` utility created (silences debug/warn in production).
 
+### Phase 19: TradingView Charts, Reports, Watchlist & Backtester (2026-04-12)
+- **TradingView Lightweight Charts (v5.1)**: `TVChartWrapper.jsx` with candlestick, line, area, histogram series. `IVConeChart` for IV percentile bands. `MiniChartPopup` — click any stock heatmap tile for intraday candlestick popup. Backend `/api/market/stock-chart/{symbol}` returns historical OHLCV candles from Kite.
+- **Aggregated Reports Engine**: `/api/reports/daily-summary` + `/api/reports/weekly-summary` aggregate from `trading_journal` + `generation_perf_history`. Frontend "Reports" nav tab with daily/weekly toggle, date picker, 6 summary cards (Signals, Closed, P&L, Wins, Losses, Win Rate), best/worst trade, top symbols, quality distribution, CSV export.
+- **Watchlist with Price Alerts**: `/api/watchlist` CRUD (GET/POST/DELETE). Set `alert_above`/`alert_below` thresholds per symbol. Background monitor runs every 60s during market hours — pushes to notification center when price crosses threshold. Frontend "Watchlist" nav tab with add form + items list.
+- **Strategy Backtester**: `/api/fno/run-backtest` POST endpoint with momentum simulation. Frontend "Strategy Backtester" sub-tab in F&O with strategy selector (Momentum CE/PE, Straddle, Iron Condor), date range, equity curve via TradingView area chart, trade-by-trade log, summary cards (Win Rate, P&L, Max Drawdown, Sharpe, Profit Factor).
+- **Navigation**: Expanded to 8 buttons (added Reports, Watchlist). F&O now has 5 sub-tabs (added Strategy Backtester).
+
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage:
   - Performance benchmarking data populates with each generation run
