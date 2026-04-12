@@ -59,7 +59,7 @@ export function useLivePrices(symbols = [], enabled = true) {
     } catch (err) {
       console.error("WS connect error:", err?.message);
     }
-  }, [enabled]);
+  }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps -- WS_BASE is module constant, reconnect uses symbolsRef
 
   // Connect on mount / symbol change
   useEffect(() => {
@@ -94,7 +94,7 @@ export function useLivePrices(symbols = [], enabled = true) {
     if (wsRef.current?.readyState === WebSocket.OPEN && symbols.length > 0) {
       wsRef.current.send(JSON.stringify({ symbols }));
     }
-  }, [symbols]);
+  }, [symbols]); // eslint-disable-line react-hooks/exhaustive-deps -- wsRef.current checked at call time
 
   return { quotes, connected };
 }

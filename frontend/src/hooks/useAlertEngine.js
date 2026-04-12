@@ -114,7 +114,7 @@ export function useAlertEngine({ customPositions, alertSoundEnabled, authHeaders
       ];
       axios.post(`${API}/notifications`, { notifications: toSave }, { headers: authRef.current }).catch(() => {});
     }
-  }, [customPositions, alertSoundEnabled, playAlertSound]);
+  }, [customPositions, alertSoundEnabled, playAlertSound]); // eslint-disable-line react-hooks/exhaustive-deps -- uses refs for callbacks intentionally
 
   return { playAlertSound, enableAlertSound };
 }

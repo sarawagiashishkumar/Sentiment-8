@@ -32,25 +32,31 @@ DHAN_SCRIPT_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 
 
 def _srv():
-    """Lazy import server module to avoid circular imports."""
+    """Lazy import server module to avoid circular imports.
+    Prefer app_state for shared state; only use server for functions."""
     import server
     return server
 
 
+def _get_state():
+    """Get shared state without circular import."""
+    import services.app_state as _state
+    return _state
+
+
 async def _sync_script_master_daily(force: bool = False) -> None:
-    _s = _srv()
-    IST = _s.IST
-    db = _s.db
-    client = _s.client
-    LOT_SIZE_MAP = _s.LOT_SIZE_MAP
+    _state = _get_state()
+    IST = _state.IST
+    db = _state.db
+    LOT_SIZE_MAP = _state.LOT_SIZE_MAP
 
     today = datetime.now(IST).date().isoformat()
-    if not force and _s.SCRIPT_MASTER_LAST_SYNC_DATE == today:
+    if not force and _state.SCRIPT_MASTER_LAST_SYNC_DATE == today:
         return
 
     meta = await db.system_meta.find_one({"key": "script_master_sync"}, {"_id": 0})
     if (not force) and meta and meta.get("date") == today and int(meta.get("updated_count", 0) or 0) >= 500:
-        _s.SCRIPT_MASTER_LAST_SYNC_DATE = today
+        _state.SCRIPT_MASTER_LAST_SYNC_DATE = today
         return
 
     from data.fno_contracts import FNO_CONTRACTS
@@ -279,7 +285,7 @@ async def _sync_script_master_daily(force: bool = False) -> None:
 
     db_name = os.environ["DB_NAME"]
     try:
-        await client.admin.command(
+        await db.client.admin.command(
             "renameCollection",
             f"{db_name}.script_master_staging",
             to=f"{db_name}.script_master",
@@ -310,13 +316,13 @@ async def _sync_script_master_daily(force: bool = False) -> None:
         },
         upsert=True,
     )
-    _s.SCRIPT_MASTER_LAST_SYNC_DATE = today
+    _state.SCRIPT_MASTER_LAST_SYNC_DATE = today
 
 
 async def _resolve_symbol_input(value: str) -> str:
     await _sync_script_master_daily()
-    _s = _srv()
-    db = _s.db
+    _state = _get_state()
+    db = _state.db
     raw_query = str(value or "").strip()
     cleaned = _normalize_symbol_key(raw_query)
     if not cleaned:

@@ -285,9 +285,16 @@ async def _post_generation_effects(
     current_user, _srv,
 ):
     """Post-generation: perf tracking, signal logging, journal, IV capture."""
-    import services.app_state as _app_state
+    await _log_perf_metrics(_perf, _time, _t0, _gen_start, refreshed_at, signals)
+    all_sigs = [*signals, *stock_signals] + ([custom_signal] if custom_signal else [])
+    await _log_signals_to_db(_srv, all_sigs)
+    await _log_journal_entries(_srv, current_user, all_sigs, refreshed_at)
+    await _capture_iv_snapshots(_srv, nifty_projection, banknifty_projection)
 
-    # Perf tracking
+
+async def _log_perf_metrics(_perf, _time, _t0, _gen_start, refreshed_at, signals):
+    """Record generation performance metrics."""
+    import services.app_state as _app_state
     _perf["assembly_ms"] = round((_time.monotonic() - _t0) * 1000)
     _perf["total_ms"] = round((_time.monotonic() - _gen_start) * 1000)
     _perf["ts"] = refreshed_at
@@ -299,26 +306,24 @@ async def _post_generation_effects(
     except Exception as exc:
         logger.debug("Perf history insert failed: %s", exc)
 
-    # Signal log
+
+async def _log_signals_to_db(_srv, all_sigs):
+    """Log generated signals to the signal log collection."""
     try:
         from services.sticky_card_engine import log_generated_signal
-        all_sigs = [*signals, *stock_signals]
-        if custom_signal:
-            all_sigs.append(custom_signal)
         for sig in all_sigs:
             sig_dict = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else sig.__dict__
             await log_generated_signal(_srv.db, sig_dict)
     except Exception as exc:
         logger.debug("Signal log failed: %s", exc)
 
-    # Trading journal
+
+async def _log_journal_entries(_srv, current_user, all_sigs, refreshed_at):
+    """Auto-log signal generation events to the trading journal."""
     try:
         from routes.journal import log_journal_entry
         user_key = current_user.get("user_key", "")
-        all_gen_sigs = [*signals, *stock_signals]
-        if custom_signal:
-            all_gen_sigs.append(custom_signal)
-        for sig in all_gen_sigs:
+        for sig in all_sigs:
             sd = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else {}
             await log_journal_entry(user_key, {
                 "event_type": "signal_generated",
@@ -334,7 +339,9 @@ async def _post_generation_effects(
     except Exception as exc:
         logger.debug("Journal log failed: %s", exc)
 
-    # IV term structure snapshots
+
+async def _capture_iv_snapshots(_srv, nifty_projection, banknifty_projection):
+    """Capture IV term structure snapshots from projections."""
     try:
         from services.iv_analytics import capture_iv_term_structure
         for proj in (nifty_projection, banknifty_projection):

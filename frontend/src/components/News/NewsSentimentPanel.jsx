@@ -78,7 +78,7 @@ export function NewsSentimentPanel({ authHeaders }) {
                   {data.top_headlines?.length > 0 && (
                     <div className="space-y-1">
                       {data.top_headlines.slice(0, 3).map((h, i) => (
-                        <p key={i} className="text-[10px] text-slate-300 leading-tight">
+                        <p key={h.title || `hl-${i}`} className="text-[10px] text-slate-300 leading-tight">
                           <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${h.sentiment === "positive" ? "bg-emerald-400" : h.sentiment === "negative" ? "bg-rose-400" : "bg-slate-500"}`} />
                           {h.title}
                         </p>
