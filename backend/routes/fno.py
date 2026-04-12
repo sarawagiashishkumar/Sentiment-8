@@ -270,73 +270,87 @@ async def generate_fno_signals(
 
         yield _ndjson_line({"type": "complete", "data": json.loads(response.model_dump_json())})
 
-        # ── Store perf timings ────────────────────────────────────────────
-        _perf["assembly_ms"] = round((_time.monotonic() - _t0) * 1000)
-        _perf["total_ms"] = round((_time.monotonic() - _gen_start) * 1000)
-        _perf["ts"] = refreshed_at
-        _perf["signal_count"] = len(signals)
-        import services.app_state as _app_state
-        _app_state.LAST_FNO_PERF = _perf
-        logger.info("FNO generation perf: %s", _perf)
-        # Persist to MongoDB for historical tracking
-        try:
-            await _app_state.db.generation_perf_history.insert_one({
-                "type": "fno", **_perf,
-            })
-        except Exception:
-            pass
-
-        # ── Auto-capture: log all generated signals to signal_log ──
-        try:
-            from services.sticky_card_engine import log_generated_signal
-            all_sigs = [*signals, *stock_signals]
-            if custom_signal:
-                all_sigs.append(custom_signal)
-            for sig in all_sigs:
-                sig_dict = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else sig.__dict__
-                await log_generated_signal(_srv.db, sig_dict)
-        except Exception as _log_err:
-            pass  # signal logging is optional, never blocks response
-
-        # ── Auto-log to Trading Journal ──────────────────────────────────
-        try:
-            from routes.journal import log_journal_entry
-            user_key = current_user.get("user_key", "")
-            all_gen_sigs = [*signals, *stock_signals]
-            if custom_signal:
-                all_gen_sigs.append(custom_signal)
-            for sig in all_gen_sigs:
-                sd = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else {}
-                await log_journal_entry(user_key, {
-                    "event_type": "signal_generated",
-                    "symbol": sd.get("tradingsymbol") or sd.get("underlying", ""),
-                    "direction": sd.get("direction"),
-                    "entry_price": sd.get("premium_ltp"),
-                    "confluence_score": sd.get("confluence_score"),
-                    "signal_quality": sd.get("signal_quality"),
-                    "targets": {"t1": sd.get("target1"), "t2": sd.get("target2")},
-                    "stop_loss": sd.get("stop_loss"),
-                    "notes": f"Generated at {refreshed_at}",
-                })
-        except Exception:
-            pass  # journal logging never blocks
-
-        # ── Auto-capture: IV term structure snapshots ──
-        try:
-            from services.iv_analytics import capture_iv_term_structure
-            for proj in (nifty_projection, banknifty_projection):
-                if proj and hasattr(proj, 'assured_signals') and proj.assured_signals:
-                    sym = proj.assured_signals[0].underlying or ""
-                    expiry_iv_map = {}
-                    for s in proj.assured_signals:
-                        if s.expiry and s.atm_iv:
-                            expiry_iv_map[s.expiry] = s.atm_iv
-                    if expiry_iv_map:
-                        await capture_iv_term_structure(_srv.db, sym, expiry_iv_map)
-        except Exception:
-            pass  # IV capture is optional
+        # ── Post-generation side effects (extracted for readability) ───
+        await _post_generation_effects(
+            _perf, _time, _t0, _gen_start, refreshed_at,
+            signals, stock_signals, custom_signal,
+            nifty_projection, banknifty_projection,
+            current_user, _srv,
+        )
 
     return StreamingResponse(_stream_generate(), media_type="application/x-ndjson")
+
+
+async def _post_generation_effects(
+    _perf, _time, _t0, _gen_start, refreshed_at,
+    signals, stock_signals, custom_signal,
+    nifty_projection, banknifty_projection,
+    current_user, _srv,
+):
+    """Post-generation: perf tracking, signal logging, journal, IV capture."""
+    import services.app_state as _app_state
+
+    # Perf tracking
+    _perf["assembly_ms"] = round((_time.monotonic() - _t0) * 1000)
+    _perf["total_ms"] = round((_time.monotonic() - _gen_start) * 1000)
+    _perf["ts"] = refreshed_at
+    _perf["signal_count"] = len(signals)
+    _app_state.LAST_FNO_PERF = _perf
+    logger.info("FNO generation perf: %s", _perf)
+    try:
+        await _app_state.db.generation_perf_history.insert_one({"type": "fno", **_perf})
+    except Exception as exc:
+        logger.debug("Perf history insert failed: %s", exc)
+
+    # Signal log
+    try:
+        from services.sticky_card_engine import log_generated_signal
+        all_sigs = [*signals, *stock_signals]
+        if custom_signal:
+            all_sigs.append(custom_signal)
+        for sig in all_sigs:
+            sig_dict = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else sig.__dict__
+            await log_generated_signal(_srv.db, sig_dict)
+    except Exception as exc:
+        logger.debug("Signal log failed: %s", exc)
+
+    # Trading journal
+    try:
+        from routes.journal import log_journal_entry
+        user_key = current_user.get("user_key", "")
+        all_gen_sigs = [*signals, *stock_signals]
+        if custom_signal:
+            all_gen_sigs.append(custom_signal)
+        for sig in all_gen_sigs:
+            sd = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else {}
+            await log_journal_entry(user_key, {
+                "event_type": "signal_generated",
+                "symbol": sd.get("tradingsymbol") or sd.get("underlying", ""),
+                "direction": sd.get("direction"),
+                "entry_price": sd.get("premium_ltp"),
+                "confluence_score": sd.get("confluence_score"),
+                "signal_quality": sd.get("signal_quality"),
+                "targets": {"t1": sd.get("target1"), "t2": sd.get("target2")},
+                "stop_loss": sd.get("stop_loss"),
+                "notes": f"Generated at {refreshed_at}",
+            })
+    except Exception as exc:
+        logger.debug("Journal log failed: %s", exc)
+
+    # IV term structure snapshots
+    try:
+        from services.iv_analytics import capture_iv_term_structure
+        for proj in (nifty_projection, banknifty_projection):
+            if proj and hasattr(proj, 'assured_signals') and proj.assured_signals:
+                sym = proj.assured_signals[0].underlying or ""
+                expiry_iv_map = {}
+                for s in proj.assured_signals:
+                    if s.expiry and s.atm_iv:
+                        expiry_iv_map[s.expiry] = s.atm_iv
+                if expiry_iv_map:
+                    await capture_iv_term_structure(_srv.db, sym, expiry_iv_map)
+    except Exception as exc:
+        logger.debug("IV capture failed: %s", exc)
 
 
 # ── /fno/custom-position (CRUD) ──────────────────────────────────────────────

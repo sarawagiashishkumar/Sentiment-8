@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -25,19 +25,27 @@ export function useAuth() {
     return response.data;
   }, []);
 
-  // Bootstrap on mount
+  // Bootstrap on mount — token is captured via ref to avoid re-running effect
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
   useEffect(() => {
-    if (!token) return;
-    hydrateMe(token).catch(() => {
+    const t = tokenRef.current;
+    if (!t) return;
+    hydrateMe(t).catch((err) => {
+      console.error("Auth hydration failed:", err?.message);
       sessionStorage.removeItem("stock_auth_token");
       setToken("");
       setMe(null);
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hydrateMe]);
+
+  // loginUsername captured via ref to keep onLogin stable
+  const loginUsernameRef = useRef(loginUsername);
+  loginUsernameRef.current = loginUsername;
 
   const onLogin = useCallback(async (e) => {
     e.preventDefault();
-    const trimmed = loginUsername.trim();
+    const trimmed = loginUsernameRef.current.trim();
     if (!trimmed) return;
     setLoginLoading(true);
     setLoginError("");
@@ -58,11 +66,14 @@ export function useAuth() {
     } finally {
       setLoginLoading(false);
     }
-  }, [loginUsername]);
+  }, []);
 
   const onLogout = useCallback(async () => {
-    try { await axios.post(`${API}/auth/logout`, {}, { headers: authHeaders }); }
-    catch { /* ignore */ }
+    try {
+      await axios.post(`${API}/auth/logout`, {}, { headers: authHeaders });
+    } catch (err) {
+      console.error("Logout request failed:", err?.message);
+    }
     sessionStorage.removeItem("stock_auth_token");
     setToken("");
     setMe(null);

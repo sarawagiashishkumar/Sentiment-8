@@ -6,7 +6,6 @@ const STORAGE_KEY = "push_notif_enabled";
 
 /**
  * Hook to manage Service Worker push notifications.
- * Handles registration, permission request, and sending notifications via SW.
  */
 export function usePushNotifications() {
   const [enabled, setEnabled] = useState(() => sessionStorage.getItem(STORAGE_KEY) === "true");
@@ -21,7 +20,7 @@ export function usePushNotifications() {
     navigator.serviceWorker.register(SW_PATH).then((reg) => {
       swRef.current = reg;
     }).catch((err) => {
-      console.warn("SW registration failed:", err);
+      console.error("SW registration failed:", err?.message);
     });
   }, []);
 
@@ -38,12 +37,10 @@ export function usePushNotifications() {
 
   const toggle = useCallback(async () => {
     if (enabled) {
-      // Turn off
       setEnabled(false);
       sessionStorage.setItem(STORAGE_KEY, "false");
       return;
     }
-    // Turn on — request permission if needed
     const perm = await requestPermission();
     if (perm === "granted") {
       setEnabled(true);
@@ -53,19 +50,14 @@ export function usePushNotifications() {
 
   const sendPush = useCallback((title, body, tag = "alert") => {
     if (!enabled || permission !== "granted") return;
-
-    // Try SW first, fall back to direct Notification API
     if (swRef.current?.active) {
-      swRef.current.active.postMessage({
-        type: "PUSH_NOTIFICATION",
-        title,
-        body,
-        tag,
-      });
+      swRef.current.active.postMessage({ type: "PUSH_NOTIFICATION", title, body, tag });
     } else if (typeof Notification !== "undefined" && Notification.permission === "granted") {
       try {
         new Notification(title, { body, tag, icon: "/favicon.ico", requireInteraction: true });
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.error("Direct notification failed:", err?.message);
+      }
     }
   }, [enabled, permission]);
 

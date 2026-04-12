@@ -27,6 +27,11 @@ SECTOR_MOMENTUM_CACHE_TTL_SECONDS = 1800  # 30 minutes
 
 # ── Script Master Tracking ────────────────────────────────────────────────────
 SCRIPT_MASTER_LAST_SYNC_DATE = None
+KITE_OPTION_MASTER_LAST_SYNC_DATE = None
+KITE_SCRIPT_MASTER_URL = "https://api.kite.trade/instruments"
+
+# ── LOT_SIZE_MAP (populated from data/lot_sizes.py at startup) ────────────────
+LOT_SIZE_MAP = {}
 
 # ── Performance Tracking ──────────────────────────────────────────────────────
 LAST_FNO_PERF = {}   # Last F&O generation phase timings

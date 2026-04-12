@@ -29,7 +29,7 @@ export function TradingJournal({ authHeaders }) {
       const res = await axios.get(`${API}/journal?${params}`, { headers: authHeaders });
       setEntries(res.data.entries || []);
       setSummary(res.data.summary || null);
-    } catch { /* silent */ }
+    } catch (err) { console.error("Journal fetch failed:", err?.message); }
     finally { setLoading(false); }
   }, [authHeaders, filterType, filterSymbol]);
 
@@ -164,12 +164,16 @@ export function TradingJournal({ authHeaders }) {
 }
 
 function SummaryCard({ label, value, positive }) {
+  const getTextColor = () => {
+    if (positive === true) return "text-emerald-400";
+    if (positive === false) return "text-rose-400";
+    return "text-white";
+  };
+
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-2 text-center">
       <p className="text-[9px] text-slate-500 uppercase tracking-wider">{label}</p>
-      <p className={`text-sm font-bold font-mono mt-0.5 ${
-        positive === true ? "text-emerald-400" : positive === false ? "text-rose-400" : "text-white"
-      }`}>{value}</p>
+      <p className={`text-sm font-bold font-mono mt-0.5 ${getTextColor()}`}>{value}</p>
     </div>
   );
 }

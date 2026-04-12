@@ -28,22 +28,22 @@ from services.date_utils import today_ist as _today_ist
 logger = logging.getLogger(__name__)
 
 
+# Import shared state directly — breaks circular import for basic access
+import services.app_state as _state
+
+
 def _srv():
-    """Lazy import server module for complex functions not in app_state."""
+    """Lazy import server module ONLY for complex functions not in app_state."""
     import server
     return server
-
-
-# Import shared state directly — breaks circular import for basic access
-from services.app_state import db as _app_db, KITE_API_KEY as _app_kite_key
 
 
 # ── Kite Access Token ─────────────────────────────────────────────────────────
 
 async def _get_kite_access_token() -> str | None:
-    if not _app_kite_key:
+    if not _state.KITE_API_KEY:
         return None
-    session = await _app_db.system_meta.find_one({"key": "kite_session"}, {"_id": 0})
+    session = await _state.db.system_meta.find_one({"key": "kite_session"}, {"_id": 0})
     if not session:
         return None
     if session.get("date") != _today_ist():
@@ -61,8 +61,7 @@ async def _fetch_kite_equity_core(symbol: str) -> dict | None:
     Falls back to None so callers can use Moneycontrol/RapidAPI.
     """
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY:
+    if not access_token or not _state.KITE_API_KEY:
         return None
     symbol_upper = symbol.upper().strip()
     if symbol_upper in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"}:
@@ -75,7 +74,7 @@ async def _fetch_kite_equity_core(symbol: str) -> dict | None:
                 params=[("i", f"NSE:{symbol_upper}")],
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(5, 10),
             )
@@ -121,8 +120,7 @@ async def fetch_kite_batch_quotes(symbols: list[str], exchange: str = "NSE") -> 
     Returns {symbol: {ltp, open, high, low, prev_close, volume, ...}}
     """
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY or not symbols:
+    if not access_token or not _state.KITE_API_KEY or not symbols:
         return {}
 
     result: dict[str, dict] = {}
@@ -136,7 +134,7 @@ async def fetch_kite_batch_quotes(symbols: list[str], exchange: str = "NSE") -> 
                 params=params,
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(5, 8),
             )
@@ -193,8 +191,7 @@ async def fetch_kite_batch_option_quotes(tradingsymbols: list[str]) -> dict[str,
     Returns {tradingsymbol: {ltp, day_high, day_low, oi, iv, ...}}
     """
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY or not tradingsymbols:
+    if not access_token or not _state.KITE_API_KEY or not tradingsymbols:
         return {}
 
     result: dict[str, dict] = {}
@@ -207,7 +204,7 @@ async def fetch_kite_batch_option_quotes(tradingsymbols: list[str]) -> dict[str,
                 params=params,
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(5, 8),
             )
@@ -246,29 +243,28 @@ async def fetch_kite_batch_option_quotes(tradingsymbols: list[str]) -> dict[str,
 # ── Kite Option Master Sync ──────────────────────────────────────────────────
 
 async def _sync_kite_option_master_daily(force: bool = False) -> None:
-    _s = _srv()
     today = _today_ist()
-    if not force and _s.KITE_OPTION_MASTER_LAST_SYNC_DATE == today:
+    if not force and _state.KITE_OPTION_MASTER_LAST_SYNC_DATE == today:
         return
 
-    meta = await _s.db.system_meta.find_one({"key": "kite_option_master_sync"}, {"_id": 0})
+    meta = await _state.db.system_meta.find_one({"key": "kite_option_master_sync"}, {"_id": 0})
     if (not force) and meta and meta.get("date") == today and int(meta.get("updated_count", 0) or 0) > 0:
-        _s.KITE_OPTION_MASTER_LAST_SYNC_DATE = today
+        _state.KITE_OPTION_MASTER_LAST_SYNC_DATE = today
         return
 
-    if not _s.KITE_API_KEY:
+    if not _state.KITE_API_KEY:
         return
 
     from services.research_engine import get_fo_universe
 
     def _load_rows() -> tuple[list[dict], list[dict]]:
         try:
-            response = requests.get(_s.KITE_SCRIPT_MASTER_URL, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
+            response = requests.get(_state.KITE_SCRIPT_MASTER_URL, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
             if response.status_code != 200:
                 return [], []
 
             reader = csv.DictReader(io.StringIO(response.text))
-            allowed = {"NIFTY", "BANKNIFTY", *get_fo_universe(lot_size_map=_s.LOT_SIZE_MAP)}
+            allowed = {"NIFTY", "BANKNIFTY", *get_fo_universe(lot_size_map=_state.LOT_SIZE_MAP)}
             rows: list[dict] = []
             equity_rows: list[dict] = []
             for row in reader:
@@ -319,7 +315,7 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
                         "tradingsymbol": tradingsymbol,
                         "instrument": f"NFO:{tradingsymbol}",
                         "instrument_token": numeric_token,
-                        "lot_size": int(_to_float(row.get("lot_size")) or _s.LOT_SIZE_MAP.get(underlying, 1)),
+                        "lot_size": int(_to_float(row.get("lot_size")) or _state.LOT_SIZE_MAP.get(underlying, 1)),
                         "updated_at": _utc_now_iso(),
                     }
                 )
@@ -332,17 +328,17 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
     if not rows:
         return
 
-    await _s.db.kite_option_master.delete_many({})
+    await _state.db.kite_option_master.delete_many({})
     for start in range(0, len(rows), 5000):
-        await _s.db.kite_option_master.insert_many(rows[start : start + 5000], ordered=False)
+        await _state.db.kite_option_master.insert_many(rows[start : start + 5000], ordered=False)
 
     if equity_rows:
-        await _s.db.kite_equity_master.delete_many({})
+        await _state.db.kite_equity_master.delete_many({})
         for start in range(0, len(equity_rows), 5000):
-            await _s.db.kite_equity_master.insert_many(equity_rows[start : start + 5000], ordered=False)
+            await _state.db.kite_equity_master.insert_many(equity_rows[start : start + 5000], ordered=False)
         logger.info("Kite equity master synced: %d equity tokens stored", len(equity_rows))
 
-    await _s.db.system_meta.update_one(
+    await _state.db.system_meta.update_one(
         {"key": "kite_option_master_sync"},
         {
             "$set": {
@@ -354,7 +350,7 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
         },
         upsert=True,
     )
-    _s.KITE_OPTION_MASTER_LAST_SYNC_DATE = today
+    _state.KITE_OPTION_MASTER_LAST_SYNC_DATE = today
 
 
 # ── Lot Size Resolution ───────────────────────────────────────────────────────
@@ -362,9 +358,8 @@ async def _sync_kite_option_master_daily(force: bool = False) -> None:
 async def _resolve_kite_lot_size_for_script(script: str) -> int | None:
     if not script:
         return None
-    _s = _srv()
     await _sync_kite_option_master_daily()
-    row = await _s.db.kite_option_master.find_one(
+    row = await _state.db.kite_option_master.find_one(
         {"tradingsymbol": script.upper()},
         {"_id": 0, "lot_size": 1},
     )
@@ -380,9 +375,8 @@ async def _resolve_verified_lot_size(underlying: str, script: str | None = None)
         if by_script and by_script > 0:
             return int(by_script)
 
-    _s = _srv()
     await _sync_kite_option_master_daily()
-    row = await _s.db.kite_option_master.find_one(
+    row = await _state.db.kite_option_master.find_one(
         {"underlying": _normalize_symbol_key(underlying)},
         {"_id": 0, "lot_size": 1},
     )
@@ -391,7 +385,7 @@ async def _resolve_verified_lot_size(underlying: str, script: str | None = None)
         if lot_size > 0:
             return lot_size
 
-    mapped = int(_s.LOT_SIZE_MAP.get(_normalize_symbol_key(underlying), 1) or 1)
+    mapped = int(_state.LOT_SIZE_MAP.get(_normalize_symbol_key(underlying), 1) or 1)
     return mapped if mapped > 0 else 1
 
 
@@ -399,8 +393,7 @@ async def _resolve_verified_lot_size(underlying: str, script: str | None = None)
 
 async def _resolve_kite_instrument_for_contract(contract: FNOContract) -> str | None:
     """Returns numeric instrument_token for historical API, falls back to NFO:tradingsymbol."""
-    _s = _srv()
-    rows = await _s.db.kite_option_master.find(
+    rows = await _state.db.kite_option_master.find(
         {
             "underlying": contract.underlying,
             "expiry": contract.expiry,
@@ -427,8 +420,7 @@ async def _resolve_kite_instrument_for_contract(contract: FNOContract) -> str | 
 
 async def _fetch_option_snapshot_from_kite(contract: FNOContract) -> dict | None:
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY:
+    if not access_token or not _state.KITE_API_KEY:
         return None
 
     await _sync_kite_option_master_daily()
@@ -443,7 +435,7 @@ async def _fetch_option_snapshot_from_kite(contract: FNOContract) -> dict | None
                 params={"i": instrument},
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(5, 12),
             )
@@ -482,8 +474,7 @@ async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str
     No kite_option_master DB lookup needed — Kite accepts NFO:tradingsymbol directly.
     """
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY or not contracts:
+    if not access_token or not _state.KITE_API_KEY or not contracts:
         return {}
 
     # Build script → NFO:tradingsymbol mapping directly from contract
@@ -501,7 +492,7 @@ async def _fetch_option_ltps_from_kite(contracts: list[FNOContract]) -> dict[str
                 params=params,
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(5, 15),
             )
@@ -538,8 +529,7 @@ async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dic
     Kite /quote with NFO:tradingsymbol format. No kite_option_master needed.
     """
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY or not contracts:
+    if not access_token or not _state.KITE_API_KEY or not contracts:
         return {}
 
     # Build script → NFO:tradingsymbol mapping directly
@@ -558,7 +548,7 @@ async def _fetch_option_snapshots_from_kite(contracts: list[FNOContract]) -> dic
                 params=params,
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(5, 15),
             )
@@ -714,16 +704,15 @@ async def _fetch_kite_hist_ohlcv_for_equity(symbol: str, period: str = "1y") -> 
     Fetch daily historical OHLCV from Kite for NSE equity instruments.
     """
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY:
+    if not access_token or not _state.KITE_API_KEY:
         return None
 
-    token_row = await _s.db.kite_equity_master.find_one(
+    token_row = await _state.db.kite_equity_master.find_one(
         {"symbol": symbol.upper().strip()}, {"_id": 0, "instrument_token": 1}
     )
     if not token_row or not token_row.get("instrument_token"):
         await _sync_kite_option_master_daily()
-        token_row = await _s.db.kite_equity_master.find_one(
+        token_row = await _state.db.kite_equity_master.find_one(
             {"symbol": symbol.upper().strip()}, {"_id": 0, "instrument_token": 1}
         )
     if not token_row or not token_row.get("instrument_token"):
@@ -746,7 +735,7 @@ async def _fetch_kite_hist_ohlcv_for_equity(symbol: str, period: str = "1y") -> 
                 url,
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(5, 15),
             )
@@ -808,8 +797,7 @@ async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: s
     Fetch historical OHLCV candles from Kite for micro-trend analysis.
     """
     access_token = await _get_kite_access_token()
-    _s = _srv()
-    if not access_token or not _s.KITE_API_KEY:
+    if not access_token or not _state.KITE_API_KEY:
         return None
 
     await _sync_kite_option_master_daily()
@@ -819,8 +807,8 @@ async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: s
 
     def _fetch_candles() -> list[dict] | None:
         try:
-            from_date = datetime.now(_s.IST) - timedelta(minutes=candles + 5)
-            to_date = datetime.now(_s.IST)
+            from_date = datetime.now(_state.IST) - timedelta(minutes=candles + 5)
+            to_date = datetime.now(_state.IST)
 
             response = requests.get(
                 f"https://api.kite.trade/instruments/historical/{instrument}/{interval}",
@@ -830,7 +818,7 @@ async def _fetch_historical_candles_from_kite(contract: FNOContract, interval: s
                 },
                 headers={
                     "X-Kite-Version": "3",
-                    "Authorization": f"token {_s.KITE_API_KEY}:{access_token}",
+                    "Authorization": f"token {_state.KITE_API_KEY}:{access_token}",
                 },
                 timeout=(3, 5),
             )

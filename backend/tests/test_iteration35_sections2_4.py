@@ -275,7 +275,7 @@ class TestBacktestEngineSimulators:
         from services.backtest_engine import simulate_trades_for_strategy, STRATEGY_SIMULATORS
 
         # Sample OHLCV data (100 bars)
-        import random
+        import secrets
         random.seed(42)
         base_price = 100.0
         opens, highs, lows, closes, volumes = [], [], [], [], []

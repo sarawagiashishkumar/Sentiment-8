@@ -24,7 +24,7 @@ export function SkeletonGrid({ cols = 4, rows = 3 }) {
   return (
     <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }} data-testid="skeleton-grid">
       {Array.from({ length: cols * rows }).map((_, i) => (
-        <div key={i} className="rounded-lg bg-slate-800 animate-pulse h-16" />
+        <div key={`skel-grid-${i}`} className="rounded-lg bg-slate-800 animate-pulse h-16" />
       ))}
     </div>
   );
@@ -35,13 +35,13 @@ export function SkeletonTable({ rows = 5, cols = 4 }) {
     <div className="rounded-lg border border-slate-700 overflow-hidden" data-testid="skeleton-table">
       <div className="bg-slate-800/80 p-2 flex gap-4">
         {Array.from({ length: cols }).map((_, i) => (
-          <SkeletonLine key={i} width={`${20 + Math.random() * 20}%`} height="h-3" />
+          <SkeletonLine key={`skel-th-${i}`} width={`${20 + Math.random() * 20}%`} height="h-3" />
         ))}
       </div>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="p-2 flex gap-4 border-t border-slate-800/50">
+        <div key={`skel-row-${i}`} className="p-2 flex gap-4 border-t border-slate-800/50">
           {Array.from({ length: cols }).map((_, j) => (
-            <SkeletonLine key={j} width={`${30 + Math.random() * 30}%`} height="h-2.5" />
+            <SkeletonLine key={`skel-cell-${i}-${j}`} width={`${30 + Math.random() * 30}%`} height="h-2.5" />
           ))}
         </div>
       ))}
