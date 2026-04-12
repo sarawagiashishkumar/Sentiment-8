@@ -142,8 +142,16 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Notification Persistence to MongoDB**: `user_notifications` collection with CRUD via `/api/notifications` (GET/POST/PATCH read-all/DELETE). Frontend loads history on login, saves new alerts to backend, syncs clear-all and mark-all-read operations.
 - **Final Engine Modularization**: `build_fno_signal` (~1180 lines) extracted into `fno_signal_builder.py`. Engine now **500 lines** (82% reduction from original 2787). 5 extracted modules total: fno_signal_builder (1184), fno_builders (683), fno_confluence (395), fno_utils (189).
 
+### Phase 17: Trading Journal, Benchmarking, IV Collector & Analytics (2026-04-12)
+- **Automated Trading Journal**: `/api/journal` CRUD endpoints. Auto-logs every signal generation from F&O pipeline (symbol, direction, entry price, targets, SL, confluence score, signal quality). Frontend "Trading Journal" sub-tab in F&O dashboard with 6 summary cards (Total Entries, Closed Trades, P&L, Wins, Losses, Win Rate) + filterable table (event type + symbol search). P&L calculation on closed trades with win rate computation.
+- **Live Benchmarking**: Admin Performance tab now fetches notification analytics in parallel via `Promise.all`. Auto-refreshable with manual refresh button.
+- **IV Background Collector**: Scheduled `asyncio.create_task` runs every 30 minutes during market hours (9:15-15:30 IST). Captures ATM IV for NIFTY/BANKNIFTY without requiring signal generation. Accelerates 30-day IV history accumulation.
+- **Notification Analytics**: `/api/notifications/analytics` endpoint returns alert frequency (7-day by category), total 24h alerts, average response latency (time from alert to read), and read count. Admin Performance tab shows analytics section with 4 metric cards.
+- **Signal Engine Profiling**: `build_fno_signal` in `fno_signal_builder.py` instrumented with `time.monotonic()` for per-function timing. Phase timings logged at DEBUG level.
+
 ## Future/Backlog
-- Benchmark during live market hours — perf data auto-populates with each generation run
-- IV history accumulation — continues automatically (30+ days for meaningful cone)
-- Signal engine optimization — analyze profiling data from live market sessions
-- Notification analytics — track alert frequency, response times
+- All remaining items are data-dependent and auto-resolve with live market usage:
+  - Performance benchmarking data populates with each generation run
+  - IV history accumulates via background collector (30+ days for meaningful cone)
+  - Trading journal fills automatically with signal generation + position management
+  - Notification analytics populate as alerts fire and users acknowledge them
