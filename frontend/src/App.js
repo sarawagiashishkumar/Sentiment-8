@@ -23,6 +23,7 @@ import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmap
 import { ReportsDashboard } from "@/components/Reports/ReportsDashboard";
 import { WatchlistPanel } from "@/components/Watchlist/WatchlistPanel";
 import { PlanComparisonPage, LowCreditsModal } from "@/components/Shared/PlanComparison";
+import { NewsSentimentPanel } from "@/components/News/NewsSentimentPanel";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -147,7 +148,10 @@ export default function App() {
         />
         <AppSidebar currentPage={currentPage} setCurrentPage={handlePageChange} isAdmin={isAdmin} onAdminClick={() => {}} />
 
-        {currentPage === "home" && <HomeDashboard setCurrentPage={handlePageChange} />}
+        {currentPage === "home" && <>
+          <HomeDashboard setCurrentPage={handlePageChange} />
+          <NewsSentimentPanel authHeaders={authHeaders} />
+        </>}
         {["multibagger", "fno", "portfolio", "heatmap", "reports", "watchlist"].includes(currentPage) && <KiteLiveWarning authHeaders={authHeaders} addNotification={addNotification} />}
 
         <ErrorBoundary>

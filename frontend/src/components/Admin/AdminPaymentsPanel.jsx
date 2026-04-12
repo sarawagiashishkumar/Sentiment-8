@@ -89,22 +89,50 @@ export function AdminPaymentsPanel({ authHeaders }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Config Status */}
-        <div className="flex gap-3 text-[10px]" data-testid="payments-status">
+        <div className="flex gap-3 text-[10px] flex-wrap" data-testid="payments-status">
           <span className={configStatus?.razorpay_configured ? "text-emerald-400" : "text-slate-500"}>
             Razorpay: {configStatus?.razorpay_configured ? "Configured" : "Not Set"}
+          </span>
+          <span className={configStatus?.razorpay_enabled ? "text-emerald-400" : "text-rose-400"}>
+            Online: {configStatus?.razorpay_enabled ? "Enabled" : "Disabled"}
           </span>
           <span className={configStatus?.upi_configured ? "text-emerald-400" : "text-slate-500"}>
             UPI QR: {configStatus?.upi_configured ? "Configured" : "Not Set"}
           </span>
+          <span className={configStatus?.offline_enabled ? "text-emerald-400" : "text-rose-400"}>
+            Offline: {configStatus?.offline_enabled ? "Enabled" : "Disabled"}
+          </span>
+          {configStatus?.has_qr_image && <span className="text-cyan-400">QR Image: Uploaded</span>}
         </div>
 
         {showConfig && (
           <form onSubmit={saveConfig} className="space-y-2 rounded-lg border border-slate-700 bg-slate-900/50 p-3" data-testid="payments-config-form">
+            <p className="text-[10px] text-slate-400 font-semibold">Payment Mode Toggles</p>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" checked={configForm.razorpay_enabled ?? true} onChange={(e) => setConfigForm(p => ({ ...p, razorpay_enabled: e.target.checked }))} className="accent-emerald-500" data-testid="payments-toggle-razorpay" />
+                Razorpay Online
+              </label>
+              <label className="flex items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" checked={configForm.offline_enabled ?? true} onChange={(e) => setConfigForm(p => ({ ...p, offline_enabled: e.target.checked }))} className="accent-emerald-500" data-testid="payments-toggle-offline" />
+                Offline UPI/QR
+              </label>
+            </div>
             <p className="text-[10px] text-slate-400 font-semibold">Razorpay Credentials</p>
             <Input value={configForm.key_id} onChange={(e) => setConfigForm(p => ({ ...p, key_id: e.target.value }))} placeholder="Razorpay Key ID (rzp_...)" className="border-slate-700 bg-slate-800 text-slate-100 text-xs h-8" data-testid="payments-key-id" />
             <Input type="password" value={configForm.key_secret} onChange={(e) => setConfigForm(p => ({ ...p, key_secret: e.target.value }))} placeholder="Razorpay Key Secret" className="border-slate-700 bg-slate-800 text-slate-100 text-xs h-8" data-testid="payments-key-secret" />
             <p className="text-[10px] text-slate-400 font-semibold mt-2">UPI for QR Code (Offline Payments)</p>
             <Input value={configForm.upi_id} onChange={(e) => setConfigForm(p => ({ ...p, upi_id: e.target.value }))} placeholder="UPI ID (e.g. merchant@paytm)" className="border-slate-700 bg-slate-800 text-slate-100 text-xs h-8" data-testid="payments-upi-id" />
+            <p className="text-[10px] text-slate-400 font-semibold mt-2">Upload Custom QR Image</p>
+            <input type="file" accept="image/*" onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = (ev) => setConfigForm(p => ({ ...p, qr_image_base64: ev.target.result }));
+                reader.readAsDataURL(file);
+              }
+            }} className="text-xs text-slate-400" data-testid="payments-qr-upload" />
+            {configForm.qr_image_base64 && <img src={configForm.qr_image_base64} alt="QR Preview" className="w-24 h-24 rounded border border-slate-700" />}
             <Button type="submit" className="h-7 bg-emerald-600 text-white hover:bg-emerald-500 text-xs" data-testid="payments-config-save">Save Configuration</Button>
           </form>
         )}

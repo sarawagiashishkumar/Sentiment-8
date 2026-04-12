@@ -519,6 +519,7 @@ from routes.fno_iv import fno_iv_router
 from routes.fno_cards import fno_cards_router
 from routes.admin import admin_router
 from routes.admin_domains import admin_domains_router
+from routes.news import news_router
 from routes.market_data import market_data_router
 from routes.portfolio import portfolio_router
 from routes.multibagger import multibagger_router
@@ -538,6 +539,7 @@ api_router.include_router(fno_iv_router)
 api_router.include_router(fno_cards_router)
 api_router.include_router(admin_router)
 api_router.include_router(admin_domains_router)
+api_router.include_router(news_router)
 api_router.include_router(market_data_router)
 api_router.include_router(portfolio_router)
 api_router.include_router(multibagger_router)

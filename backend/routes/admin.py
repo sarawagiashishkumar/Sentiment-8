@@ -670,6 +670,74 @@ async def record_strategy_result(
     }
 
 
+
+# ── Custom API Endpoints CRUD ────────────────────────────────────────────────
+
+class CustomApiEndpoint(BaseModel):
+    name: str
+    url: str
+    method: str = "GET"
+    headers: dict = {}
+    enabled: bool = True
+    description: str = ""
+
+
+@admin_router.get("/admin/custom-apis")
+async def list_custom_apis(admin_user: dict = Depends(get_owner_user)):
+    """List all custom API endpoints configured by the admin."""
+    apis = await _state.db.custom_apis.find({}, {"_id": 0}).to_list(100)
+    return {"apis": apis, "count": len(apis)}
+
+
+@admin_router.post("/admin/custom-apis")
+async def create_custom_api(
+    payload: CustomApiEndpoint,
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Create or update a custom API endpoint."""
+    from datetime import datetime, timezone
+    doc = {
+        "name": payload.name.strip(),
+        "url": payload.url.strip(),
+        "method": payload.method.upper(),
+        "headers": payload.headers,
+        "enabled": payload.enabled,
+        "description": payload.description,
+        "updated_by": admin_user.get("username"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await _state.db.custom_apis.update_one(
+        {"name": payload.name.strip()},
+        {"$set": doc},
+        upsert=True,
+    )
+    return {"ok": True, "name": payload.name}
+
+
+@admin_router.delete("/admin/custom-apis/{name}")
+async def delete_custom_api(name: str, admin_user: dict = Depends(get_owner_user)):
+    """Delete a custom API endpoint."""
+    result = await _state.db.custom_apis.delete_one({"name": name})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Custom API not found")
+    return {"deleted": True, "name": name}
+
+
+@admin_router.post("/admin/custom-apis/{name}/test")
+async def test_custom_api(name: str, admin_user: dict = Depends(get_owner_user)):
+    """Test a custom API endpoint by making a request."""
+    doc = await _state.db.custom_apis.find_one({"name": name}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Custom API not found")
+    from services.async_http import async_get
+    try:
+        resp = await async_get(doc["url"], headers=doc.get("headers", {}), timeout=10)
+        return {"status": "ok", "status_code": 200, "preview": str(resp)[:500]}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)[:300]}
+
+
+
 # ── CSV Seed Management ──────────────────────────────────────────────────────
 
 @admin_router.get("/admin/csv-seeds")

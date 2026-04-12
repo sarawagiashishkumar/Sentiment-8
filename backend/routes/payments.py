@@ -42,9 +42,12 @@ async def _get_razorpay_client():
 # ── Admin: Configure Razorpay Keys ────────────────────────────────────────────
 
 class RazorpayConfigRequest(BaseModel):
-    key_id: str
-    key_secret: str
-    upi_id: str | None = None  # For QR code generation
+    key_id: str = ""
+    key_secret: str = ""
+    upi_id: str | None = None
+    razorpay_enabled: bool = True
+    offline_enabled: bool = True
+    qr_image_base64: str | None = None
 
 
 @payments_router.post("/admin/payments/configure")
@@ -52,20 +55,29 @@ async def configure_razorpay(
     config: RazorpayConfigRequest,
     admin_user: dict = Depends(get_current_user),
 ):
-    """Admin sets Razorpay API credentials."""
+    """Admin sets Razorpay API credentials, QR image, and payment mode toggles."""
     if admin_user.get("role") not in ("owner", "sub_admin"):
         raise HTTPException(403, "Admin only")
 
+    update_doc = {
+        "key": "razorpay_config",
+        "razorpay_enabled": config.razorpay_enabled,
+        "offline_enabled": config.offline_enabled,
+        "configured_by": admin_user.get("username"),
+        "configured_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if config.key_id.strip():
+        update_doc["key_id"] = config.key_id.strip()
+    if config.key_secret.strip():
+        update_doc["key_secret"] = config.key_secret.strip()
+    if config.upi_id is not None:
+        update_doc["upi_id"] = config.upi_id.strip()
+    if config.qr_image_base64:
+        update_doc["qr_image_base64"] = config.qr_image_base64
+
     await _state.db.system_meta.update_one(
         {"key": "razorpay_config"},
-        {"$set": {
-            "key": "razorpay_config",
-            "key_id": config.key_id.strip(),
-            "key_secret": config.key_secret.strip(),
-            "upi_id": (config.upi_id or "").strip(),
-            "configured_by": admin_user.get("username"),
-            "configured_at": datetime.now(timezone.utc).isoformat(),
-        }},
+        {"$set": update_doc},
         upsert=True,
     )
     return {"configured": True}
@@ -79,10 +91,23 @@ async def get_payment_config_status(admin_user: dict = Depends(get_current_user)
     config = await _get_razorpay_config()
     return {
         "razorpay_configured": bool(config.get("key_id")),
+        "razorpay_enabled": config.get("razorpay_enabled", True),
         "upi_configured": bool(config.get("upi_id")),
+        "offline_enabled": config.get("offline_enabled", True),
+        "has_qr_image": bool(config.get("qr_image_base64")),
         "configured_by": config.get("configured_by"),
         "configured_at": config.get("configured_at"),
     }
+
+
+@payments_router.get("/payments/qr-image")
+async def get_uploaded_qr_image(user: dict = Depends(get_current_user)):
+    """Get the admin-uploaded QR code image (if any)."""
+    config = await _get_razorpay_config()
+    qr_b64 = config.get("qr_image_base64")
+    if not qr_b64:
+        raise HTTPException(404, "No QR image uploaded")
+    return {"qr_image": qr_b64}
 
 
 # ── Admin: Payment Verification ──────────────────────────────────────────────

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Plus, Trash2, Play, Settings } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -12,10 +13,48 @@ export function AdminControlsTab({ authHeaders, adminConfig, loadAdminConfig, ad
   const [domainDeleteConfirm, setDomainDeleteConfirm] = useState(null);
   const [domainMapStatus, setDomainMapStatus] = useState({});
   const [expandedDns, setExpandedDns] = useState({});
+  // Custom API state
+  const [customApis, setCustomApis] = useState([]);
+  const [showApiForm, setShowApiForm] = useState(false);
+  const [apiForm, setApiForm] = useState({ name: "", url: "", method: "GET", description: "", enabled: true });
+  const [apiTestResults, setApiTestResults] = useState({});
+
+  const fetchCustomApis = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/admin/custom-apis`, { headers: authHeaders });
+      setCustomApis(res.data.apis || []);
+    } catch (e) { console.error(e); }
+  }, [authHeaders]);
+
+  useEffect(() => { fetchCustomApis(); }, [fetchCustomApis]);
 
   const saveApiControls = async () => {
     try { await axios.patch(`${API}/admin/api-controls`, apiControlsEdit, { headers: authHeaders }); await loadAdminConfig(); }
     catch (e) { setAdminError(e?.response?.data?.detail || "Unable to update API controls"); }
+  };
+
+  const saveCustomApi = async (e) => {
+    e.preventDefault();
+    if (!apiForm.name.trim() || !apiForm.url.trim()) return;
+    try {
+      await axios.post(`${API}/admin/custom-apis`, apiForm, { headers: authHeaders });
+      setShowApiForm(false);
+      setApiForm({ name: "", url: "", method: "GET", description: "", enabled: true });
+      await fetchCustomApis();
+    } catch (e2) { setAdminError(e2?.response?.data?.detail || "Unable to save custom API"); }
+  };
+
+  const deleteCustomApi = async (name) => {
+    try { await axios.delete(`${API}/admin/custom-apis/${encodeURIComponent(name)}`, { headers: authHeaders }); await fetchCustomApis(); }
+    catch (e) { setAdminError(e?.response?.data?.detail || "Unable to delete"); }
+  };
+
+  const testCustomApi = async (name) => {
+    setApiTestResults(p => ({ ...p, [name]: { loading: true } }));
+    try {
+      const res = await axios.post(`${API}/admin/custom-apis/${encodeURIComponent(name)}/test`, {}, { headers: authHeaders });
+      setApiTestResults(p => ({ ...p, [name]: res.data }));
+    } catch (e) { setApiTestResults(p => ({ ...p, [name]: { status: "error", error: e?.message } })); }
   };
 
   const addDomainMapping = async (event) => {
@@ -60,7 +99,63 @@ export function AdminControlsTab({ authHeaders, adminConfig, loadAdminConfig, ad
         </div>
         <Button type="button" onClick={saveApiControls} className="bg-slate-800 text-slate-100 hover:bg-slate-700" data-testid="admin-save-api-controls">Save API Controls</Button>
 
-        <form onSubmit={addDomainMapping} className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="admin-domain-form">
+        {/* Custom API Endpoints CRUD */}
+        <div className="space-y-2 border-t border-slate-800 pt-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-300 flex items-center gap-1"><Settings size={13} /> Custom API Endpoints</p>
+            <Button type="button" onClick={() => setShowApiForm(!showApiForm)} className="h-7 bg-cyan-600 text-white text-[10px] px-2" data-testid="add-custom-api-btn">
+              <Plus size={12} className="mr-0.5" /> Add API
+            </Button>
+          </div>
+          {showApiForm && (
+            <form onSubmit={saveCustomApi} className="rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-3 space-y-2" data-testid="custom-api-form">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <Input value={apiForm.name} onChange={(e) => setApiForm(p => ({ ...p, name: e.target.value }))} placeholder="API Name" className="border-slate-700 bg-slate-800 text-slate-100 text-xs h-8" data-testid="custom-api-name" />
+                <Input value={apiForm.url} onChange={(e) => setApiForm(p => ({ ...p, url: e.target.value }))} placeholder="https://api.example.com/..." className="border-slate-700 bg-slate-800 text-slate-100 text-xs h-8" data-testid="custom-api-url" />
+                <select value={apiForm.method} onChange={(e) => setApiForm(p => ({ ...p, method: e.target.value }))} className="h-8 rounded-md border border-slate-700 bg-slate-800 px-2 text-xs text-slate-100" data-testid="custom-api-method">
+                  <option value="GET">GET</option><option value="POST">POST</option><option value="PUT">PUT</option><option value="DELETE">DELETE</option>
+                </select>
+                <Input value={apiForm.description} onChange={(e) => setApiForm(p => ({ ...p, description: e.target.value }))} placeholder="Description" className="border-slate-700 bg-slate-800 text-slate-100 text-xs h-8" data-testid="custom-api-desc" />
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" className="h-7 bg-cyan-600 text-white text-[10px] px-3" data-testid="custom-api-save">Save API</Button>
+                <Button type="button" onClick={() => setShowApiForm(false)} variant="ghost" className="h-7 text-[10px] text-slate-400">Cancel</Button>
+              </div>
+            </form>
+          )}
+          {customApis.length === 0 ? (
+            <p className="text-[10px] text-slate-500">No custom APIs configured.</p>
+          ) : (
+            <div className="space-y-1.5" data-testid="custom-api-list">
+              {customApis.map(api => (
+                <div key={api.name} className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 flex items-center justify-between gap-2" data-testid={`custom-api-${api.name}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white">{api.name}</span>
+                      <span className="text-[9px] bg-cyan-900/40 text-cyan-300 px-1 rounded">{api.method}</span>
+                      <span className={`text-[9px] rounded px-1 ${api.enabled ? "bg-emerald-900/40 text-emerald-300" : "bg-rose-900/40 text-rose-300"}`}>{api.enabled ? "Active" : "Disabled"}</span>
+                    </div>
+                    <p className="text-[9px] text-slate-500 truncate">{api.url}</p>
+                    {api.description && <p className="text-[9px] text-slate-400">{api.description}</p>}
+                    {apiTestResults[api.name] && !apiTestResults[api.name].loading && (
+                      <p className={`text-[9px] mt-0.5 ${apiTestResults[api.name].status === "ok" ? "text-emerald-400" : "text-rose-400"}`}>
+                        {apiTestResults[api.name].status === "ok" ? `OK (${apiTestResults[api.name].preview?.slice(0, 80)}...)` : `Error: ${apiTestResults[api.name].error}`}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => testCustomApi(api.name)} className="p-1.5 rounded bg-slate-800 text-cyan-400 hover:text-cyan-300" title="Test" data-testid={`test-api-${api.name}`}><Play size={12} /></button>
+                    <button onClick={() => deleteCustomApi(api.name)} className="p-1.5 rounded bg-slate-800 text-rose-400 hover:text-rose-300" title="Delete" data-testid={`delete-api-${api.name}`}><Trash2 size={12} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-800 pt-4">
+          <p className="text-xs font-semibold text-slate-300 mb-2">Domain Mappings</p>
+          <form onSubmit={addDomainMapping} className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="admin-domain-form">
           <Input value={domainForm.domain} onChange={(e) => setDomainForm(p => ({ ...p, domain: e.target.value }))} placeholder="Domain or Subdomain" className="border-slate-700 bg-slate-900 text-slate-100" data-testid="admin-domain-input" />
           <Input value={domainForm.target_record} onChange={(e) => setDomainForm(p => ({ ...p, target_record: e.target.value }))} placeholder="A-Record target (IP/host)" className="border-slate-700 bg-slate-900 text-slate-100" data-testid="admin-domain-target-input" />
           <Button type="submit" className="bg-slate-800 text-slate-100 hover:bg-slate-700" data-testid="admin-domain-submit">Save Domain Mapping</Button>
@@ -81,6 +176,7 @@ export function AdminControlsTab({ authHeaders, adminConfig, loadAdminConfig, ad
           setDomainDeleteConfirm={setDomainDeleteConfirm}
           expandedDns={expandedDns} setExpandedDns={setExpandedDns}
         />
+        </div>
       </CardContent>
     </Card>
   );
