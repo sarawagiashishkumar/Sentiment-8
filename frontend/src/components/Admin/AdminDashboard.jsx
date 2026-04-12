@@ -7,6 +7,7 @@ import { SubTabs } from "@/components/Layout/SubTabs";
 import { AdminUsersTab } from "./AdminUsersTab";
 import { AdminApiTab } from "./AdminApiTab";
 import { AdminCsvTab } from "./AdminCsvTab";
+import { AdminPerfTab } from "./AdminPerfTab";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -14,6 +15,7 @@ const ADMIN_TABS = [
   { id: "users", label: "User Management & Security" },
   { id: "controls", label: "Advanced Controls" },
   { id: "macro", label: "Active Macro Events" },
+  { id: "perf", label: "Generation Performance" },
   { id: "kite", label: "API Connect Integration" },
   { id: "csv", label: "OHLCV CSV Seed Management" },
 ];
@@ -301,6 +303,10 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
 
       {activeTab === "kite" && isOwner && (
         <AdminApiTab kiteStatus={kiteStatus} checkKiteStatus={checkKiteStatus} token={token} />
+      )}
+
+      {activeTab === "perf" && isOwner && (
+        <AdminPerfTab authHeaders={authHeaders} />
       )}
 
       {activeTab === "csv" && (

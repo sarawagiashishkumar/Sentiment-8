@@ -72,8 +72,15 @@ async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
         # Store perf timings
         _total_ms = round((_time.monotonic() - _gen_start) * 1000)
         import services.app_state as _app_state
-        _app_state.LAST_MB_PERF = {"scan_ms": _scan_ms, "total_ms": _total_ms, "candidates": len(candidates), "potential": potential_count, "ts": refreshed_at}
+        _perf = {"scan_ms": _scan_ms, "total_ms": _total_ms, "candidates": len(candidates), "potential": potential_count, "ts": refreshed_at}
+        _app_state.LAST_MB_PERF = _perf
         logger.info("Multibagger generation perf: scan=%dms total=%dms", _scan_ms, _total_ms)
+        try:
+            await _app_state.db.generation_perf_history.insert_one({
+                "type": "multibagger", **_perf,
+            })
+        except Exception:
+            pass
 
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
 

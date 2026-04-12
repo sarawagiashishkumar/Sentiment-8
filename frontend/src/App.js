@@ -14,6 +14,7 @@ import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
 import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
 import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
+import { ErrorBoundary } from "@/components/Shared/ErrorBoundary";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -214,6 +215,7 @@ export default function App() {
           <KiteLiveWarning authHeaders={authHeaders} />
         )}
 
+        <ErrorBoundary>
         {currentPage === "multibagger" ? (
           <MultibaggerDashboard authHeaders={authHeaders} syncCredits={syncCredits} />
         ) : null}
@@ -242,6 +244,7 @@ export default function App() {
         {currentPage === "heatmap" ? (
           <MarketHeatmapDashboard authHeaders={authHeaders} />
         ) : null}
+        </ErrorBoundary>
 
         <AppFooter />
       </div>

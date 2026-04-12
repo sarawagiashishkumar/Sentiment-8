@@ -274,9 +274,17 @@ async def generate_fno_signals(
         _perf["assembly_ms"] = round((_time.monotonic() - _t0) * 1000)
         _perf["total_ms"] = round((_time.monotonic() - _gen_start) * 1000)
         _perf["ts"] = refreshed_at
+        _perf["signal_count"] = len(signals)
         import services.app_state as _app_state
         _app_state.LAST_FNO_PERF = _perf
         logger.info("FNO generation perf: %s", _perf)
+        # Persist to MongoDB for historical tracking
+        try:
+            await _app_state.db.generation_perf_history.insert_one({
+                "type": "fno", **_perf,
+            })
+        except Exception:
+            pass
 
         # ── Auto-capture: log all generated signals to signal_log ──
         try:
@@ -750,11 +758,21 @@ async def get_performance_stats_endpoint(user=Depends(get_owner_user)):
 
 @fno_router.get("/fno/generation-timings")
 async def get_generation_timings(user=Depends(get_owner_user)):
-    """Get last F&O and Multibagger generation phase timings for performance monitoring."""
+    """Get last F&O and Multibagger generation phase timings + history."""
     import services.app_state as _app_state
+    # Fetch recent history from MongoDB (last 50 runs)
+    history = []
+    try:
+        cursor = _app_state.db.generation_perf_history.find(
+            {}, {"_id": 0}
+        ).sort("ts", -1).limit(50)
+        history = await cursor.to_list(50)
+    except Exception:
+        pass
     return {
         "fno": _app_state.LAST_FNO_PERF or {"message": "No F&O generation run yet"},
         "multibagger": _app_state.LAST_MB_PERF or {"message": "No Multibagger generation run yet"},
+        "history": history,
     }
 
 

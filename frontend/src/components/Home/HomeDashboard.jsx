@@ -5,7 +5,7 @@ export function HomeDashboard({ setCurrentPage }) {
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6" data-testid="home-landing-dashboard">
       <h2 className="mb-6 text-2xl font-bold text-white">Landing Dashboard</h2>
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="cursor-pointer border-cyan-500/30 bg-slate-900/70 transition-colors hover:border-cyan-400" onClick={() => setCurrentPage("multibagger")} data-testid="home-module-multibagger">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-cyan-300">

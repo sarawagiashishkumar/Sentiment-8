@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { Activity, LayoutGrid, List, Search, X } from "lucide-react";
 import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
+import { HeatmapSkeleton } from "@/components/Shared/Skeletons";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const REFRESH_INTERVAL = 30000;
@@ -139,11 +140,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
   const availableExpiries = chains.length > 0 ? (chains[0].available_expiries || []) : [];
 
   if (loading && !data) {
-    return (
-      <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-8">
-        <p className="text-sm text-slate-400 text-center animate-pulse" data-testid="options-loading">Loading options data...</p>
-      </div>
-    );
+    return <HeatmapSkeleton />;
   }
 
   // Determine if current selection is an index or stock
