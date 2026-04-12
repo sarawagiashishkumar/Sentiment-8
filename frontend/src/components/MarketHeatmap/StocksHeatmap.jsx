@@ -24,6 +24,7 @@ const FILTERS = [
 
 function getTileColor(pct) {
   const absVal = Math.abs(pct);
+  if (absVal < 0.05) return "rgba(100, 116, 139, 0.3)"; // Neutral for near-zero
   const intensity = Math.min(absVal / 5, 1);
   const opacity = 0.2 + intensity * 0.75;
   if (pct >= 0) {
@@ -63,6 +64,7 @@ export function StocksHeatmap({ authHeaders, onFetchError }) {
       if (!resp.data.kite_live && onFetchError) onFetchError();
     } catch (err) {
       console.error("StocksHeatmap fetch error:", err);
+      // Keep last known data — do NOT clear state on error
       if (onFetchError) onFetchError();
     } finally {
       setLoading(false);

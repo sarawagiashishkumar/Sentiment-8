@@ -34,6 +34,7 @@ export default function App() {
   } = useAuth();
 
   const [currentPage, setCurrentPage] = useState("home");
+  const handlePageChange = (page) => { setCurrentPage(page); lastActivityRef.current = Date.now(); };
   const [customPositions, setCustomPositions] = useState([]);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
@@ -107,8 +108,8 @@ export default function App() {
 
     ping();
     heartbeatTimerRef.current = setInterval(() => {
-      if (Date.now() - lastActivityRef.current < 600000 || !document.hidden) ping();
-    }, 60000);
+      if (Date.now() - lastActivityRef.current < 1800000 || !document.hidden) ping();
+    }, 30000);
 
     return () => {
       events.forEach(e => window.removeEventListener(e, resetActivity));
@@ -120,7 +121,7 @@ export default function App() {
 
   const handleMarkAllRead = () => { markAllRead(); axios.patch(`${API}/notifications/read-all`, {}, { headers: authHeaders }).catch(() => {}); };
   const handleClearAll = () => { clearAllNotifs(); axios.delete(`${API}/notifications`, { headers: authHeaders }).catch(() => {}); };
-  const handleLogout = async () => { await onLogout(); setCurrentPage("home"); setCustomPositions([]); };
+  const handleLogout = async () => { await onLogout(); handlePageChange("home"); setCustomPositions([]); };
 
   // ── Low credits modal trigger (once per session when credits < 5) ──
   useEffect(() => {
@@ -144,9 +145,9 @@ export default function App() {
         <AppHeader me={me} onLogout={handleLogout} authHeaders={authHeaders}
           notifBell={<><PushNotifToggle enabled={pushEnabled} permission={pushPermission} onToggle={togglePush} /><NotificationBell unreadCount={unreadCount} onClick={() => setNotifPanelOpen(p => !p)} /></>}
         />
-        <AppSidebar currentPage={currentPage} setCurrentPage={setCurrentPage} isAdmin={isAdmin} onAdminClick={() => {}} />
+        <AppSidebar currentPage={currentPage} setCurrentPage={handlePageChange} isAdmin={isAdmin} onAdminClick={() => {}} />
 
-        {currentPage === "home" && <HomeDashboard setCurrentPage={setCurrentPage} />}
+        {currentPage === "home" && <HomeDashboard setCurrentPage={handlePageChange} />}
         {["multibagger", "fno", "portfolio", "heatmap", "reports", "watchlist"].includes(currentPage) && <KiteLiveWarning authHeaders={authHeaders} addNotification={addNotification} />}
 
         <ErrorBoundary>

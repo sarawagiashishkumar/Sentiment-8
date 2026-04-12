@@ -69,4 +69,4 @@ export const qualityBadge = (quality) => {
 export const scoreBadge = (isPotential) =>
   isPotential
     ? "bg-cyan-500 text-slate-900 border-cyan-600"
-    : "bg-slate-200 text-slate-700 border-slate-300";
+    : "bg-slate-700 text-slate-200 border-slate-500";

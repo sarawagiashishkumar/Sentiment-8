@@ -115,13 +115,21 @@ export function LiveHelpModule({ authHeaders, me }) {
       }, { headers: authHeaders });
 
       const data = res.data;
+      // Strip raw markdown formatting for clean display
+      const cleanReply = (data.reply || "")
+        .replace(/\*{2,3}(.*?)\*{2,3}/g, "$1")  // Remove **bold** and ***bold italic***
+        .replace(/^#{1,4}\s+/gm, "")              // Remove # headings
+        .replace(/^[\-\*]\s+/gm, "- ")            // Normalize bullets
+        .replace(/`([^`]+)`/g, "$1")               // Remove inline code
+        .replace(/\n{3,}/g, "\n\n")                // Collapse excess newlines
+        .trim();
       setMessages(prev => [...prev, {
-        type: "ai", text: data.reply, sender: "AI Support",
+        type: "ai", text: cleanReply, sender: "AI Support",
         ts: new Date().toISOString(), autoTicket: data.auto_ticket,
       }]);
 
       // Speak the AI response
-      speak(data.reply);
+      speak(cleanReply);
 
       if (data.auto_ticket) {
         setMessages(prev => [...prev, { type: "system", text: "Support ticket auto-created for the team.", ts: new Date().toISOString() }]);
@@ -425,14 +433,16 @@ export function LiveHelpModule({ authHeaders, me }) {
       <form onSubmit={handleSend} className="border-t border-violet-500/30 px-2 py-2 flex gap-1 items-center">
         {!voiceMode ? (
           <>
-            <button type="button" onClick={toggleVoiceMode} className="h-8 w-8 flex items-center justify-center rounded-lg shrink-0 bg-violet-700 text-violet-200 hover:bg-violet-600" title="Voice conversation mode" data-testid="livehelp-voice-mode-btn">
-              <Mic size={14} />
-            </button>
-            <button type="button" onClick={toggleMic} className={`h-8 w-8 flex items-center justify-center rounded-lg shrink-0 ${isListening ? "bg-rose-600 text-white animate-pulse" : "bg-slate-800 text-slate-400 hover:text-white"}`} title={isListening ? "Stop" : "Speak once"} data-testid="livehelp-mic">
-              {isListening ? <MicOff size={14} /> : <Mic size={14} />}
-            </button>
-            <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder={isListening ? "Listening..." : "Ask anything..."} className="flex-1 h-8 border-slate-700 bg-slate-900 text-slate-100 text-xs min-w-0" data-testid="livehelp-input" />
+            <div className="relative flex-1">
+              <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder={isListening ? "Listening..." : "Ask anything..."} className="h-8 w-full border-slate-700 bg-slate-900 text-slate-100 text-xs pr-8" data-testid="livehelp-input" />
+              <button type="button" onClick={toggleMic} className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded ${isListening ? "text-rose-400 animate-pulse" : "text-slate-500 hover:text-violet-300"}`} title={isListening ? "Stop listening" : "Speak"} data-testid="livehelp-mic">
+                {isListening ? <MicOff size={13} /> : <Mic size={13} />}
+              </button>
+            </div>
             <Button type="submit" disabled={!input.trim() || aiLoading} className="h-8 w-8 p-0 bg-violet-600 hover:bg-violet-500 shrink-0" data-testid="livehelp-send"><Send size={13} /></Button>
+            <button type="button" onClick={toggleVoiceMode} className="h-8 w-8 flex items-center justify-center rounded-lg shrink-0 bg-violet-700 text-violet-200 hover:bg-violet-600" title="Switch to Voice Mode" data-testid="livehelp-voice-mode-btn">
+              <Phone size={13} />
+            </button>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center gap-3 py-1">
