@@ -126,6 +126,12 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - `/api/fno/iv-term-structure/{symbol}` — IV term structure across expiries
 - `/api/admin/users` — User management
 
+### Phase 14: App Polish & Hardening (2026-04-12)
+- **Admin Performance Dashboard**: New 6th tab in Admin panel showing F&O generation phase timings as horizontal bar chart (NIFTY/BANKNIFTY/Stocks/Assembly) + Multibagger timing. Historical runs persisted to MongoDB `generation_perf_history` collection. Shows last 20 runs with type, timestamp, total, phase breakdown, and signal count.
+- **Error Boundary**: React class component wrapping all main content sections. Catches rendering crashes gracefully with "Something went wrong" fallback + "Try Again" button instead of white screen.
+- **Loading Skeleton States**: `HeatmapSkeleton` component replaces plain "Loading..." text in StocksHeatmap and OptionsHeatmap with animated pulse skeleton grid.
+- **Mobile Responsiveness**: Header uses 2-col grid on mobile, 4-col on desktop. Sidebar buttons show abbreviated labels on small screens (MB, F&O, Port, Heat). Home dashboard cards use responsive 2→4 column grid. Cost note abbreviated for mobile.
+
 ## Future/Backlog
 - Wait for 30+ days iv_history accumulation for meaningful IV cone percentile bands
 - Performance benchmarking during live market hours (timing data will populate during trading sessions)
