@@ -514,6 +514,9 @@ async def get_fno_contracts():
 
 # ── Include extracted route modules ───────────────────────────────────────────
 from routes.fno import fno_router
+from routes.fno_backtest import fno_backtest_router
+from routes.fno_iv import fno_iv_router
+from routes.fno_cards import fno_cards_router
 from routes.admin import admin_router
 from routes.market_data import market_data_router
 from routes.portfolio import portfolio_router
@@ -529,6 +532,9 @@ from routes.alerts import alerts_router
 from routes.fraud import fraud_router
 from routes.crm import crm_router
 api_router.include_router(fno_router)
+api_router.include_router(fno_backtest_router)
+api_router.include_router(fno_iv_router)
+api_router.include_router(fno_cards_router)
 api_router.include_router(admin_router)
 api_router.include_router(market_data_router)
 api_router.include_router(portfolio_router)

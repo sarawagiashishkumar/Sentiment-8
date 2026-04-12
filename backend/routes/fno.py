@@ -16,7 +16,6 @@ from typing import AsyncGenerator, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 from deps import get_current_user, get_owner_user
 from models import (
@@ -32,10 +31,6 @@ from models import (
     ScriptSearchResult,
 )
 from data.fno_contracts import FNO_CONTRACTS
-from services.backtest_engine import (
-    is_strategy_enabled as is_backtest_enabled,
-    run_backtest_batch,
-)
 from services.position_sizing import compute_position_size
 
 logger = logging.getLogger(__name__)
@@ -587,415 +582,6 @@ async def get_position_alerts(current_user: dict = Depends(get_current_user)):
     return {"alerts": all_events, "count": len(all_events)}
 
 
-# ── /fno/backtest-batch & strategy-backtests ──────────────────────────────────
-
-@fno_router.post("/fno/backtest-batch")
-async def trigger_backtest_batch(current_user: dict = Depends(get_owner_user)):
-    """Run strategy backtests for all strategy x instrument combinations. Owner-only."""
-    import server as _srv
-    from services.strategy_library import STRATEGY_LIBRARY
-
-    result = await run_backtest_batch(_srv.db, STRATEGY_LIBRARY)
-    return result
-
-
-@fno_router.get("/fno/strategy-backtests")
-async def list_strategy_backtests_endpoint(
-    current_user: dict = Depends(get_current_user),
-):
-    """List all strategy backtest records with their enable/disable status."""
-    import server as _srv
-
-    rows = await _srv.db.strategy_backtests.find({}, {"_id": 0}).to_list(500)
-    for r in rows:
-        r["enabled"] = is_backtest_enabled(r)
-    return {"backtests": rows, "count": len(rows)}
-
-
-class RunBacktestRequest(BaseModel):
-    symbol: str
-    strategy: str
-    date_from: str
-    date_to: str
-
-
-@fno_router.post("/fno/run-backtest")
-async def run_single_backtest(
-    req: RunBacktestRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    """Run a single strategy backtest for the given symbol and date range."""
-    import server as _srv
-    from services.kite_client import fetch_kite_historical_candles
-
-    symbol = req.symbol.strip().upper()
-    if not symbol:
-        raise HTTPException(400, "Symbol required")
-
-    # Fetch historical candles for the date range
-    try:
-        from datetime import datetime as _dt
-        d_from = _dt.strptime(req.date_from, "%Y-%m-%d")
-        d_to = _dt.strptime(req.date_to, "%Y-%m-%d")
-        days = max((d_to - d_from).days, 1)
-    except ValueError:
-        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD")
-
-    candles = await fetch_kite_historical_candles(symbol, interval="day", days=min(days + 5, 365))
-    if not candles:
-        return {"summary": {}, "trades": [], "equity_curve": [],
-                "error": f"No historical data available for {symbol}. Ensure Market Data API is connected."}
-
-    trades, equity_curve = _run_strategy_simulation(candles, req.strategy)
-
-    wins = [t for t in trades if t["pnl"] > 0]
-    losses = [t for t in trades if t["pnl"] < 0]
-    total_pnl = sum(t["pnl"] for t in trades)
-
-    # Drawdown calculation
-    peak = 100000
-    max_dd = 0
-    for pt in equity_curve:
-        if pt["equity"] > peak:
-            peak = pt["equity"]
-        dd = (peak - pt["equity"]) / peak * 100
-        if dd > max_dd:
-            max_dd = dd
-
-    summary = {
-        "total_trades": len(trades),
-        "wins": len(wins),
-        "losses": len(losses),
-        "win_rate": round(len(wins) / max(len(trades), 1) * 100, 1),
-        "total_pnl": round(total_pnl, 2),
-        "max_drawdown": round(max_dd, 1),
-        "profit_factor": round(sum(t["pnl"] for t in wins) / max(abs(sum(t["pnl"] for t in losses)), 0.01), 2) if losses else 0,
-        "sharpe_ratio": round(total_pnl / max(len(trades), 1) / max(1, (sum((t["pnl"] - total_pnl/max(len(trades),1))**2 for t in trades) / max(len(trades),1))**0.5), 2) if trades else 0,
-        "strategy": req.strategy,
-    }
-
-    return {"summary": summary, "trades": trades, "equity_curve": equity_curve}
-
-
-def _run_strategy_simulation(candles: list[dict], strategy: str) -> tuple[list[dict], list[dict]]:
-    """Run strategy-specific simulation on OHLCV candles. Returns (trades, equity_curve)."""
-    trades = []
-    equity = 100000
-    equity_curve = []
-    lot = 10
-
-    def _date_str(c):
-        d = c.get("date", "")
-        return d[:10] if isinstance(d, str) else str(d)
-
-    if strategy in ("momentum_ce", "momentum_pe"):
-        is_long = strategy == "momentum_ce"
-        for i in range(2, len(candles)):
-            prev2, curr = candles[i - 2], candles[i]
-            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
-            momentum = (curr["close"] - prev2["close"]) / prev2["close"] * 100
-            trigger = (is_long and momentum > 0.5) or (not is_long and momentum < -0.5)
-            if trigger and i + 1 < len(candles):
-                exit_c = candles[i + 1]
-                pnl = ((exit_c["close"] - curr["close"]) if is_long else (curr["close"] - exit_c["close"])) * lot
-                equity += pnl
-                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "LONG" if is_long else "SHORT", "entry_price": round(curr["close"], 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (curr["close"] * lot) * 100, 2), "holding_days": 1, "legs": 1})
-
-    elif strategy == "bull_call_spread":
-        for i in range(2, len(candles)):
-            curr = candles[i]
-            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
-            if i < 3:
-                continue
-            prev = candles[i - 1]
-            # Bull signal: close > prev close and prev > candles[i-2]
-            if curr["close"] > prev["close"] and prev["close"] > candles[i - 2]["close"] and i + 2 < len(candles):
-                entry = curr["close"]
-                premium_paid = entry * 0.02  # simulate 2% premium for call spread
-                exit_c = candles[i + 2]
-                spread_gain = max(exit_c["close"] - entry, 0) * 0.5 - premium_paid  # capped upside
-                pnl = spread_gain * lot
-                equity += pnl
-                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "LONG", "entry_price": round(entry, 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (premium_paid * lot) * 100, 2), "holding_days": 2, "legs": 2, "strategy_type": "Bull Call Spread"})
-
-    elif strategy == "bear_put_spread":
-        for i in range(2, len(candles)):
-            curr = candles[i]
-            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
-            if i < 3:
-                continue
-            prev = candles[i - 1]
-            if curr["close"] < prev["close"] and prev["close"] < candles[i - 2]["close"] and i + 2 < len(candles):
-                entry = curr["close"]
-                premium_paid = entry * 0.02
-                exit_c = candles[i + 2]
-                spread_gain = max(entry - exit_c["close"], 0) * 0.5 - premium_paid
-                pnl = spread_gain * lot
-                equity += pnl
-                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "SHORT", "entry_price": round(entry, 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (premium_paid * lot) * 100, 2), "holding_days": 2, "legs": 2, "strategy_type": "Bear Put Spread"})
-
-    elif strategy in ("straddle", "iron_condor", "butterfly", "calendar_spread"):
-        # Non-directional: profit from range-bound or volatility
-        for i in range(3, len(candles)):
-            curr = candles[i]
-            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
-            if i + 3 >= len(candles):
-                continue
-            # Measure recent volatility (ATR proxy) for strategy thresholds
-            _ = max(c["high"] - c["low"] for c in candles[i-3:i+1])  # ATR context
-            avg_price = curr["close"]
-            premium_collected = avg_price * 0.015  # simulate premium collection
-
-            exit_c = candles[i + 3]
-            actual_move = abs(exit_c["close"] - curr["close"])
-            _ = premium_collected * (2 if strategy == "straddle" else 1.5)  # breakeven ref
-
-            if strategy == "straddle":
-                pnl = (premium_collected * 2 - actual_move) * lot  # profit if move < premium
-            elif strategy == "iron_condor":
-                pnl = (premium_collected * 1.5 - max(actual_move - avg_price * 0.01, 0)) * lot
-            elif strategy == "butterfly":
-                center_dist = actual_move / avg_price * 100
-                pnl = (premium_collected - abs(center_dist) * avg_price * 0.005) * lot
-            else:  # calendar_spread
-                theta_decay = premium_collected * 0.3  # time decay benefit
-                pnl = (theta_decay - actual_move * 0.3) * lot
-
-            equity += pnl
-            legs = {"straddle": 2, "iron_condor": 4, "butterfly": 3, "calendar_spread": 2}
-            trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "NEUTRAL", "entry_price": round(avg_price, 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (premium_collected * lot) * 100, 2), "holding_days": 3, "legs": legs.get(strategy, 2), "strategy_type": strategy.replace("_", " ").title()})
-
-    else:
-        # Default: simple buy-and-hold-day simulation
-        for i in range(1, len(candles)):
-            curr = candles[i]
-            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
-            if i + 1 < len(candles):
-                exit_c = candles[i + 1]
-                pnl = (exit_c["close"] - curr["close"]) * lot
-                equity += pnl
-                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "LONG", "entry_price": round(curr["close"], 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "holding_days": 1, "legs": 1})
-
-    return trades, equity_curve
-
-
-# ── /fno/position-sizing ─────────────────────────────────────────────────────
-
-@fno_router.post("/fno/position-sizing")
-async def calculate_position_sizing(
-    user_budget: float = 100000,
-    option_premium: float = 100,
-    lot_size: int = 50,
-    sl_price: float | None = None,
-    entry_price: float | None = None,
-    max_risk_pct: float = 2.0,
-    atr14: float | None = None,
-    current_user: dict = Depends(get_current_user),
-):
-    """Calculate position sizing for a given trade setup (enhanced with ATR14)."""
-    _acct_risk = float(current_user.get("account_risk_pct", max_risk_pct))
-    result = compute_position_size(
-        user_budget=user_budget,
-        option_premium=option_premium,
-        lot_size=lot_size,
-        sl_price=sl_price,
-        entry_price=entry_price,
-        max_risk_per_trade_pct=max_risk_pct,
-        atr14=atr14,
-        account_risk_pct=_acct_risk,
-    )
-    return result
-
-
-# ── /fno/scripts/search ──────────────────────────────────────────────────────
-
-@fno_router.get("/fno/scripts/search", response_model=ScriptSearchResult)
-async def search_scripts(q: str = Query(default="")):
-    query = q.strip().upper()
-    suggestions = []
-    for row in FNO_CONTRACTS:
-        script = row["script"]
-        if not query or query in script:
-            suggestions.append(script)
-    suggestions = sorted(set(suggestions))[:30]
-    return ScriptSearchResult(query=query, suggestions=suggestions)
-
-
-# ── Backward-compatibility endpoints ─────────────────────────────────────────
-
-@fno_router.get("/fno/signal/{script}", response_model=FNOSignalResponse)
-async def get_single_fno_signal(
-    script: str, refresh_nonce: str | None = Query(default=None),
-):
-    import server as _srv
-
-    _ = refresh_nonce
-    contract = await _srv._resolve_contract_from_input(script)
-    try:
-        return await _srv._build_signal_for_contract(contract, _srv._utc_now_iso())
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@fno_router.get("/fno/signals/index", response_model=List[FNOSignalResponse])
-async def get_index_fno_signals(refresh_nonce: str | None = Query(default=None)):
-    import server as _srv
-
-    _ = refresh_nonce
-    refreshed_at = _srv._utc_now_iso()
-    nifty_projection, bank_projection = await asyncio.gather(
-        _srv._build_index_projection("NIFTY", refreshed_at),
-        _srv._build_index_projection("BANKNIFTY", refreshed_at),
-    )
-    return sorted(
-        [*nifty_projection.assured_signals, *bank_projection.assured_signals],
-        key=lambda row: row.confluence_score,
-        reverse=True,
-    )
-
-
-@fno_router.get("/fno/signals/potential", response_model=List[FNOSignalResponse])
-async def get_potential_index_signals(refresh_nonce: str | None = Query(default=None)):
-    _ = refresh_nonce
-    rows = await get_index_fno_signals(refresh_nonce=None)
-    if rows:
-        return rows[:6]
-    return rows
-
-
-
-# ===========================================================================
-# Batch 4: Sticky Card & Popup Event Endpoints
-# ===========================================================================
-
-@fno_router.get("/fno/events")
-async def get_popup_events(
-    limit: int = Query(default=50, ge=1, le=200),
-    user=Depends(get_owner_user),
-):
-    """Get unacknowledged popup events (most recent first)."""
-    import server as _srv
-    from services.sticky_card_engine import get_unacknowledged_events
-    return await get_unacknowledged_events(_srv.db, limit=limit)
-
-
-@fno_router.post("/events/acknowledge")
-async def acknowledge_popup_event(
-    event_id: str = Query(...),
-    user=Depends(get_owner_user),
-):
-    """Acknowledge (dismiss) a single popup event."""
-    import server as _srv
-    from services.sticky_card_engine import acknowledge_event
-    ok = await acknowledge_event(_srv.db, event_id)
-    return {"acknowledged": ok}
-
-
-@fno_router.post("/fno/events/acknowledge-all")
-async def acknowledge_all_popup_events(user=Depends(get_owner_user)):
-    """Acknowledge all pending popup events."""
-    import server as _srv
-    from services.sticky_card_engine import acknowledge_all_events
-    count = await acknowledge_all_events(_srv.db)
-    return {"acknowledged_count": count}
-
-
-@fno_router.get("/fno/sticky-cards")
-async def get_sticky_cards(
-    include_terminal: bool = Query(default=False),
-    user=Depends(get_owner_user),
-):
-    """Get all sticky cards (active only by default)."""
-    import server as _srv
-    from services.sticky_card_engine import get_all_cards
-    return await get_all_cards(_srv.db, include_terminal=include_terminal)
-
-
-@fno_router.post("/fno/sticky-cards/{signal_id}/cancel")
-async def cancel_sticky_card(
-    signal_id: str,
-    user=Depends(get_owner_user),
-):
-    """Cancel a sticky card (user-initiated)."""
-    import server as _srv
-    from services.sticky_card_engine import cancel_card
-    ok = await cancel_card(_srv.db, signal_id)
-    if not ok:
-        raise HTTPException(404, "Card not found or already in terminal state")
-    return {"cancelled": True, "signal_id": signal_id}
-
-
-@fno_router.post("/fno/sticky-cards/refresh")
-async def trigger_sticky_card_refresh(user=Depends(get_owner_user)):
-    """Manually trigger a refresh cycle for all active sticky cards."""
-    import server as _srv
-    from services.sticky_card_engine import refresh_sticky_cards
-    result = await refresh_sticky_cards(_srv.db)
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Signal History & Performance Tracking
-# ---------------------------------------------------------------------------
-
-@fno_router.get("/fno/signal-history")
-async def get_signal_history_endpoint(
-    limit: int = Query(default=50, ge=1, le=200),
-    skip: int = Query(default=0, ge=0),
-    user=Depends(get_owner_user),
-):
-    """Get paginated signal history (archived terminal cards with outcomes)."""
-    import server as _srv
-    from services.sticky_card_engine import get_signal_history
-    history = await get_signal_history(_srv.db, limit=limit, skip=skip)
-    return {"history": history, "count": len(history)}
-
-
-@fno_router.get("/fno/performance-stats")
-async def get_performance_stats_endpoint(user=Depends(get_owner_user)):
-    """Get aggregated performance statistics from signal history."""
-    import server as _srv
-    from services.sticky_card_engine import get_performance_stats
-    stats = await get_performance_stats(_srv.db)
-    return stats
-
-
-@fno_router.get("/fno/generation-timings")
-async def get_generation_timings(user=Depends(get_owner_user)):
-    """Get last F&O and Multibagger generation phase timings + history."""
-    import services.app_state as _app_state
-    # Fetch recent history from MongoDB (last 50 runs)
-    history = []
-    try:
-        cursor = _app_state.db.generation_perf_history.find(
-            {}, {"_id": 0}
-        ).sort("ts", -1).limit(50)
-        history = await cursor.to_list(50)
-    except Exception:
-        pass
-    return {
-        "fno": _app_state.LAST_FNO_PERF or {"message": "No F&O generation run yet"},
-        "multibagger": _app_state.LAST_MB_PERF or {"message": "No Multibagger generation run yet"},
-        "history": history,
-    }
-
-
-@fno_router.get("/fno/signal-log")
-async def get_signal_log_endpoint(
-    limit: int = Query(default=50, ge=1, le=200),
-    skip: int = Query(default=0, ge=0),
-    user=Depends(get_owner_user),
-):
-    """Get paginated signal generation log (all generated signals)."""
-    import server as _srv
-    from services.sticky_card_engine import get_signal_log
-    log = await get_signal_log(_srv.db, limit=limit, skip=skip)
-    return {"log": log, "count": len(log)}
-
-
-
 # ---------------------------------------------------------------------------
 # BBE (Budget Entry) Alerts: Real-time LTP monitoring against BBE zones
 # ---------------------------------------------------------------------------
@@ -1010,7 +596,6 @@ async def get_bbe_alerts(user=Depends(get_current_user)):
     import server as _srv
     from datetime import datetime, timedelta, timezone as tz
 
-    # Get signals from last 24h that have BBE set
     cutoff = datetime.now(tz.utc) - timedelta(hours=24)
     cursor = _srv.db.fno_signal_log.find(
         {
@@ -1024,7 +609,6 @@ async def get_bbe_alerts(user=Depends(get_current_user)):
     if not signals:
         return {"alerts": [], "count": 0, "checked_at": _srv._utc_now_iso()}
 
-    # Deduplicate by option_symbol (keep latest)
     seen = {}
     for s in signals:
         sym = s.get("option_symbol", "")
@@ -1032,7 +616,6 @@ async def get_bbe_alerts(user=Depends(get_current_user)):
             seen[sym] = s
     unique_signals = list(seen.values())
 
-    # Batch-fetch live LTP from Kite
     alerts = []
     try:
         from services.kite_client import fetch_kite_batch_option_quotes
@@ -1071,7 +654,6 @@ async def get_bbe_alerts(user=Depends(get_current_user)):
     except Exception as exc:
         logger.warning("BBE alert LTP fetch failed: %s", exc)
 
-    # Sort: NOW BUY signals first, then by proximity to BBE
     alerts.sort(key=lambda a: (not a["now_buy"], a["pct_from_bbe"]))
 
     return {
@@ -1080,123 +662,6 @@ async def get_bbe_alerts(user=Depends(get_current_user)):
         "now_buy_count": sum(1 for a in alerts if a["now_buy"]),
         "checked_at": _srv._utc_now_iso(),
     }
-
-
-# ---------------------------------------------------------------------------
-# IV Analytics: IV Cone + IV Term Structure
-# ---------------------------------------------------------------------------
-
-@fno_router.get("/fno/iv-cone/{symbol}")
-async def get_iv_cone(
-    symbol: str,
-    lookback_days: int = Query(default=365, ge=30, le=730),
-    user=Depends(get_owner_user),
-):
-    """Get IV Cone data with percentile bands for a symbol."""
-    import server as _srv
-    from services.iv_analytics import compute_iv_cone
-    return await compute_iv_cone(_srv.db, symbol.upper(), lookback_days)
-
-
-@fno_router.get("/fno/iv-term-structure/{symbol}")
-async def get_iv_term_structure_endpoint(
-    symbol: str,
-    user=Depends(get_owner_user),
-):
-    """Get latest IV term structure for a symbol."""
-    import server as _srv
-    from services.iv_analytics import get_iv_term_structure
-    return await get_iv_term_structure(_srv.db, symbol.upper())
-
-
-@fno_router.post("/fno/iv-collect-now")
-async def collect_iv_now(user=Depends(get_owner_user)):
-    """Manual one-shot IV snapshot collection for NIFTY and BANKNIFTY.
-    Captures current ATM IV without requiring full signal generation."""
-    import server as _srv
-    from services.kite_client import fetch_kite_batch_quotes, fetch_kite_batch_option_quotes
-    from services.iv_history import capture_atm_iv
-    from services.iv_analytics import capture_iv_term_structure
-    import services.app_state as _state
-
-    results = {}
-    for symbol in ["NIFTY", "BANKNIFTY"]:
-        try:
-            step = 50 if symbol == "NIFTY" else 100
-            # Get spot
-            idx_quotes = await fetch_kite_batch_quotes(
-                ["NIFTY 50" if symbol == "NIFTY" else "NIFTY BANK"], exchange="NSE"
-            )
-            spot = 0
-            for v in idx_quotes.values():
-                spot = v.get("ltp", 0)
-            if spot <= 0:
-                results[symbol] = {"captured": False, "reason": "spot_unavailable"}
-                continue
-
-            # Find nearest expiry
-            pipeline = [
-                {"$match": {"underlying": symbol}},
-                {"$group": {"_id": "$expiry"}},
-                {"$sort": {"_id": 1}},
-                {"$limit": 3},
-            ]
-            expiry_docs = await _state.db.kite_option_master.aggregate(pipeline).to_list(3)
-            if not expiry_docs:
-                results[symbol] = {"captured": False, "reason": "no_option_master"}
-                continue
-
-            nearest_expiry = expiry_docs[0]["_id"]
-            atm_strike = round(spot / step) * step
-
-            # Fetch ATM CE and PE
-            option_rows = await _state.db.kite_option_master.find(
-                {"underlying": symbol, "expiry": nearest_expiry, "strike": float(atm_strike)},
-                {"_id": 0, "tradingsymbol": 1, "option_type": 1},
-            ).to_list(10)
-
-            if option_rows:
-                ts_list = [r["tradingsymbol"] for r in option_rows]
-                quotes = await fetch_kite_batch_option_quotes(ts_list)
-                atm_iv = None
-                for ts, q in quotes.items():
-                    iv = q.get("iv")
-                    if iv and iv > 0:
-                        atm_iv = iv / 100 if iv > 1 else iv  # normalize
-                        break
-
-                if atm_iv and atm_iv > 0:
-                    await capture_atm_iv(_state.db, symbol, atm_iv)
-
-                    # Also capture term structure for all available expiries
-                    expiry_iv_map = {}
-                    for exp_doc in expiry_docs:
-                        exp = exp_doc["_id"]
-                        exp_atm_rows = await _state.db.kite_option_master.find(
-                            {"underlying": symbol, "expiry": exp, "strike": float(atm_strike)},
-                            {"_id": 0, "tradingsymbol": 1},
-                        ).to_list(5)
-                        if exp_atm_rows:
-                            exp_ts = [r["tradingsymbol"] for r in exp_atm_rows]
-                            exp_quotes = await fetch_kite_batch_option_quotes(exp_ts)
-                            for q in exp_quotes.values():
-                                if q.get("iv") and q["iv"] > 0:
-                                    expiry_iv_map[exp] = q["iv"] / 100 if q["iv"] > 1 else q["iv"]
-                                    break
-
-                    if expiry_iv_map:
-                        await capture_iv_term_structure(_state.db, symbol, expiry_iv_map)
-
-                    results[symbol] = {"captured": True, "atm_iv": round(atm_iv * 100, 2), "spot": spot, "strike": atm_strike, "expiry": nearest_expiry, "term_expiries": len(expiry_iv_map)}
-                else:
-                    results[symbol] = {"captured": False, "reason": "no_iv_in_quotes"}
-            else:
-                results[symbol] = {"captured": False, "reason": "no_atm_options"}
-        except Exception as exc:
-            logger.warning("IV collect-now failed for %s: %s", symbol, exc)
-            results[symbol] = {"captured": False, "reason": str(exc)[:100]}
-
-    return {"results": results}
 
 
 # ---------------------------------------------------------------------------
@@ -1224,3 +689,4 @@ async def get_multi_timeframe(
         }
 
     return compute_detailed_multiframe(hist_df, symbol.upper())
+
