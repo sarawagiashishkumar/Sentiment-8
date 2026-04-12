@@ -184,16 +184,17 @@ class MultibaggerCandidate(BaseModel):
             "debt_to_equity", "current_ratio", "gross_margin",
             "pct_below_ath", "roic_vs_wacc", "fcf_yield_val", "eps_cagr_3y",
         }
-        if isinstance(values, dict):
-            for field in _float_fields:
-                v = values.get(field)
-                if v is not None:
-                    try:
-                        f = float(v)
-                        if math.isnan(f) or math.isinf(f):
-                            values[field] = None
-                    except (TypeError, ValueError):
-                        values[field] = None
+        if not isinstance(values, dict):
+            return values
+        for field in _float_fields:
+            v = values.get(field)
+            if v is None:
+                continue
+            try:
+                f = float(v)
+                values[field] = None if (math.isnan(f) or math.isinf(f)) else f
+            except (TypeError, ValueError):
+                values[field] = None
         return values
 
 

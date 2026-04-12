@@ -63,7 +63,14 @@ export function useAlertEngine({ customPositions, alertSoundEnabled, authHeaders
     if (ctx.state === "suspended") await ctx.resume();
   }, []);
 
-  // Alert monitor
+  // Alert monitor — uses refs for callbacks to avoid dep churn
+  const addNotifRef = useRef(addNotification);
+  const sendPushRef = useRef(sendPush);
+  const authRef = useRef(authHeaders);
+  addNotifRef.current = addNotification;
+  sendPushRef.current = sendPush;
+  authRef.current = authHeaders;
+
   useEffect(() => {
     if (!Array.isArray(customPositions) || customPositions.length === 0) return;
     if (typeof window === "undefined" || document.hidden) return;
@@ -74,8 +81,8 @@ export function useAlertEngine({ customPositions, alertSoundEnabled, authHeaders
       playAlertSound("urgent");
       freshUrgent.forEach(p => {
         urgentBuzzedRef.current.add(p.id);
-        addNotification("critical", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
-        sendPush(`CRITICAL: ${p.alert.replace(/_/g, " ")}`, `${p.symbol || "Position"}: ${p.alert}`, "critical");
+        addNotifRef.current("critical", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
+        sendPushRef.current(`CRITICAL: ${p.alert.replace(/_/g, " ")}`, `${p.symbol || "Position"}: ${p.alert}`, "critical");
       });
     }
 
@@ -84,7 +91,7 @@ export function useAlertEngine({ customPositions, alertSoundEnabled, authHeaders
       playAlertSound("target");
       freshTargets.forEach(p => {
         targetBuzzedRef.current.add(`${p.id}_${p.signal_state}`);
-        addNotification("success", p.signal_state.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.signal_state}`, { symbol: p.symbol });
+        addNotifRef.current("success", p.signal_state.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.signal_state}`, { symbol: p.symbol });
       });
     }
 
@@ -93,8 +100,8 @@ export function useAlertEngine({ customPositions, alertSoundEnabled, authHeaders
       playAlertSound("warning");
       freshWarnings.forEach(p => {
         warningBuzzedRef.current.add(p.id);
-        addNotification("warning", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
-        sendPush(`WARNING: ${p.alert.replace(/_/g, " ")}`, `${p.symbol || "Position"}: ${p.alert}`, "warning");
+        addNotifRef.current("warning", p.alert.replace(/_/g, " "), `${p.symbol || "Position"}: ${p.alert}`, { symbol: p.symbol });
+        sendPushRef.current(`WARNING: ${p.alert.replace(/_/g, " ")}`, `${p.symbol || "Position"}: ${p.alert}`, "warning");
       });
     }
 
@@ -105,10 +112,9 @@ export function useAlertEngine({ customPositions, alertSoundEnabled, authHeaders
         ...freshTargets.map(p => ({ category: "success", title: p.signal_state.replace(/_/g, " "), message: `${p.symbol || "Position"}: ${p.signal_state}`, symbol: p.symbol })),
         ...freshWarnings.map(p => ({ category: "warning", title: p.alert.replace(/_/g, " "), message: `${p.symbol || "Position"}: ${p.alert}`, symbol: p.symbol })),
       ];
-      axios.post(`${API}/notifications`, { notifications: toSave }, { headers: authHeaders }).catch(() => {});
+      axios.post(`${API}/notifications`, { notifications: toSave }, { headers: authRef.current }).catch(() => {});
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customPositions, alertSoundEnabled]);
+  }, [customPositions, alertSoundEnabled, playAlertSound]);
 
   return { playAlertSound, enableAlertSound };
 }

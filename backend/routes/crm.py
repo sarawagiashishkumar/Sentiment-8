@@ -72,98 +72,101 @@ async def admin_mark_read(
     return {"updated": result.modified_count > 0}
 
 
+def _validate_crm_message(msg, admin_user):
+    """Validate CRM message payload and admin access."""
+    if admin_user.get("role") not in ("owner", "sub_admin"):
+        raise HTTPException(403, "Admin only")
+    if not msg.subject.strip() or not msg.body.strip():
+        raise HTTPException(400, "Subject and body required")
+
+
+async def _send_targeted_message(msg, admin_user, now):
+    """Send message to a specific user."""
+    target = await _state.db.app_users.find_one({"user_key": msg.to_user_key}, {"_id": 0, "username": 1})
+    if not target:
+        raise HTTPException(404, "Target user not found")
+
+    doc = {
+        "message_id": str(uuid.uuid4()),
+        "from_user_key": admin_user["user_key"],
+        "from_username": admin_user.get("username", "Admin"),
+        "to_user_key": msg.to_user_key,
+        "to": "user",
+        "subject": msg.subject.strip(),
+        "body": msg.body.strip(),
+        "priority": msg.priority,
+        "type": "admin_message",
+        "status": "unread",
+        "dismissed": False,
+        "ts": now.isoformat(),
+        "ts_epoch": now.timestamp(),
+    }
+    await _state.db.crm_messages.insert_one(doc)
+    await _state.db.user_notifications.insert_one({
+        "user_key": msg.to_user_key,
+        "category": "info" if msg.priority == "normal" else "critical",
+        "title": f"Admin: {msg.subject.strip()}",
+        "message": msg.body.strip()[:200],
+        "ts": now.timestamp(),
+        "read": False,
+    })
+    return {"sent": True, "to": target.get("username"), "message_id": doc["message_id"]}
+
+
+async def _broadcast_message(msg, admin_user, now):
+    """Broadcast message to all non-admin users."""
+    users = await _state.db.app_users.find(
+        {"role": {"$nin": ["owner", "sub_admin"]}},
+        {"_id": 0, "user_key": 1, "username": 1},
+    ).to_list(1000)
+
+    broadcast_id = str(uuid.uuid4())
+    crm_docs = []
+    notif_docs = []
+    for user in users:
+        crm_docs.append({
+            "message_id": str(uuid.uuid4()),
+            "broadcast_id": broadcast_id,
+            "from_user_key": admin_user["user_key"],
+            "from_username": admin_user.get("username", "Admin"),
+            "to_user_key": user["user_key"],
+            "to": "user",
+            "subject": msg.subject.strip(),
+            "body": msg.body.strip(),
+            "priority": msg.priority,
+            "type": "broadcast",
+            "status": "unread",
+            "dismissed": False,
+            "ts": now.isoformat(),
+            "ts_epoch": now.timestamp(),
+        })
+        notif_docs.append({
+            "user_key": user["user_key"],
+            "category": "info" if msg.priority == "normal" else "critical",
+            "title": f"Announcement: {msg.subject.strip()}",
+            "message": msg.body.strip()[:200],
+            "ts": now.timestamp(),
+            "read": False,
+        })
+
+    if crm_docs:
+        await _state.db.crm_messages.insert_many(crm_docs)
+    if notif_docs:
+        await _state.db.user_notifications.insert_many(notif_docs)
+    return {"sent": True, "broadcast": True, "recipients": len(crm_docs), "broadcast_id": broadcast_id}
+
+
 @crm_router.post("/admin/crm/send")
 async def admin_send_message(
     msg: CrmMessageSend,
     admin_user: dict = Depends(get_current_user),
 ):
     """Admin sends a message to a specific user or broadcasts to all users."""
-    if admin_user.get("role") not in ("owner", "sub_admin"):
-        raise HTTPException(403, "Admin only")
-
-    if not msg.subject.strip() or not msg.body.strip():
-        raise HTTPException(400, "Subject and body required")
-
+    _validate_crm_message(msg, admin_user)
     now = datetime.now(timezone.utc)
-    admin_username = admin_user.get("username", "Admin")
-
     if msg.to_user_key:
-        # Target single user
-        target = await _state.db.app_users.find_one({"user_key": msg.to_user_key}, {"_id": 0, "username": 1})
-        if not target:
-            raise HTTPException(404, "Target user not found")
-
-        doc = {
-            "message_id": str(uuid.uuid4()),
-            "from_user_key": admin_user["user_key"],
-            "from_username": admin_username,
-            "to_user_key": msg.to_user_key,
-            "to": "user",
-            "subject": msg.subject.strip(),
-            "body": msg.body.strip(),
-            "priority": msg.priority,
-            "type": "admin_message",
-            "status": "unread",
-            "dismissed": False,
-            "ts": now.isoformat(),
-            "ts_epoch": now.timestamp(),
-        }
-        await _state.db.crm_messages.insert_one(doc)
-
-        # Also push as user notification
-        await _state.db.user_notifications.insert_one({
-            "user_key": msg.to_user_key,
-            "category": "info" if msg.priority == "normal" else "critical",
-            "title": f"Admin: {msg.subject.strip()}",
-            "message": msg.body.strip()[:200],
-            "ts": now.timestamp(),
-            "read": False,
-        })
-
-        return {"sent": True, "to": target.get("username"), "message_id": doc["message_id"]}
-    else:
-        # Broadcast to all non-admin users
-        users = await _state.db.app_users.find(
-            {"role": {"$nin": ["owner", "sub_admin"]}},
-            {"_id": 0, "user_key": 1, "username": 1},
-        ).to_list(1000)
-
-        broadcast_id = str(uuid.uuid4())
-        docs = []
-        notif_docs = []
-        for user in users:
-            msg_id = str(uuid.uuid4())
-            docs.append({
-                "message_id": msg_id,
-                "broadcast_id": broadcast_id,
-                "from_user_key": admin_user["user_key"],
-                "from_username": admin_username,
-                "to_user_key": user["user_key"],
-                "to": "user",
-                "subject": msg.subject.strip(),
-                "body": msg.body.strip(),
-                "priority": msg.priority,
-                "type": "broadcast",
-                "status": "unread",
-                "dismissed": False,
-                "ts": now.isoformat(),
-                "ts_epoch": now.timestamp(),
-            })
-            notif_docs.append({
-                "user_key": user["user_key"],
-                "category": "info" if msg.priority == "normal" else "critical",
-                "title": f"Announcement: {msg.subject.strip()}",
-                "message": msg.body.strip()[:200],
-                "ts": now.timestamp(),
-                "read": False,
-            })
-
-        if docs:
-            await _state.db.crm_messages.insert_many(docs)
-        if notif_docs:
-            await _state.db.user_notifications.insert_many(notif_docs)
-
-        return {"sent": True, "broadcast": True, "recipients": len(docs), "broadcast_id": broadcast_id}
+        return await _send_targeted_message(msg, admin_user, now)
+    return await _broadcast_message(msg, admin_user, now)
 
 
 @crm_router.get("/admin/crm/sent")
