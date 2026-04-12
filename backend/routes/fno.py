@@ -142,6 +142,10 @@ async def generate_fno_signals(
     _ctx_account_risk_pct.set(_user_risk_pct)
 
     async def _stream_generate() -> AsyncGenerator[str, None]:
+        import time as _time
+        _perf = {}
+        _gen_start = _time.monotonic()
+
         _now_ist = datetime.now(_srv.IST)
         _is_market_hrs = (
             _now_ist.weekday() < 5
@@ -152,6 +156,7 @@ async def generate_fno_signals(
             yield _ndjson_line({"type": "progress", "phase": "market_hours", "message": "Market closed — using last available data"})
 
         # ── Phase 1: NIFTY projection (with inline keepalive) ──────────────
+        _t0 = _time.monotonic()
         yield _ndjson_line({"type": "progress", "phase": "nifty", "message": "Computing NIFTY projection..."})
         nifty_task = asyncio.ensure_future(_build_index_phase("NIFTY", refreshed_at, _srv))
         while not nifty_task.done():
@@ -160,7 +165,8 @@ async def generate_fno_signals(
             except asyncio.TimeoutError:
                 yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         nifty_projection = nifty_task.result()
-        yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals"})
+        _perf["nifty_ms"] = round((_time.monotonic() - _t0) * 1000)
+        yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals ({_perf['nifty_ms']}ms)"})
 
         # Send partial NIFTY results immediately so frontend can display them
         nifty_partial = {
@@ -170,6 +176,7 @@ async def generate_fno_signals(
         yield _ndjson_line({"type": "partial", "phase": "nifty", "data": nifty_partial})
 
         # ── Phase 2: BANKNIFTY projection (with inline keepalive) ──────────
+        _t0 = _time.monotonic()
         yield _ndjson_line({"type": "progress", "phase": "banknifty", "message": "Computing BANKNIFTY projection..."})
         bn_task = asyncio.ensure_future(_build_index_phase("BANKNIFTY", refreshed_at, _srv))
         while not bn_task.done():
@@ -178,7 +185,8 @@ async def generate_fno_signals(
             except asyncio.TimeoutError:
                 yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         banknifty_projection = bn_task.result()
-        yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals"})
+        _perf["banknifty_ms"] = round((_time.monotonic() - _t0) * 1000)
+        yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals ({_perf['banknifty_ms']}ms)"})
 
         # Send partial BANKNIFTY results
         banknifty_partial = {
@@ -188,6 +196,7 @@ async def generate_fno_signals(
         yield _ndjson_line({"type": "partial", "phase": "banknifty", "data": banknifty_partial})
 
         # ── Phase 3: Stock F&O signals (with inline keepalive) ─────────────
+        _t0 = _time.monotonic()
         yield _ndjson_line({"type": "progress", "phase": "stocks", "message": "Scanning stock F&O universe..."})
         stock_task = asyncio.ensure_future(_build_stock_phase(refreshed_at, _srv))
         while not stock_task.done():
@@ -196,7 +205,8 @@ async def generate_fno_signals(
             except asyncio.TimeoutError:
                 yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         stock_signals = stock_task.result()
-        yield _ndjson_line({"type": "progress", "phase": "stocks_done", "message": f"Stocks: {len(stock_signals)} signals"})
+        _perf["stocks_ms"] = round((_time.monotonic() - _t0) * 1000)
+        yield _ndjson_line({"type": "progress", "phase": "stocks_done", "message": f"Stocks: {len(stock_signals)} signals ({_perf['stocks_ms']}ms)"})
 
         # ── Phase 4: Custom signal (if requested) ────────────────────────
         custom_signal = None
@@ -209,6 +219,7 @@ async def generate_fno_signals(
                 yield _ndjson_line({"type": "progress", "phase": "custom_error", "message": f"Custom signal failed: {exc}"})
 
         # ── Phase 5: Assembly ─────────────────────────────────────────────
+        _t0 = _time.monotonic()
         yield _ndjson_line({"type": "progress", "phase": "assembly", "message": "Assembling final results..."})
 
         potential_signals = [*nifty_projection.assured_signals, *banknifty_projection.assured_signals]
@@ -258,6 +269,14 @@ async def generate_fno_signals(
         )
 
         yield _ndjson_line({"type": "complete", "data": json.loads(response.model_dump_json())})
+
+        # ── Store perf timings ────────────────────────────────────────────
+        _perf["assembly_ms"] = round((_time.monotonic() - _t0) * 1000)
+        _perf["total_ms"] = round((_time.monotonic() - _gen_start) * 1000)
+        _perf["ts"] = refreshed_at
+        import services.app_state as _app_state
+        _app_state.LAST_FNO_PERF = _perf
+        logger.info("FNO generation perf: %s", _perf)
 
         # ── Auto-capture: log all generated signals to signal_log ──
         try:
@@ -729,6 +748,16 @@ async def get_performance_stats_endpoint(user=Depends(get_owner_user)):
     return stats
 
 
+@fno_router.get("/fno/generation-timings")
+async def get_generation_timings(user=Depends(get_owner_user)):
+    """Get last F&O and Multibagger generation phase timings for performance monitoring."""
+    import services.app_state as _app_state
+    return {
+        "fno": _app_state.LAST_FNO_PERF or {"message": "No F&O generation run yet"},
+        "multibagger": _app_state.LAST_MB_PERF or {"message": "No Multibagger generation run yet"},
+    }
+
+
 @fno_router.get("/fno/signal-log")
 async def get_signal_log_endpoint(
     limit: int = Query(default=50, ge=1, le=200),
@@ -855,6 +884,96 @@ async def get_iv_term_structure_endpoint(
     import server as _srv
     from services.iv_analytics import get_iv_term_structure
     return await get_iv_term_structure(_srv.db, symbol.upper())
+
+
+@fno_router.post("/fno/iv-collect-now")
+async def collect_iv_now(user=Depends(get_owner_user)):
+    """Manual one-shot IV snapshot collection for NIFTY and BANKNIFTY.
+    Captures current ATM IV without requiring full signal generation."""
+    import server as _srv
+    from services.kite_client import fetch_kite_batch_quotes, fetch_kite_batch_option_quotes
+    from services.iv_history import capture_atm_iv
+    from services.iv_analytics import capture_iv_term_structure
+    import services.app_state as _state
+
+    results = {}
+    for symbol in ["NIFTY", "BANKNIFTY"]:
+        try:
+            step = 50 if symbol == "NIFTY" else 100
+            # Get spot
+            idx_quotes = await fetch_kite_batch_quotes(
+                ["NIFTY 50" if symbol == "NIFTY" else "NIFTY BANK"], exchange="NSE"
+            )
+            spot = 0
+            for v in idx_quotes.values():
+                spot = v.get("ltp", 0)
+            if spot <= 0:
+                results[symbol] = {"captured": False, "reason": "spot_unavailable"}
+                continue
+
+            # Find nearest expiry
+            pipeline = [
+                {"$match": {"underlying": symbol}},
+                {"$group": {"_id": "$expiry"}},
+                {"$sort": {"_id": 1}},
+                {"$limit": 3},
+            ]
+            expiry_docs = await _state.db.kite_option_master.aggregate(pipeline).to_list(3)
+            if not expiry_docs:
+                results[symbol] = {"captured": False, "reason": "no_option_master"}
+                continue
+
+            nearest_expiry = expiry_docs[0]["_id"]
+            atm_strike = round(spot / step) * step
+
+            # Fetch ATM CE and PE
+            option_rows = await _state.db.kite_option_master.find(
+                {"underlying": symbol, "expiry": nearest_expiry, "strike": float(atm_strike)},
+                {"_id": 0, "tradingsymbol": 1, "option_type": 1},
+            ).to_list(10)
+
+            if option_rows:
+                ts_list = [r["tradingsymbol"] for r in option_rows]
+                quotes = await fetch_kite_batch_option_quotes(ts_list)
+                atm_iv = None
+                for ts, q in quotes.items():
+                    iv = q.get("iv")
+                    if iv and iv > 0:
+                        atm_iv = iv / 100 if iv > 1 else iv  # normalize
+                        break
+
+                if atm_iv and atm_iv > 0:
+                    await capture_atm_iv(_state.db, symbol, atm_iv)
+
+                    # Also capture term structure for all available expiries
+                    expiry_iv_map = {}
+                    for exp_doc in expiry_docs:
+                        exp = exp_doc["_id"]
+                        exp_atm_rows = await _state.db.kite_option_master.find(
+                            {"underlying": symbol, "expiry": exp, "strike": float(atm_strike)},
+                            {"_id": 0, "tradingsymbol": 1},
+                        ).to_list(5)
+                        if exp_atm_rows:
+                            exp_ts = [r["tradingsymbol"] for r in exp_atm_rows]
+                            exp_quotes = await fetch_kite_batch_option_quotes(exp_ts)
+                            for q in exp_quotes.values():
+                                if q.get("iv") and q["iv"] > 0:
+                                    expiry_iv_map[exp] = q["iv"] / 100 if q["iv"] > 1 else q["iv"]
+                                    break
+
+                    if expiry_iv_map:
+                        await capture_iv_term_structure(_state.db, symbol, expiry_iv_map)
+
+                    results[symbol] = {"captured": True, "atm_iv": round(atm_iv * 100, 2), "spot": spot, "strike": atm_strike, "expiry": nearest_expiry, "term_expiries": len(expiry_iv_map)}
+                else:
+                    results[symbol] = {"captured": False, "reason": "no_iv_in_quotes"}
+            else:
+                results[symbol] = {"captured": False, "reason": "no_atm_options"}
+        except Exception as exc:
+            logger.warning("IV collect-now failed for %s: %s", symbol, exc)
+            results[symbol] = {"captured": False, "reason": str(exc)[:100]}
+
+    return {"results": results}
 
 
 # ---------------------------------------------------------------------------

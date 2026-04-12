@@ -22,6 +22,8 @@ export function FNOIVAnalytics({ authHeaders }) {
   const [coneData, setConeData] = useState(null);
   const [termData, setTermData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [collecting, setCollecting] = useState(false);
+  const [collectResult, setCollectResult] = useState(null);
   const [activeView, setActiveView] = useState("cone");
 
   const fetchIVData = useCallback(async () => {
@@ -37,6 +39,18 @@ export function FNOIVAnalytics({ authHeaders }) {
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, [authHeaders, symbol]);
+
+  const collectIVNow = useCallback(async () => {
+    setCollecting(true);
+    setCollectResult(null);
+    try {
+      const res = await axios.post(`${API}/fno/iv-collect-now`, {}, { headers: authHeaders });
+      setCollectResult(res.data.results);
+      // Refresh IV data after collection
+      await fetchIVData();
+    } catch { setCollectResult({ error: "Collection failed. Ensure Market Data API is connected." }); }
+    finally { setCollecting(false); }
+  }, [authHeaders, fetchIVData]);
 
   const hasConeData = coneData && coneData.data_points > 0;
   const hasTermData = termData && termData.data_points > 0;
@@ -74,6 +88,14 @@ export function FNOIVAnalytics({ authHeaders }) {
           <RefreshCw size={13} className={loading ? "animate-spin mr-1" : "mr-1"} />
           {loading ? "Loading..." : "Fetch IV"}
         </Button>
+        <Button
+          onClick={collectIVNow} disabled={collecting}
+          className="h-8 bg-violet-600 text-white hover:bg-violet-500 text-xs px-3"
+          data-testid="iv-collect-now-btn"
+        >
+          <TrendingUp size={13} className="mr-1" />
+          {collecting ? "Collecting..." : "Collect IV Now"}
+        </Button>
         <div className="flex rounded-md border border-slate-700 overflow-hidden ml-2">
           {[
             { key: "cone", label: "IV Cone" },
@@ -100,6 +122,20 @@ export function FNOIVAnalytics({ authHeaders }) {
         <div className="rounded-lg border border-amber-600/30 bg-amber-950/20 p-2.5 text-xs text-amber-300" data-testid="iv-data-status">
           Collecting IV data: {coneData.data_points}/30 days minimum. Percentile bands become more reliable with 30+ days of history. Data accumulates as signals are generated.
         </div>
+      )}
+
+      {/* Collect IV result */}
+      {collectResult && !collectResult.error && (
+        <div className="flex flex-wrap gap-2" data-testid="iv-collect-result">
+          {Object.entries(collectResult).map(([sym, r]) => (
+            <span key={sym} className={`rounded px-2 py-1 text-[10px] font-mono ${r.captured ? "bg-emerald-900/40 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>
+              {sym}: {r.captured ? `IV ${r.atm_iv}% (${r.term_expiries} expiries)` : r.reason}
+            </span>
+          ))}
+        </div>
+      )}
+      {collectResult?.error && (
+        <p className="text-xs text-rose-400">{collectResult.error}</p>
       )}
 
       {/* IV Cone View */}

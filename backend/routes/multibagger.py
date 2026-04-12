@@ -43,6 +43,8 @@ async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
     refreshed_at = _srv._utc_now_iso()
 
     async def _stream() -> AsyncGenerator[str, None]:
+        import time as _time
+        _gen_start = _time.monotonic()
         yield _ndjson_line({"type": "progress", "phase": "start", "message": "Scanning multibagger universe..."})
 
         # Run with inline keepalive to prevent proxy timeout
@@ -54,8 +56,9 @@ async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
                 yield _ndjson_line({"type": "keepalive", "ts": _srv._utc_now_iso()})
         candidates = task.result()
         potential_count = len([r for r in candidates if r.is_potential_multibagger])
+        _scan_ms = round((_time.monotonic() - _gen_start) * 1000)
 
-        yield _ndjson_line({"type": "progress", "phase": "scored", "message": f"Scored {len(candidates)} candidates, {potential_count} potential"})
+        yield _ndjson_line({"type": "progress", "phase": "scored", "message": f"Scored {len(candidates)} candidates, {potential_count} potential ({_scan_ms}ms)"})
 
         response = MultibaggerGenerateResponse(
             cost_charged=charged,
@@ -65,6 +68,12 @@ async def generate_multibaggers(current_user: dict = Depends(get_current_user)):
             potential_count=potential_count,
         )
         yield _ndjson_line({"type": "complete", "data": json.loads(response.model_dump_json())})
+
+        # Store perf timings
+        _total_ms = round((_time.monotonic() - _gen_start) * 1000)
+        import services.app_state as _app_state
+        _app_state.LAST_MB_PERF = {"scan_ms": _scan_ms, "total_ms": _total_ms, "candidates": len(candidates), "potential": potential_count, "ts": refreshed_at}
+        logger.info("Multibagger generation perf: scan=%dms total=%dms", _scan_ms, _total_ms)
 
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
 

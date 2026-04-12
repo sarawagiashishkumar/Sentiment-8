@@ -28,6 +28,10 @@ SECTOR_MOMENTUM_CACHE_TTL_SECONDS = 1800  # 30 minutes
 # ── Script Master Tracking ────────────────────────────────────────────────────
 SCRIPT_MASTER_LAST_SYNC_DATE = None
 
+# ── Performance Tracking ──────────────────────────────────────────────────────
+LAST_FNO_PERF = {}   # Last F&O generation phase timings
+LAST_MB_PERF = {}    # Last Multibagger generation timings
+
 
 def configure(database, api_key=None, api_secret=None, redirect_url=None, access_token=None):
     """Called by server.py on startup to inject shared state."""
