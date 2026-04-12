@@ -148,10 +148,10 @@ async def build_fno_signal(
         else:
             if contract.option_type == "CE" and option_ltp < underlying_ltp * 0.04:
                 direction = "BULLISH"
-                trigger_factors.append("VeryC heapCE")
+                trigger_factors.append("VeryCheapCE")
             elif contract.option_type == "PE" and option_ltp < underlying_ltp * 0.04:
                 direction = "BEARISH"
-                trigger_factors.append("VeryC heapPE")
+                trigger_factors.append("VeryCheapPE")
             else:
                 direction = "NEUTRAL"
     else:
@@ -239,8 +239,19 @@ async def build_fno_signal(
         vix=_vix_curr, adx=_adx_curr, rsi=_rsi_curr
     )
     _regime = _regime_obj.get("regime", "NORMAL_VOL_TREND")
-    # Load strategy stats from DB to enforce ≥75% win rate / ≥0.40R expectancy
-    _strategy_stats_data = await _get_strategy_stats_for_selection()
+    # ── Parallel fetch: strategy stats + macro events (independent operations) ──
+    _phase_t0 = _time.monotonic()
+    _strategy_stats_data, _active_events = await asyncio.gather(
+        _get_strategy_stats_for_selection(),
+        _get_active_macro_events(),
+        return_exceptions=True,
+    )
+    if isinstance(_strategy_stats_data, BaseException):
+        _strategy_stats_data = None
+    if isinstance(_active_events, BaseException):
+        _active_events = []
+    _phase_timings["parallel_fetch_strategy_macro_ms"] = round((_time.monotonic() - _phase_t0) * 1000, 1)
+
     _selected_strategy = select_strategy_for_signal(
         regime=_regime,
         direction=direction,
@@ -273,13 +284,12 @@ async def build_fno_signal(
         trigger_factors.append(f"Strategy:{_strategy_id}")
         trigger_factors.append(f"Regime:{_regime}")
 
-    # ── Batch 4: Macro Context ────────────────────────────────────────────
+    # ── Batch 4: Macro Context (uses pre-fetched _active_events) ─────────
     _sector_str = fundamental.get("sector") if fundamental else None
     _macro_ctx: dict = {}
     try:
-        _active_events = await _get_active_macro_events()
         _macro_ctx = compute_macro_context(
-            active_events=_active_events,
+            active_events=_active_events if isinstance(_active_events, list) else [],
             vix=_vix_curr,
             adx=_adx_curr,
             rsi=_rsi_curr,
@@ -599,7 +609,7 @@ async def build_fno_signal(
     _bbe_mae_target = None
     try:
         from services.mfe_mae_engine import fetch_mfe_library
-        _dte_band = "short" if (contract.expiry - datetime.now(IST).date()).days <= 3 else "medium"
+        _dte_band = "short" if _dte_for_mfe <= 3 else "medium"
         _mfe_lib = await fetch_mfe_library(
             db, contract.underlying, "S3_SUPERTREND", _dte_band, "medium", max_age_hours=72
         )

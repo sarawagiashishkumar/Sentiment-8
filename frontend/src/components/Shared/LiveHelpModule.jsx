@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MessageCircle, Phone, PhoneOff, Send, X, Bug, Minimize2, Maximize2 } from "lucide-react";
+import { MessageCircle, Phone, PhoneOff, Send, X, Bug, Minimize2, Maximize2, Monitor, MonitorOff } from "lucide-react";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -16,12 +16,15 @@ export function LiveHelpModule({ authHeaders, me }) {
   const [connected, setConnected] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
+  const [screenSharing, setScreenSharing] = useState(false);
   const [sessionId] = useState(() => `help-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
 
   const wsRef = useRef(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const screenStreamRef = useRef(null);
   const remoteAudioRef = useRef(null);
+  const remoteVideoRef = useRef(null);
   const chatEndRef = useRef(null);
   const iceServersRef = useRef([]);
 
@@ -144,8 +147,10 @@ export function LiveHelpModule({ authHeaders, me }) {
       }
     };
     pc.ontrack = (e) => {
-      if (remoteAudioRef.current && e.streams[0]) {
+      if (e.track.kind === "audio" && remoteAudioRef.current && e.streams[0]) {
         remoteAudioRef.current.srcObject = e.streams[0];
+      } else if (e.track.kind === "video" && remoteVideoRef.current && e.streams[0]) {
+        remoteVideoRef.current.srcObject = e.streams[0];
       }
     };
     pcRef.current = pc;
@@ -175,6 +180,45 @@ export function LiveHelpModule({ authHeaders, me }) {
     wsRef.current?.send(JSON.stringify({ type: "voice-end" }));
     setVoiceActive(false);
     setMode("text");
+  };
+
+  // ── Screen Sharing ──────────────────────────────────────────────────
+  const startScreenShare = async () => {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: "always" }, audio: false });
+      screenStreamRef.current = screenStream;
+
+      let pc = pcRef.current;
+      if (!pc) {
+        pc = createPeerConnection();
+      }
+
+      screenStream.getTracks().forEach(t => {
+        pc.addTrack(t, screenStream);
+        t.onended = () => stopScreenShare(); // Handle browser stop button
+      });
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      wsRef.current?.send(JSON.stringify({ type: "offer", sdp: pc.localDescription.toJSON() }));
+      wsRef.current?.send(JSON.stringify({ type: "screen-share-start" }));
+      setScreenSharing(true);
+      setMessages(prev => [...prev, { type: "system", text: "Screen sharing started. Admin can now see your screen.", ts: new Date().toISOString() }]);
+    } catch (err) {
+      if (err.name !== "NotAllowedError") {
+        setMessages(prev => [...prev, { type: "system", text: `Screen share failed: ${err.message}`, ts: new Date().toISOString() }]);
+      }
+    }
+  };
+
+  const stopScreenShare = () => {
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach(t => t.stop());
+      screenStreamRef.current = null;
+    }
+    wsRef.current?.send(JSON.stringify({ type: "screen-share-end" }));
+    setScreenSharing(false);
+    setMessages(prev => [...prev, { type: "system", text: "Screen sharing stopped.", ts: new Date().toISOString() }]);
   };
 
   const handleRemoteOffer = async (sdp) => {
@@ -233,10 +277,13 @@ export function LiveHelpModule({ authHeaders, me }) {
           <span className="text-xs font-bold text-white">Live Help</span>
           <span className={`w-2 h-2 rounded-full ${connected ? "bg-emerald-400" : "bg-slate-600"}`} />
           {voiceActive && <span className="text-[9px] text-emerald-400 animate-pulse">Voice Active</span>}
+          {screenSharing && <span className="text-[9px] text-cyan-400 animate-pulse">Sharing Screen</span>}
         </div>
         <div className="flex items-center gap-1">
           {connected && !voiceActive && <button onClick={startVoice} className="p-1 text-violet-300 hover:text-white" title="Start voice" data-testid="livehelp-voice-start"><Phone size={13} /></button>}
           {voiceActive && <button onClick={stopVoice} className="p-1 text-rose-400 hover:text-rose-300" title="End voice" data-testid="livehelp-voice-stop"><PhoneOff size={13} /></button>}
+          {connected && !screenSharing && <button onClick={startScreenShare} className="p-1 text-cyan-300 hover:text-white" title="Share screen" data-testid="livehelp-screen-start"><Monitor size={13} /></button>}
+          {screenSharing && <button onClick={stopScreenShare} className="p-1 text-rose-400 hover:text-rose-300" title="Stop sharing" data-testid="livehelp-screen-stop"><MonitorOff size={13} /></button>}
           <button onClick={reportBug} className="p-1 text-amber-400 hover:text-amber-300" title="Report bug" data-testid="livehelp-report-bug"><Bug size={13} /></button>
           <button onClick={() => setMinimized(true)} className="p-1 text-slate-400 hover:text-white"><Minimize2 size={13} /></button>
           <button onClick={() => { setOpen(false); disconnectWS(); }} className="p-1 text-slate-400 hover:text-white" data-testid="livehelp-close"><X size={13} /></button>
@@ -268,6 +315,7 @@ export function LiveHelpModule({ authHeaders, me }) {
       </form>
 
       <audio ref={remoteAudioRef} autoPlay hidden />
+      <video ref={remoteVideoRef} autoPlay playsInline className={`${remoteVideoRef.current?.srcObject ? "w-full rounded-lg border border-cyan-500/30 mt-1" : "hidden"}`} />
     </div>
   );
 }

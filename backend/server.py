@@ -810,6 +810,11 @@ async def shutdown_db_client():
         stop_continuous_monitor()
     except Exception:
         pass
+    try:
+        from services.async_http import close_client
+        await close_client()
+    except Exception:
+        pass
     await shutdown_holiday_manager()
     client.close()
 
@@ -993,6 +998,15 @@ async def ws_livehelp(websocket: WebSocket, session_id: str):
                     f"User-reported via Live Help: {msg.get('description', 'No details')}"
                 )
                 await websocket.send_json({"type": "system-hint", "message": "Bug report submitted. A support ticket has been created.", "severity": "info"})
+
+            elif msg_type in ("screen-share-start", "screen-share-end"):
+                # Forward screen sharing signals to peer
+                peer_ws = room["admin_ws"] if my_role == "user" else room["user_ws"]
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json(msg)
+                    except Exception:
+                        pass
 
     except WebSocketDisconnect:
         # Notify peer of disconnect
