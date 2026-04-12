@@ -79,7 +79,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
     catch (e) { setAdminError(e?.response?.data?.detail || "Unable to load admin config"); }
   };
   const loadMacroEvents = async () => {
-    try { const r = await axios.get(`${API}/admin/macro-events`, { headers: authHeaders }); setMacroEventsData(r.data); } catch {}
+    try { const r = await axios.get(`${API}/admin/macro-events`, { headers: authHeaders }); setMacroEventsData(r.data); } catch (err) { console.error("Failed to fetch macro events:", err?.message); }
   };
 
   // ── User actions ──────────────────────────────────────────────────

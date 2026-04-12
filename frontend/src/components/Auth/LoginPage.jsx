@@ -138,7 +138,7 @@ export function LoginPage({ loginUsername, setLoginUsername, loginLoading, login
                       try {
                         const res = await axios.get(`${API}/payments/qr-code`);
                         setQrData(res.data);
-                      } catch {}
+                      } catch (err) { console.error("QR load failed:", err?.message); }
                     }} className="h-8 bg-slate-700 text-white hover:bg-slate-600 text-xs" data-testid="qr-load-btn">
                       <QrCode size={12} className="mr-1" /> Load QR Code
                     </Button>

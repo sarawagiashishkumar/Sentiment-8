@@ -58,7 +58,7 @@ export function LiveHelpModule({ authHeaders, me }) {
 
   // Session logging
   const logAction = useCallback(async (action) => {
-    try { await axios.post(`${API}/livehelp/log-action`, action, { headers: authHeaders }); } catch {}
+    try { await axios.post(`${API}/livehelp/log-action`, action, { headers: authHeaders }); } catch (err) { /* non-critical logging */ }
   }, [authHeaders]);
 
   useEffect(() => {
@@ -231,7 +231,7 @@ export function LiveHelpModule({ authHeaders, me }) {
         else if (msg.type === "system-hint") {
           setMessages(prev => [...prev, { type: "hint", text: msg.message, severity: msg.severity, ts: new Date().toISOString() }]);
         }
-      } catch {}
+      } catch (err) { console.error("WS message parse error:", err?.message); }
     };
     ws.onclose = () => { setConnected(false); wsRef.current = null; };
   }, [sessionId, me, speak]);
@@ -294,9 +294,9 @@ export function LiveHelpModule({ authHeaders, me }) {
     setScreenSharing(false);
   };
 
-  const handleRemoteOffer = async (sdp) => { const pc = createPC(); try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); localStreamRef.current = s; s.getTracks().forEach(t => pc.addTrack(t, s)); } catch {} await pc.setRemoteDescription(new RTCSessionDescription(sdp)); const ans = await pc.createAnswer(); await pc.setLocalDescription(ans); wsRef.current?.send(JSON.stringify({ type: "answer", sdp: pc.localDescription.toJSON() })); setVoiceCallActive(true); };
+  const handleRemoteOffer = async (sdp) => { const pc = createPC(); try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); localStreamRef.current = s; s.getTracks().forEach(t => pc.addTrack(t, s)); } catch (e) { console.error("Mic access failed in offer handler"); } await pc.setRemoteDescription(new RTCSessionDescription(sdp)); const ans = await pc.createAnswer(); await pc.setLocalDescription(ans); wsRef.current?.send(JSON.stringify({ type: "answer", sdp: pc.localDescription.toJSON() })); setVoiceCallActive(true); };
   const handleRemoteAnswer = async (sdp) => { if (pcRef.current) await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp)); };
-  const handleRemoteIceCandidate = async (c) => { if (pcRef.current) { try { await pcRef.current.addIceCandidate(new RTCIceCandidate(c)); } catch {} } };
+  const handleRemoteIceCandidate = async (c) => { if (pcRef.current) { try { await pcRef.current.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { console.error("ICE candidate failed"); } } };
 
   useEffect(() => { return () => disconnectAll(); }, [disconnectAll]);
 
@@ -312,7 +312,7 @@ export function LiveHelpModule({ authHeaders, me }) {
         (res.data.suggestions || []).forEach(s => {
           setMessages(prev => [...prev, { type: "hint", text: s.message, severity: s.severity, ts: new Date().toISOString() }]);
         });
-      }).catch(() => {});
+      }).catch((err) => { console.error("Session hints fetch failed:", err?.message); });
     }
   }, [open, messages.length, connectWS, speak, authHeaders]);
 

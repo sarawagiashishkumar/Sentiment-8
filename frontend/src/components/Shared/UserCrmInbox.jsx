@@ -19,7 +19,7 @@ export function UserCrmInbox({ authHeaders }) {
       const res = await axios.get(`${API}/crm/inbox`, { headers: authHeaders });
       setMessages(res.data.messages || []);
       setUnread(res.data.unread || 0);
-    } catch {}
+    } catch (err) { console.error("Failed to fetch CRM inbox:", err?.message); }
   }, [authHeaders]);
 
   useEffect(() => { fetch(); const t = setInterval(fetch, 60000); return () => clearInterval(t); }, [fetch]);

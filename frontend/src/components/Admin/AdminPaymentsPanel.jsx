@@ -19,14 +19,14 @@ export function AdminPaymentsPanel({ authHeaders }) {
     try {
       const res = await axios.get(`${API}/admin/payments/config-status`, { headers: authHeaders });
       setConfigStatus(res.data);
-    } catch {}
+    } catch (err) { console.error("Failed to fetch payment config:", err?.message); }
   }, [authHeaders]);
 
   const fetchPending = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/admin/payments/pending`, { headers: authHeaders });
       setPending(res.data.payments || []);
-    } catch {}
+    } catch (err) { console.error("Failed to fetch pending payments:", err?.message); }
   }, [authHeaders]);
 
   useEffect(() => { fetchStatus(); fetchPending(); }, [fetchStatus, fetchPending]);

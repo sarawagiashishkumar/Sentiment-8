@@ -226,6 +226,14 @@ IST = timezone(timedelta(hours=5, minutes=30))
 import deps as _deps_module
 _deps_module.configure(db, SESSION_STORE)
 
+# ── Populate app_state with runtime config ────────────────────────────────────
+import services.app_state as _app_state
+_app_state.configure_runtime(
+    session_store=SESSION_STORE,
+    owner_username=OWNER_BOOTSTRAP_USERNAME,
+    legacy_alias=LEGACY_OWNER_ALIAS,
+)
+
 # NSE holidays are now managed by services/holiday_manager.py (MongoDB-backed).
 # This module-level set is populated at startup by init_holiday_manager().
 from services.holiday_manager import get_nse_holidays, init_holiday_manager, shutdown_holiday_manager
