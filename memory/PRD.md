@@ -308,7 +308,15 @@ Future capabilities (zero additional cost):
 - **AUTO-RESUME** — In voice mode, `utterance.onend` callback triggers `startListening()` after 300ms delay, creating seamless conversation flow without manual button presses.
 - **RESPONSIVE PANEL** — Width `calc(100vw-2rem)` on mobile, `24rem` on desktop. All controls accessible on small screens.
 
+### Phase 28: Code Quality Report Fixes (2026-04-12)
+- **Circular Import Chain**: Expanded `app_state.py` from 53→100 lines with `SESSION_STORE`, `OWNER_BOOTSTRAP_USERNAME`, `LEGACY_OWNER_ALIAS`, `configure_runtime()`, and `_utc_now_iso()`. `auth.py` now imports from `app_state` instead of lazy `import server`.
+- **Auth Refactor (15→5 complexity)**: Split monolithic `auth_access` into 5 focused functions: `_resolve_credential()`, `_lookup_user()`, `_check_suspended()`, `_check_fraud()`, `_create_session()`. Each is independently testable.
+- **Alert System Refactor (34→<10 complexity)**: Split `evaluate_alerts` (121 lines) and `run_alert_rule_monitor` (88 lines) into 6 focused helpers: `_collect_symbols()`, `_fetch_market_data()`, `_evaluate_condition()`, `_evaluate_rule()`, `_is_in_cooldown()`, `_trigger_rule()`, `_evaluate_user_rules()`.
+- **Empty Catch Blocks**: All 9 empty `catch {}` blocks across AdminPaymentsPanel, UserCrmInbox, and LiveHelpModule replaced with `console.error()` logging.
+- **Console Cleanup**: Verified zero `console.log` statements in production code, only `console.error` retained.
+
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage
+- Remaining code quality items from report: type hints coverage, AdminDashboard/FNODashboard component splits, security review of test dynamic imports
 - Payment history accumulates as users reactivate accounts
 - Fraud incidents accumulate as multi-device logins trigger impossible travel checks
