@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { RefreshCw, Clock, Zap, TrendingUp } from "lucide-react";
+import { RefreshCw, Clock, Zap, TrendingUp, Bell } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -38,13 +38,18 @@ function PhaseBar({ label, ms, maxMs, color, threshold }) {
 
 export function AdminPerfTab({ authHeaders }) {
   const [data, setData] = useState(null);
+  const [notifAnalytics, setNotifAnalytics] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const fetchTimings = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API}/fno/generation-timings`, { headers: authHeaders });
-      setData(res.data);
+      const [timingsRes, analyticsRes] = await Promise.all([
+        axios.get(`${API}/fno/generation-timings`, { headers: authHeaders }),
+        axios.get(`${API}/notifications/analytics`, { headers: authHeaders }).catch(() => ({ data: null })),
+      ]);
+      setData(timingsRes.data);
+      setNotifAnalytics(analyticsRes.data);
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, [authHeaders]);
@@ -191,6 +196,48 @@ export function AdminPerfTab({ authHeaders }) {
             No generation history yet. Performance data will appear after running F&O or Multibagger generations during market hours.
           </p>
         )}
+
+        {/* Notification Analytics */}
+        <div className="space-y-2" data-testid="perf-notif-analytics">
+          <div className="flex items-center gap-2">
+            <Bell size={14} className="text-amber-400" />
+            <h3 className="text-sm font-semibold text-white">Notification Analytics</h3>
+          </div>
+          {notifAnalytics ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-2 text-center">
+                <p className="text-[9px] text-slate-500 uppercase">24h Alerts</p>
+                <p className="text-sm font-bold font-mono text-white">{notifAnalytics.total_24h || 0}</p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-2 text-center">
+                <p className="text-[9px] text-slate-500 uppercase">Read (7d)</p>
+                <p className="text-sm font-bold font-mono text-emerald-400">{notifAnalytics.read_count_7d || 0}</p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-2 text-center">
+                <p className="text-[9px] text-slate-500 uppercase">Avg Response</p>
+                <p className="text-sm font-bold font-mono text-cyan-300">
+                  {notifAnalytics.avg_response_latency_secs != null ? `${notifAnalytics.avg_response_latency_secs}s` : "--"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-2 text-center">
+                <p className="text-[9px] text-slate-500 uppercase">7d by Category</p>
+                <div className="flex justify-center gap-1 mt-0.5">
+                  {Object.entries(notifAnalytics.frequency_7d || {}).map(([cat, count]) => (
+                    <span key={cat} className={`rounded px-1 py-0.5 text-[8px] font-mono ${
+                      cat === "critical" ? "bg-rose-900/40 text-rose-300" :
+                      cat === "warning" ? "bg-amber-900/40 text-amber-300" :
+                      cat === "success" ? "bg-emerald-900/40 text-emerald-300" :
+                      "bg-cyan-900/40 text-cyan-300"
+                    }`}>{cat[0].toUpperCase()}:{count}</span>
+                  ))}
+                  {Object.keys(notifAnalytics.frequency_7d || {}).length === 0 && <span className="text-[9px] text-slate-600">none</span>}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500 py-2">Loading notification analytics...</p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

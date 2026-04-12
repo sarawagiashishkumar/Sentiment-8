@@ -462,6 +462,7 @@ from routes.multibagger import multibagger_router
 from routes.batch_jobs import batch_router
 from routes.auth import auth_router
 from routes.notifications import notification_router
+from routes.journal import journal_router
 api_router.include_router(fno_router)
 api_router.include_router(admin_router)
 api_router.include_router(market_data_router)
@@ -470,6 +471,7 @@ api_router.include_router(multibagger_router)
 api_router.include_router(batch_router, prefix="/batch")
 api_router.include_router(auth_router)
 api_router.include_router(notification_router)
+api_router.include_router(journal_router)
 
 app.include_router(api_router)
 
@@ -603,6 +605,69 @@ async def startup_tasks():
         await _ensure_iv_an_indexes(db)
     except Exception as exc:
         logger.warning("IV analytics index creation failed (non-fatal): %s", exc)
+
+    # ── Trading Journal indexes ───────────────────────────────────────────
+    try:
+        from routes.journal import ensure_journal_indexes
+        await ensure_journal_indexes(db)
+    except Exception as exc:
+        logger.warning("Trading journal index creation failed (non-fatal): %s", exc)
+
+    # ── Notification analytics indexes ────────────────────────────────────
+    try:
+        await db.notification_analytics.create_index([("user_key", 1), ("ts", -1)])
+        await db.user_notifications.create_index([("user_key", 1), ("ts", -1)])
+        logger.info("Notification analytics indexes ensured")
+    except Exception as exc:
+        logger.warning("Notification analytics index creation failed (non-fatal): %s", exc)
+
+    # ── IV Background Collector (every 30 min during market hours) ────────
+    try:
+        import asyncio as _aio_iv
+        async def _iv_background_collector():
+            """Collect ATM IV for NIFTY/BANKNIFTY every 30 minutes during market hours."""
+            while True:
+                await _aio_iv.sleep(1800)  # 30 minutes
+                try:
+                    _now = datetime.now(IST)
+                    if _now.weekday() >= 5:
+                        continue
+                    _mins = _now.hour * 60 + _now.minute
+                    if _mins < 555 or _mins > 930:
+                        continue
+                    from services.kite_client import fetch_kite_batch_quotes, fetch_kite_batch_option_quotes
+                    from services.iv_history import capture_atm_iv as _cap_iv
+                    for _sym in ["NIFTY", "BANKNIFTY"]:
+                        _idx_q = await fetch_kite_batch_quotes(
+                            ["NIFTY 50" if _sym == "NIFTY" else "NIFTY BANK"], exchange="NSE"
+                        )
+                        _spot = 0
+                        for _v in _idx_q.values():
+                            _spot = _v.get("ltp", 0)
+                        if _spot <= 0:
+                            continue
+                        _step = 50 if _sym == "NIFTY" else 100
+                        _atm = round(_spot / _step) * _step
+                        _opt_rows = await db.kite_option_master.find(
+                            {"underlying": _sym, "strike": float(_atm)},
+                            {"_id": 0, "tradingsymbol": 1}
+                        ).sort("expiry", 1).limit(4).to_list(4)
+                        if _opt_rows:
+                            _ts_list = [r["tradingsymbol"] for r in _opt_rows]
+                            _quotes = await fetch_kite_batch_option_quotes(_ts_list)
+                            for _q in _quotes.values():
+                                _iv = _q.get("iv")
+                                if _iv and _iv > 0:
+                                    _norm_iv = _iv / 100 if _iv > 1 else _iv
+                                    await _cap_iv(db, _sym, _norm_iv)
+                                    logger.info("BG IV collected: %s ATM_IV=%.2f%%", _sym, _norm_iv * 100)
+                                    break
+                except Exception as _iv_exc:
+                    logger.debug("BG IV collection cycle failed (non-fatal): %s", _iv_exc)
+        _aio_iv.create_task(_iv_background_collector())
+        logger.info("IV background collector started (30-min intervals during market hours)")
+    except Exception as exc:
+        logger.warning("IV background collector start failed (non-fatal): %s", exc)
 
     try:
         import asyncio as _aio

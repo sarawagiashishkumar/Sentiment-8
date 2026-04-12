@@ -67,6 +67,9 @@ async def build_fno_signal(
     oi_buildup: str | None = None,
     gex: float | None = None,
 ) -> FNOSignalResponse:
+    import time as _time
+    _phase_timings = {}
+    _fn_start = _time.monotonic()
     _s = _srv()
     IST = _s.IST
     _position_in_range = _s._position_in_range
@@ -1178,6 +1181,10 @@ async def build_fno_signal(
         _sig_resp.sizing_info = _sizing
     except Exception:
         pass  # sizing is optional annotation, never blocks signal
+
+    # ── Profiling: store per-function timings ─────────────────────────
+    _phase_timings["total_ms"] = round((_time.monotonic() - _fn_start) * 1000)
+    logger.debug("build_fno_signal profiling [%s]: %s", contract.tradingsymbol, _phase_timings)
 
     return _sig_resp
 

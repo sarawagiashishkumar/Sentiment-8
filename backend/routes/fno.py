@@ -298,6 +298,29 @@ async def generate_fno_signals(
         except Exception as _log_err:
             pass  # signal logging is optional, never blocks response
 
+        # ── Auto-log to Trading Journal ──────────────────────────────────
+        try:
+            from routes.journal import log_journal_entry
+            user_key = current_user.get("user_key", "")
+            all_gen_sigs = [*signals, *stock_signals]
+            if custom_signal:
+                all_gen_sigs.append(custom_signal)
+            for sig in all_gen_sigs:
+                sd = json.loads(sig.model_dump_json()) if hasattr(sig, 'model_dump_json') else {}
+                await log_journal_entry(user_key, {
+                    "event_type": "signal_generated",
+                    "symbol": sd.get("tradingsymbol") or sd.get("underlying", ""),
+                    "direction": sd.get("direction"),
+                    "entry_price": sd.get("premium_ltp"),
+                    "confluence_score": sd.get("confluence_score"),
+                    "signal_quality": sd.get("signal_quality"),
+                    "targets": {"t1": sd.get("target1"), "t2": sd.get("target2")},
+                    "stop_loss": sd.get("stop_loss"),
+                    "notes": f"Generated at {refreshed_at}",
+                })
+        except Exception:
+            pass  # journal logging never blocks
+
         # ── Auto-capture: IV term structure snapshots ──
         try:
             from services.iv_analytics import capture_iv_term_structure
