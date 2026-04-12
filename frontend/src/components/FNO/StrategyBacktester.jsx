@@ -11,8 +11,12 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const STRATEGY_TEMPLATES = [
   { id: "momentum_ce", label: "Momentum CE (Bullish)" },
   { id: "momentum_pe", label: "Momentum PE (Bearish)" },
+  { id: "bull_call_spread", label: "Bull Call Spread" },
+  { id: "bear_put_spread", label: "Bear Put Spread" },
   { id: "straddle", label: "Straddle (Non-directional)" },
   { id: "iron_condor", label: "Iron Condor" },
+  { id: "butterfly", label: "Butterfly" },
+  { id: "calendar_spread", label: "Calendar Spread" },
 ];
 
 export function StrategyBacktester({ authHeaders }) {

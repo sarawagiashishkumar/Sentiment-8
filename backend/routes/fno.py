@@ -645,42 +645,7 @@ async def run_single_backtest(
         return {"summary": {}, "trades": [], "equity_curve": [],
                 "error": f"No historical data available for {symbol}. Ensure Market Data API is connected."}
 
-    # Simple momentum backtest simulation
-    trades = []
-    equity = 100000
-    equity_curve = []
-    is_bullish = req.strategy in ("momentum_ce", "straddle", "iron_condor")
-
-    for i in range(1, len(candles)):
-        prev = candles[i - 1]
-        curr = candles[i]
-        equity_curve.append({"date": curr["date"][:10] if isinstance(curr["date"], str) else str(curr["date"]), "equity": round(equity, 2)})
-
-        # Simple signal: close > prev close + threshold = long, else short
-        if i < 2:
-            continue
-        prev2 = candles[i - 2]
-        momentum = (curr["close"] - prev2["close"]) / prev2["close"] * 100
-
-        if (is_bullish and momentum > 0.5) or (not is_bullish and momentum < -0.5):
-            entry = curr["close"]
-            # Simulate exit at next candle
-            if i + 1 < len(candles):
-                exit_c = candles[i + 1]
-                exit_price = exit_c["close"]
-                pnl = (exit_price - entry) if is_bullish else (entry - exit_price)
-                pnl_pct = pnl / entry * 100
-                equity += pnl * 10  # 10 shares
-                trades.append({
-                    "entry_date": curr["date"][:10] if isinstance(curr["date"], str) else str(curr["date"]),
-                    "exit_date": exit_c["date"][:10] if isinstance(exit_c["date"], str) else str(exit_c["date"]),
-                    "direction": "LONG" if is_bullish else "SHORT",
-                    "entry_price": round(entry, 2),
-                    "exit_price": round(exit_price, 2),
-                    "pnl": round(pnl * 10, 2),
-                    "pnl_pct": round(pnl_pct, 2),
-                    "holding_days": 1,
-                })
+    trades, equity_curve = _run_strategy_simulation(candles, req.strategy)
 
     wins = [t for t in trades if t["pnl"] > 0]
     losses = [t for t in trades if t["pnl"] < 0]
@@ -705,9 +670,112 @@ async def run_single_backtest(
         "max_drawdown": round(max_dd, 1),
         "profit_factor": round(sum(t["pnl"] for t in wins) / max(abs(sum(t["pnl"] for t in losses)), 0.01), 2) if losses else 0,
         "sharpe_ratio": round(total_pnl / max(len(trades), 1) / max(1, (sum((t["pnl"] - total_pnl/max(len(trades),1))**2 for t in trades) / max(len(trades),1))**0.5), 2) if trades else 0,
+        "strategy": req.strategy,
     }
 
     return {"summary": summary, "trades": trades, "equity_curve": equity_curve}
+
+
+def _run_strategy_simulation(candles: list[dict], strategy: str) -> tuple[list[dict], list[dict]]:
+    """Run strategy-specific simulation on OHLCV candles. Returns (trades, equity_curve)."""
+    trades = []
+    equity = 100000
+    equity_curve = []
+    lot = 10
+
+    def _date_str(c):
+        d = c.get("date", "")
+        return d[:10] if isinstance(d, str) else str(d)
+
+    if strategy in ("momentum_ce", "momentum_pe"):
+        is_long = strategy == "momentum_ce"
+        for i in range(2, len(candles)):
+            prev2, curr = candles[i - 2], candles[i]
+            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
+            momentum = (curr["close"] - prev2["close"]) / prev2["close"] * 100
+            trigger = (is_long and momentum > 0.5) or (not is_long and momentum < -0.5)
+            if trigger and i + 1 < len(candles):
+                exit_c = candles[i + 1]
+                pnl = ((exit_c["close"] - curr["close"]) if is_long else (curr["close"] - exit_c["close"])) * lot
+                equity += pnl
+                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "LONG" if is_long else "SHORT", "entry_price": round(curr["close"], 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (curr["close"] * lot) * 100, 2), "holding_days": 1, "legs": 1})
+
+    elif strategy == "bull_call_spread":
+        for i in range(2, len(candles)):
+            curr = candles[i]
+            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
+            if i < 3:
+                continue
+            prev = candles[i - 1]
+            # Bull signal: close > prev close and prev > candles[i-2]
+            if curr["close"] > prev["close"] and prev["close"] > candles[i - 2]["close"] and i + 2 < len(candles):
+                entry = curr["close"]
+                premium_paid = entry * 0.02  # simulate 2% premium for call spread
+                exit_c = candles[i + 2]
+                spread_gain = max(exit_c["close"] - entry, 0) * 0.5 - premium_paid  # capped upside
+                pnl = spread_gain * lot
+                equity += pnl
+                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "LONG", "entry_price": round(entry, 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (premium_paid * lot) * 100, 2), "holding_days": 2, "legs": 2, "strategy_type": "Bull Call Spread"})
+
+    elif strategy == "bear_put_spread":
+        for i in range(2, len(candles)):
+            curr = candles[i]
+            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
+            if i < 3:
+                continue
+            prev = candles[i - 1]
+            if curr["close"] < prev["close"] and prev["close"] < candles[i - 2]["close"] and i + 2 < len(candles):
+                entry = curr["close"]
+                premium_paid = entry * 0.02
+                exit_c = candles[i + 2]
+                spread_gain = max(entry - exit_c["close"], 0) * 0.5 - premium_paid
+                pnl = spread_gain * lot
+                equity += pnl
+                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "SHORT", "entry_price": round(entry, 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (premium_paid * lot) * 100, 2), "holding_days": 2, "legs": 2, "strategy_type": "Bear Put Spread"})
+
+    elif strategy in ("straddle", "iron_condor", "butterfly", "calendar_spread"):
+        # Non-directional: profit from range-bound or volatility
+        for i in range(3, len(candles)):
+            curr = candles[i]
+            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
+            if i + 3 >= len(candles):
+                continue
+            # Measure recent volatility (ATR proxy)
+            recent_range = max(c["high"] - c["low"] for c in candles[i-3:i+1])
+            avg_price = curr["close"]
+            premium_collected = avg_price * 0.015  # simulate premium collection
+
+            exit_c = candles[i + 3]
+            actual_move = abs(exit_c["close"] - curr["close"])
+            breakeven = premium_collected * (2 if strategy == "straddle" else 1.5)
+
+            if strategy == "straddle":
+                pnl = (premium_collected * 2 - actual_move) * lot  # profit if move < premium
+            elif strategy == "iron_condor":
+                pnl = (premium_collected * 1.5 - max(actual_move - avg_price * 0.01, 0)) * lot
+            elif strategy == "butterfly":
+                center_dist = actual_move / avg_price * 100
+                pnl = (premium_collected - abs(center_dist) * avg_price * 0.005) * lot
+            else:  # calendar_spread
+                theta_decay = premium_collected * 0.3  # time decay benefit
+                pnl = (theta_decay - actual_move * 0.3) * lot
+
+            equity += pnl
+            legs = {"straddle": 2, "iron_condor": 4, "butterfly": 3, "calendar_spread": 2}
+            trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "NEUTRAL", "entry_price": round(avg_price, 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl / (premium_collected * lot) * 100, 2), "holding_days": 3, "legs": legs.get(strategy, 2), "strategy_type": strategy.replace("_", " ").title()})
+
+    else:
+        # Default: simple buy-and-hold-day simulation
+        for i in range(1, len(candles)):
+            curr = candles[i]
+            equity_curve.append({"date": _date_str(curr), "equity": round(equity, 2)})
+            if i + 1 < len(candles):
+                exit_c = candles[i + 1]
+                pnl = (exit_c["close"] - curr["close"]) * lot
+                equity += pnl
+                trades.append({"entry_date": _date_str(curr), "exit_date": _date_str(exit_c), "direction": "LONG", "entry_price": round(curr["close"], 2), "exit_price": round(exit_c["close"], 2), "pnl": round(pnl, 2), "holding_days": 1, "legs": 1})
+
+    return trades, equity_curve
 
 
 # ── /fno/position-sizing ─────────────────────────────────────────────────────

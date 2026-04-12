@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
 from pymongo import ReturnDocument
@@ -465,6 +465,7 @@ from routes.notifications import notification_router
 from routes.journal import journal_router
 from routes.reports import reports_router
 from routes.watchlist import watchlist_router
+from routes.risk import risk_router
 api_router.include_router(fno_router)
 api_router.include_router(admin_router)
 api_router.include_router(market_data_router)
@@ -476,6 +477,7 @@ api_router.include_router(notification_router)
 api_router.include_router(journal_router)
 api_router.include_router(reports_router)
 api_router.include_router(watchlist_router)
+api_router.include_router(risk_router)
 
 app.include_router(api_router)
 
@@ -705,3 +707,50 @@ async def shutdown_db_client():
         pass
     await shutdown_holiday_manager()
     client.close()
+
+
+# ── WebSocket: Real-time price streaming for watchlist ────────────────────────
+
+@app.websocket("/api/ws/prices")
+async def ws_price_stream(websocket: WebSocket):
+    """Stream live prices for watchlist symbols via WebSocket.
+    Client sends: {"symbols": ["RELIANCE", "TCS", ...]}
+    Server pushes: {"quotes": {"RELIANCE": {"ltp": ..., "change_pct": ...}, ...}} every 5s
+    """
+    await websocket.accept()
+    symbols = []
+    try:
+        while True:
+            # Check for client messages (symbol updates) with timeout
+            try:
+                msg = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+                if msg.get("symbols"):
+                    symbols = [s.strip().upper() for s in msg["symbols"] if s.strip()]
+            except asyncio.TimeoutError:
+                pass
+
+            if symbols:
+                try:
+                    from services.kite_client import fetch_kite_batch_quotes
+                    quotes = await fetch_kite_batch_quotes(symbols)
+                    payload = {}
+                    for sym in symbols:
+                        q = quotes.get(sym, {})
+                        payload[sym] = {
+                            "ltp": round(q.get("ltp", 0), 2),
+                            "change_pct": round(q.get("change_pct", 0), 2),
+                            "open": round(q.get("open", 0), 2),
+                            "high": round(q.get("high", 0), 2),
+                            "low": round(q.get("low", 0), 2),
+                            "volume": q.get("volume", 0),
+                        }
+                    await websocket.send_json({"quotes": payload, "ts": datetime.now(IST).isoformat()})
+                except Exception as exc:
+                    logger.debug("WS price fetch failed: %s", exc)
+                    await websocket.send_json({"error": "Price fetch failed", "ts": datetime.now(IST).isoformat()})
+            else:
+                await asyncio.sleep(5)
+    except WebSocketDisconnect:
+        logger.debug("WS client disconnected")
+    except Exception as exc:
+        logger.debug("WS error: %s", exc)

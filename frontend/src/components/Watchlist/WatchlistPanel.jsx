@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Eye, Plus, Trash2, Bell, RefreshCw } from "lucide-react";
+import { Eye, Plus, Trash2, Bell, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { useLivePrices } from "@/hooks/useLivePrices";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -55,11 +56,24 @@ export function WatchlistPanel({ authHeaders }) {
     }
   };
 
+  const watchlistSymbols = useMemo(() => items.map(i => i.symbol), [items]);
+  const { quotes: liveQuotes, connected: wsConnected } = useLivePrices(watchlistSymbols, items.length > 0);
+
   return (
     <Card className="border-slate-800 bg-slate-950/70" data-testid="watchlist-panel">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
         <CardTitle className="text-white flex items-center gap-2">
           <Eye size={16} className="text-cyan-400" /> Watchlist
+          {wsConnected && items.length > 0 && (
+            <span className="flex items-center gap-1 text-[9px] text-emerald-400">
+              <Wifi size={10} /> Live
+            </span>
+          )}
+          {!wsConnected && items.length > 0 && (
+            <span className="flex items-center gap-1 text-[9px] text-slate-500">
+              <WifiOff size={10} /> Polling
+            </span>
+          )}
         </CardTitle>
         <div className="flex gap-2">
           <Button onClick={() => setShowAddForm(!showAddForm)} className="h-7 bg-cyan-600 text-white hover:bg-cyan-500 text-xs px-3" data-testid="watchlist-add-btn">
@@ -85,10 +99,20 @@ export function WatchlistPanel({ authHeaders }) {
         {/* Watchlist items */}
         {items.length > 0 ? (
           <div className="space-y-1.5" data-testid="watchlist-items">
-            {items.map(item => (
+            {items.map(item => {
+              const lq = liveQuotes[item.symbol];
+              return (
               <div key={item.symbol} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2" data-testid={`watchlist-item-${item.symbol.toLowerCase()}`}>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <span className="font-mono font-bold text-xs text-white">{item.symbol}</span>
+                  {lq && lq.ltp > 0 && (
+                    <span className="flex items-center gap-1.5 text-[10px]">
+                      <span className="font-mono text-slate-200">Rs.{lq.ltp.toFixed(2)}</span>
+                      <span className={`font-mono font-bold ${lq.change_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {lq.change_pct >= 0 ? "+" : ""}{lq.change_pct.toFixed(2)}%
+                      </span>
+                    </span>
+                  )}
                   {item.alert_above && (
                     <span className="flex items-center gap-0.5 text-[10px] text-emerald-400">
                       <Bell size={9} /> Above {item.alert_above}
@@ -106,7 +130,8 @@ export function WatchlistPanel({ authHeaders }) {
                   <Trash2 size={12} />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : !loading ? (
           <div className="text-center py-4" data-testid="watchlist-empty">

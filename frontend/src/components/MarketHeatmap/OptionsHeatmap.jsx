@@ -30,6 +30,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [activeSymbol, setActiveSymbol] = useState("nifty");
+  const [selectedExpiry, setSelectedExpiry] = useState("");
   const [customStock, setCustomStock] = useState("");
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [oiTypeFilter, setOiTypeFilter] = useState("all");
@@ -39,30 +40,42 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
   const symbolRef = useRef(activeSymbol);
   const searchTimeoutRef = useRef(null);
 
-  const loadData = useCallback(async (symbol, silent = false) => {
+  const loadData = useCallback(async (symbol, expiryParam = "", silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const resp = await axios.get(`${API}/market/options-heatmap?filter=${symbol}`, { headers: authHeaders });
+      let url = `${API}/market/options-heatmap?filter=${symbol}`;
+      if (expiryParam) url += `&expiry=${encodeURIComponent(expiryParam)}`;
+      const resp = await axios.get(url, { headers: authHeaders });
       setData(resp.data);
       if (!resp.data.kite_live && onFetchError) onFetchError();
-    } catch {
+    } catch (err) {
+      console.error("Options heatmap fetch error:", err?.message);
       if (onFetchError) onFetchError();
     } finally {
       setLoading(false);
     }
   }, [authHeaders, onFetchError]);
 
-  useEffect(() => { loadData(activeSymbol); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadData(activeSymbol, selectedExpiry); /* eslint-disable-next-line */ }, []);
 
   useEffect(() => {
     symbolRef.current = activeSymbol;
-    loadData(activeSymbol);
+    setSelectedExpiry(""); // Reset expiry when symbol changes
+    loadData(activeSymbol, "");
   }, [activeSymbol, loadData]);
+
+  // Re-fetch when expiry changes
+  useEffect(() => {
+    if (selectedExpiry) loadData(activeSymbol, selectedExpiry);
+  }, [selectedExpiry, activeSymbol, loadData]);
+
+  const expiryRef = useRef(selectedExpiry);
+  expiryRef.current = selectedExpiry;
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
-      if (isMarketHours()) loadData(symbolRef.current, true);
+      if (isMarketHours()) loadData(symbolRef.current, expiryRef.current, true);
     }, REFRESH_INTERVAL);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [loadData]);
@@ -154,7 +167,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
           <Activity size={18} className="text-cyan-400" />
           Options Heatmap
         </h2>
-        <RefreshCountdown intervalMs={REFRESH_INTERVAL} isActive={true} onManualRefresh={() => loadData(activeSymbol)} />
+        <RefreshCountdown intervalMs={REFRESH_INTERVAL} isActive={true} onManualRefresh={() => loadData(activeSymbol, selectedExpiry)} />
       </div>
 
       {/* Row 1: NIFTY / BANKNIFTY Tabs */}
@@ -180,14 +193,15 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
             }`}>{t.toUpperCase()}</button>
         ))}
         <div className="w-px h-5 bg-slate-700" />
-        {/* Expiry dropdown */}
+        {/* Expiry dropdown — controlled, triggers re-fetch */}
         {availableExpiries.length > 0 && (
           <select
+            value={selectedExpiry}
+            onChange={(e) => setSelectedExpiry(e.target.value)}
             className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-300 focus:border-cyan-500 focus:outline-none"
             data-testid="options-expiry-select"
-            defaultValue=""
           >
-            <option value="">All Expiries</option>
+            <option value="">Nearest Expiry</option>
             {availableExpiries.map(exp => (
               <option key={exp} value={exp}>{exp}</option>
             ))}

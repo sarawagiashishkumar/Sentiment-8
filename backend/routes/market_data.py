@@ -455,6 +455,7 @@ async def stock_heatmap(
 @market_data_router.get("/market/options-heatmap")
 async def options_heatmap(
     filter: str = Query(default="nifty"),
+    expiry: str = Query(default=""),
     current_user: dict = Depends(get_current_user),
 ):
     """Return options chain heatmap data LIVE from Kite /quote using NFO:tradingsymbol."""
@@ -500,20 +501,22 @@ async def options_heatmap(
         from services.kite_client import _sync_kite_option_master_daily
         await _sync_kite_option_master_daily()
 
-        # Find nearest expiry
+        # Find all available expiries
         from services.date_utils import today_ist as _tist
-        pipeline = [
+        all_expiry_pipeline = [
             {"$match": {"underlying": symbol}},
             {"$group": {"_id": "$expiry"}},
             {"$sort": {"_id": 1}},
-            {"$limit": 1},
+            {"$limit": 10},
         ]
-        expiry_docs = await _state.db.kite_option_master.aggregate(pipeline).to_list(1)
-        if not expiry_docs:
+        all_expiry_docs = await _state.db.kite_option_master.aggregate(all_expiry_pipeline).to_list(10)
+        if not all_expiry_docs:
             return {"filter": filter, "chains": [], "summary": {}, "kite_live": True,
                     "warning": "No option master data. Run instrument sync from Admin panel first."}
 
-        nearest_expiry = expiry_docs[0]["_id"]
+        available_expiries = [d["_id"] for d in all_expiry_docs]
+        # Use requested expiry if valid, else nearest
+        selected_expiry = expiry if expiry and expiry in available_expiries else available_expiries[0]
 
         # Get strikes around ATM
         atm_strike = round(spot / step) * step if spot > 0 else 0
@@ -521,7 +524,7 @@ async def options_heatmap(
 
         # Get tradingsymbols for these strikes
         option_rows = await _state.db.kite_option_master.find(
-            {"underlying": symbol, "expiry": nearest_expiry, "strike": {"$in": [float(s) for s in strike_range]}},
+            {"underlying": symbol, "expiry": selected_expiry, "strike": {"$in": [float(s) for s in strike_range]}},
             {"_id": 0, "tradingsymbol": 1, "strike": 1, "option_type": 1},
         ).to_list(200)
 
@@ -548,7 +551,8 @@ async def options_heatmap(
                 "symbol": symbol,
                 "spot": spot,
                 "step": step,
-                "expiry": nearest_expiry,
+                "expiry": selected_expiry,
+                "available_expiries": available_expiries,
                 "strikes": sorted_strikes,
             })
 
