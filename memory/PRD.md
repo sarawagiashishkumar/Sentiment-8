@@ -90,6 +90,12 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - **Anti-Sleep Heartbeat**: 10-min inactivity buffer with hard reset on every user interaction (click, scroll, keypress, filter toggle). Auto-fetch counts as active engagement.
 - **Stock Heatmap OHLCV**: API now returns open, high, low, volume fields alongside ltp/change_pct
 
+### Phase 11: NDJSON Streaming Latency Fix & Auto-Refresh (2026-04-12)
+- **NDJSON Keepalive Buffering Bug FIXED**: `_run_phase_with_keepalive()` was collecting keepalive lines into a list and returning them AFTER the task completed. This caused keepalives to arrive late and could lead to proxy/ingress idle timeout killing the connection. Fixed by inlining the keepalive loop directly in the async generator — `yield` now sends keepalives to the wire immediately during computation.
+- **Multibagger Keepalive Added**: Multibagger generate endpoint now has inline keepalive loop during `_build_multibagger_candidates()` to prevent proxy timeout on slow scans.
+- **Auto-Refresh Countdown Indicator**: New `RefreshCountdown` component (SVG ring + seconds countdown + manual refresh button) added to all 3 heatmap tabs (Sector, Stocks, Options). Shows real-time countdown to next auto-refresh.
+- **Session Reset Triggers Comprehensive**: Axios response interceptor resets inactivity clock on EVERY API response (covers auto-fetch). Visibility change + focus events also reset. Auto-fetch = active engagement — server stays awake.
+
 ## Key API Endpoints
 - `/api/fno/generate` — NDJSON streaming F&O signals
 - `/api/fno/bbe-alerts` — Real-time BBE zone monitoring
@@ -110,5 +116,3 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - fno_signal_engine.py refactoring (~2800 lines → modular strategy files)
 - Extract useAuth hook into App.js (hook created but not wired)
 - AdminDashboard.jsx split into sub-components (438 lines)
-- NDJSON streaming audit: investigate data truncation and synchronous blocks
-- Processing latency elimination: F&O Signal + Multibagger generation instant delivery
