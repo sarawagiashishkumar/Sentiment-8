@@ -203,6 +203,23 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
 - `/api/reports/daily-summary` — Daily P&L report
 - `/api/reports/weekly-summary` — Weekly P&L report
 - `/api/risk/portfolio-summary` — Risk dashboard metrics
+- `/api/alerts/rules` — Custom Alert Rules CRUD (GET/POST/PATCH/DELETE)
+- `/api/alerts/evaluate` — Evaluate alert rules against live market data
+- `/api/admin/packages` — Available package tiers (free/basic/pro/unlimited)
+- `/api/admin/users/{ref}/permissions` — User permission management
+- `/api/admin/fraud-incidents` — Fraud incident management
+- `/api/admin/crm/inbox` — Admin CRM inbox
+- `/api/admin/crm/send` — Admin send/broadcast messages
+- `/api/crm/inbox` — User CRM inbox
+- `/api/crm/contact` — User support contact
+- `/api/account/reactivation-request` — Fraud reactivation request
+
+### Phase 21: Custom Alert Rule Engine, Admin Permissions, Fraud Detection & CRM (2026-04-12)
+- **Custom Alert Rule Engine**: Composable rules with AND/OR logic across market conditions (symbol LTP, change %, volume, VIX). CRUD via `/api/alerts/rules`. Background evaluator runs every 30s during market hours with 5-minute cooldown per rule. Auto-pushes notifications on trigger. Frontend "Alert Rules" sub-tab in F&O Dashboard with visual rule builder, condition editor, toggle, and delete.
+- **Admin Permissions & Tiered Packages**: 4 package tiers — Free (10 credits, limited), Basic (100 credits), Pro (500 credits), Unlimited. Each tier defines daily/total usage limits for every feature (fno_generate, multibagger, portfolio, backtest, alert rules, watchlist). Per-user feature cost overrides and feature restriction lists. Frontend "Permissions & Packages" tab in Admin with user selector and package assignment. Usage tracking via `usage_tracking` MongoDB collection.
+- **Geospatial Fraud Detection**: Login IP geolocation via ip-api.com. Haversine distance calculation between current and last session. Impossible travel detection (max 900 km/h air, 300 km/h rail, 120 km/h road). Auto-suspends non-admin accounts on fraud detection with INR 2,500 reactivation fee. Login page shows "Fraud Login Attempt Detected" notice with detailed travel info, reactivation fee, and contact form. Admin "Fraud Detection" tab shows incident list with Reactivate/Confirm actions.
+- **CRM Module**: Two-way messaging system. Admin can compose targeted messages to specific users or broadcast to all non-admin users. User inbox with read/dismiss/reply actions. Support contact form feeds into admin inbox. Message categories: admin_message, broadcast, fraud_alert, reactivation_request, user_reply, support_request. Notifications auto-pushed to user dashboard. Admin "CRM Messages" tab with inbox/sent tabs and compose form.
+- **Navigation**: Admin Dashboard expanded from 6 to 9 tabs (added Permissions & Packages, CRM Messages, Fraud Detection). F&O Dashboard expanded from 5 to 6 sub-tabs (added Alert Rules).
 
 ## Future/Backlog
 - All remaining items are data-dependent and auto-resolve with live market usage:
@@ -210,3 +227,4 @@ AI-driven trading research platform for NSE F&O markets. Real-time signal genera
   - IV history accumulates via background collector (30+ days for meaningful cone)
   - Trading journal fills automatically with signal generation + position management
   - Notification analytics populate as alerts fire and users acknowledge them
+  - Fraud incidents accumulate as multi-device logins trigger impossible travel checks
