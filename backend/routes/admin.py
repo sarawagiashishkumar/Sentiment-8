@@ -1018,3 +1018,107 @@ async def track_usage(user_key: str, feature: str):
         "feature": feature,
         "ts_epoch": datetime.now(timezone.utc).timestamp(),
     })
+
+
+# ── Data Cleanup & Expanded CRUD ──────────────────────────────────────────────
+
+@admin_router.delete("/admin/data/crm-messages")
+async def purge_crm_messages(
+    older_than_days: int = Query(default=0, description="Delete messages older than N days (0=all)"),
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Purge CRM messages. 0 days = delete ALL."""
+    query = {}
+    if older_than_days > 0:
+        cutoff = datetime.now(timezone.utc).timestamp() - (older_than_days * 86400)
+        query = {"ts_epoch": {"$lt": cutoff}}
+    result = await _state.db.crm_messages.delete_many(query)
+    return {"deleted": result.deleted_count, "collection": "crm_messages"}
+
+
+@admin_router.delete("/admin/data/notifications")
+async def purge_notifications(
+    older_than_days: int = Query(default=0),
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Purge user notifications."""
+    query = {}
+    if older_than_days > 0:
+        cutoff = datetime.now(timezone.utc).timestamp() - (older_than_days * 86400)
+        query = {"ts": {"$lt": cutoff}}
+    result = await _state.db.user_notifications.delete_many(query)
+    return {"deleted": result.deleted_count, "collection": "user_notifications"}
+
+
+@admin_router.delete("/admin/data/livehelp-messages")
+async def purge_livehelp_messages(admin_user: dict = Depends(get_owner_user)):
+    """Purge all live help chat messages."""
+    result = await _state.db.livehelp_messages.delete_many({})
+    return {"deleted": result.deleted_count, "collection": "livehelp_messages"}
+
+
+@admin_router.delete("/admin/data/fraud-incidents")
+async def purge_fraud_incidents(
+    status: str = Query(default="all"),
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Purge fraud incidents."""
+    query = {} if status == "all" else {"status": status}
+    result = await _state.db.fraud_incidents.delete_many(query)
+    return {"deleted": result.deleted_count, "collection": "fraud_incidents"}
+
+
+@admin_router.delete("/admin/data/payments")
+async def purge_payments(
+    status: str = Query(default="all"),
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Purge payment records."""
+    query = {} if status == "all" else {"status": status}
+    result = await _state.db.payments.delete_many(query)
+    return {"deleted": result.deleted_count, "collection": "payments"}
+
+
+@admin_router.delete("/admin/data/login-sessions")
+async def purge_login_sessions(admin_user: dict = Depends(get_owner_user)):
+    """Purge login session history."""
+    result = await _state.db.login_sessions.delete_many({})
+    return {"deleted": result.deleted_count, "collection": "login_sessions"}
+
+
+@admin_router.delete("/admin/data/usage-tracking")
+async def purge_usage_tracking(admin_user: dict = Depends(get_owner_user)):
+    """Purge usage tracking records."""
+    result = await _state.db.usage_tracking.delete_many({})
+    return {"deleted": result.deleted_count, "collection": "usage_tracking"}
+
+
+@admin_router.get("/admin/data/stats")
+async def get_data_stats(admin_user: dict = Depends(get_admin_user)):
+    """Get document counts for all data collections."""
+    collections = [
+        "crm_messages", "user_notifications", "livehelp_messages",
+        "fraud_incidents", "payments", "login_sessions", "usage_tracking",
+        "alert_rules", "trading_journal", "fno_signal_log",
+    ]
+    stats = {}
+    for col in collections:
+        try:
+            stats[col] = await _state.db[col].count_documents({})
+        except Exception:
+            stats[col] = -1
+    return {"stats": stats}
+
+
+@admin_router.get("/admin/users/search")
+async def search_users(
+    q: str = Query(default="", min_length=1),
+    admin_user: dict = Depends(get_admin_user),
+):
+    """Search users by username (partial match)."""
+    cursor = _state.db.app_users.find(
+        {"username": {"$regex": q, "$options": "i"}},
+        {"_id": 0},
+    ).limit(20)
+    users = await cursor.to_list(20)
+    return {"users": users, "count": len(users)}

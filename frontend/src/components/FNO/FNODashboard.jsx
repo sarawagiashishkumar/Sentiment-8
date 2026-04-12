@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import axios from "axios";
+import { useEffect, useRef, useState } from "react";
 import { Download, RefreshCw, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatNumber, formatTime, formatExpiryDate, directionBadge } from "@/utils/formatters";
-import { collectAllFnoSignals, buildExportRow, exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG, exportFnoAsPDF, exportFnoAsWord } from "@/utils/exportUtils";
-import { readNDJSONStream } from "@/components/Shared/NDJSONStreamConsumer";
+import { formatNumber, formatTime } from "@/utils/formatters";
+import { exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG, exportFnoAsPDF, exportFnoAsWord } from "@/utils/exportUtils";
 import { LiveInfoBox } from "@/components/shared/LiveInfoBox";
 import { FNOSignalCard } from "./FNOSignalCard";
 import { FNOStickyCards } from "./FNOStickyCards";
@@ -19,7 +17,10 @@ import { BBEAlertMonitor } from "./BBEAlertMonitor";
 import { TradingJournal } from "./TradingJournal";
 import { StrategyBacktester } from "./StrategyBacktester";
 import { AlertRuleEngine } from "./AlertRuleEngine";
+import { FNOExportTable } from "./FNOExportTable";
 import { SubTabs } from "@/components/Layout/SubTabs";
+import { useFNOGeneration } from "@/hooks/useFNOGeneration";
+import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -37,10 +38,7 @@ export function FNODashboard({
   customPositions, loadCustomPositions,
   alertSoundEnabled, enableAlertSound, playAlertSound,
 }) {
-  const [fnoData, setFnoData] = useState(null);
-  const [fnoLoading, setFnoLoading] = useState(false);
-  const [fnoError, setFnoError] = useState("");
-  const [fnoProgress, setFnoProgress] = useState("");
+  const { fnoData, fnoLoading, fnoError, fnoProgress, generate } = useFNOGeneration({ authHeaders, syncCredits });
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportTableRef = useRef(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -52,100 +50,24 @@ export function FNODashboard({
   const saveSettings = async () => {
     const budget = Number(budgetInput);
     const risk = Number(riskInput);
-    if (!budget || budget < 0) return;
-    if (!risk || risk <= 0 || risk > 100) return;
+    if (!budget || budget < 0 || !risk || risk <= 0 || risk > 100) return;
     setSettingsSaving(true);
     try {
       await axios.patch(`${API}/auth/settings`, { fno_budget: budget, account_risk_pct: risk }, { headers: authHeaders });
       setMe((prev) => prev ? { ...prev, fno_budget: budget, account_risk_pct: risk } : prev);
       setSettingsOpen(false);
-    } catch { /* silent */ }
+    } catch (err) { console.error("Settings save failed:", err?.message); }
     finally { setSettingsSaving(false); }
   };
 
-  // Close export menu on outside click
   useEffect(() => {
     if (!exportMenuOpen) return;
     const handler = (e) => {
-      if (!e.target.closest("[data-testid='fno-export-btn']") && !e.target.closest("[data-testid='fno-export-menu']")) {
-        setExportMenuOpen(false);
-      }
+      if (!e.target.closest("[data-testid='fno-export-btn']") && !e.target.closest("[data-testid='fno-export-menu']")) setExportMenuOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [exportMenuOpen]);
-
-  const abortRef = useRef(null);
-
-  // Cleanup abort controller on unmount
-  useEffect(() => {
-    return () => {
-      if (abortRef.current) abortRef.current.abort();
-    };
-  }, []);
-
-  const generateFnoProjection = async (script = "") => {
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setFnoError("");
-    setFnoLoading(true);
-    setFnoProgress("");
-    try {
-      const payload = script ? { custom_script: script.trim().toUpperCase() } : {};
-      const response = await fetch(`${API}/fno/generate`, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${response.status}`);
-      }
-      const data = await readNDJSONStream(
-        response,
-        (evt) => setFnoProgress(evt.message || ""),
-        controller.signal,
-        // onPartial: merge partial results into fnoData as they arrive
-        (evt) => {
-          if (evt.data) {
-            setFnoData((prev) => {
-              const merged = prev ? { ...prev } : {};
-              if (evt.phase === "nifty" && evt.data.nifty_projection) {
-                merged.nifty_projection = evt.data.nifty_projection;
-                // Build interim signals from NIFTY
-                merged.signals = evt.data.nifty_projection.assured_signals || [];
-                merged.potential_signals = (evt.data.nifty_projection.assured_signals || []).filter(s => s.is_potential_trade);
-                merged.top_trades = merged.potential_signals.slice(0, 4);
-              }
-              if (evt.phase === "banknifty" && evt.data.banknifty_projection) {
-                merged.banknifty_projection = evt.data.banknifty_projection;
-                // Merge BANKNIFTY signals
-                const niftySigs = merged.nifty_projection?.assured_signals || [];
-                const bnSigs = evt.data.banknifty_projection.assured_signals || [];
-                merged.signals = [...niftySigs, ...bnSigs].sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0));
-                merged.potential_signals = merged.signals.filter(s => s.is_potential_trade);
-                merged.top_trades = merged.potential_signals.slice(0, 4);
-              }
-              return merged;
-            });
-          }
-        },
-      );
-      if (data) {
-        setFnoData(data);
-        syncCredits(data.credits_remaining);
-      }
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      setFnoError(error?.message || "Unable to generate F&O projections");
-    } finally {
-      setFnoLoading(false);
-      setFnoProgress("");
-    }
-  };
 
   return (
     <section className="space-y-4" data-testid="fno-page">
@@ -153,253 +75,25 @@ export function FNODashboard({
 
       {activeTab === "signals" && (
         <>
-          <Card className="result-card border-slate-800 bg-slate-950/70">
-            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-white">F&O Projections</CardTitle>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setSettingsOpen((v) => !v)} className="h-7 w-7 p-0 text-slate-400 hover:text-cyan-300" data-testid="fno-settings-toggle">
-                  <Settings size={15} />
-                </Button>
-                <span className="text-xs text-slate-500" data-testid="fno-budget-display">Budget: ₹{Number(me?.fno_budget || 500000).toLocaleString("en-IN")} | Risk: {me?.account_risk_pct || 2}%</span>
-              </div>
-              <Button type="button" onClick={() => generateFnoProjection()} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="fno-generate-button">
-                <RefreshCw size={16} className={fnoLoading ? "animate-spin" : ""} />
-                {fnoLoading ? (fnoProgress || "Generating...") : "Generate F&O Projections (-2)"}
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {settingsOpen && (
-                <div className="flex flex-wrap items-end gap-3 rounded-md border border-slate-700 bg-slate-900/80 p-3" data-testid="fno-settings-panel">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-slate-400">Account Size (₹)</label>
-                    <Input type="number" min="0" step="1000" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} className="w-40 border-slate-700 bg-slate-800 text-slate-100" data-testid="fno-budget-input" />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-slate-400">Risk Per Trade (%)</label>
-                    <Input type="number" min="0.1" max="100" step="0.1" value={riskInput} onChange={(e) => setRiskInput(e.target.value)} className="w-28 border-slate-700 bg-slate-800 text-slate-100" data-testid="fno-risk-input" />
-                  </div>
-                  <Button type="button" onClick={saveSettings} disabled={settingsSaving} className="h-9 bg-cyan-600 text-white hover:bg-cyan-500" data-testid="fno-settings-save">
-                    {settingsSaving ? "Saving..." : "Save"}
-                  </Button>
-                </div>
-              )}
-              <FNOStickyCards
-                customPositions={customPositions}
-                loadCustomPositions={loadCustomPositions}
-                authHeaders={authHeaders}
-                syncCredits={syncCredits}
-                alertSoundEnabled={alertSoundEnabled}
-                enableAlertSound={enableAlertSound}
-                playAlertSound={playAlertSound}
-              />
-
-              <FNOEventPopup authHeaders={authHeaders} />
-
-              <BBEAlertMonitor
-                authHeaders={authHeaders}
-                alertSoundEnabled={alertSoundEnabled}
-                playAlertSound={playAlertSound}
-              />
-
-              {fnoError ? <p className="text-sm text-rose-400" data-testid="fno-error">{fnoError}</p> : null}
-              {!fnoData ? (
-                <p className="text-sm text-slate-400" data-testid="fno-empty-note">
-                  Nothing shown yet. Click <strong>Generate F&O Projections (-2)</strong> for live analysis.
-                </p>
-              ) : (
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <p className="text-xs text-slate-400" data-testid="fno-refreshed-at">
-                    Refreshed at: {formatTime(fnoData.analysis_refreshed_at)} | Charged: {fnoData.cost_charged}
-                  </p>
-                  {/* Export Results Button */}
-                  <div className="relative">
-                    <Button data-testid="fno-export-btn" variant="outline" size="sm" className="border-cyan-700 bg-cyan-900/30 text-cyan-300 hover:bg-cyan-800/50 gap-1.5" onClick={() => setExportMenuOpen((v) => !v)}>
-                      <Download className="h-3.5 w-3.5" />
-                      Export Results
-                    </Button>
-                    {exportMenuOpen && (
-                      <div className="absolute right-0 top-9 z-50 flex flex-col gap-0.5 rounded-lg border border-cyan-800 bg-slate-900 p-1 shadow-xl" data-testid="fno-export-menu">
-                        {[
-                          { label: "Export as CSV", ext: "csv", icon: "\ud83d\udcc4", testid: "export-csv" },
-                          { label: "Export as XLS", ext: "xls", icon: "\ud83d\udcca", testid: "export-xls" },
-                          { label: "Export as PDF", ext: "pdf", icon: "\ud83d\udcd1", testid: "export-pdf" },
-                          { label: "Export as Word", ext: "doc", icon: "\ud83d\udcdd", testid: "export-doc" },
-                          { label: "Export as JPG", ext: "jpg", icon: "\ud83d\uddbc", testid: "export-jpg" },
-                        ].map(({ label, ext, icon, testid }) => (
-                          <button
-                            key={ext}
-                            data-testid={testid}
-                            className="flex items-center gap-2 rounded px-4 py-2 text-sm text-slate-200 hover:bg-cyan-900/50 hover:text-white transition-colors whitespace-nowrap"
-                            onClick={() => {
-                              setExportMenuOpen(false);
-                              if (ext === "csv") exportFnoAsCSV(fnoData);
-                              else if (ext === "xls") exportFnoAsXLS(fnoData);
-                              else if (ext === "pdf") exportFnoAsPDF(fnoData);
-                              else if (ext === "doc") exportFnoAsWord(fnoData);
-                              else exportFnoAsJPG(exportTableRef);
-                            }}
-                          >
-                            <span>{icon}</span>
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* === 3-COLUMN LAYOUT: Part 1 ===
-            Column 1: NIFTY (sticky) | Column 2: BANKNIFTY | Column 3: Top 4 Best Trades
-          */}
-          {fnoData ? (
-            <>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-testid="fno-3col-layout">
-                {/* Column 1: NIFTY — Sticky */}
-                <div className="lg:sticky lg:top-4 lg:self-start">
-                  {fnoData.nifty_projection ? (
-                    <IndexPane pane={fnoData.nifty_projection} />
-                  ) : (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400 animate-pulse">Computing NIFTY...</div>
-                  )}
-                </div>
-
-                {/* Column 2: BANKNIFTY */}
-                <div>
-                  {fnoData.banknifty_projection ? (
-                    <IndexPane pane={fnoData.banknifty_projection} />
-                  ) : (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400 animate-pulse">Computing BANKNIFTY...</div>
-                  )}
-                </div>
-
-                {/* Column 3: Top 4 Best Individual Stock Trades + Custom Script */}
-                <div className="space-y-4">
-                  <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="top4-trades-panel">
-                    <CardHeader className="py-3">
-                      <CardTitle className="text-white text-sm">Top 4 Best Stock Trades</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {fnoData.stock_signals?.length ? (
-                        [...fnoData.stock_signals]
-                          .sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0))
-                          .slice(0, 4)
-                          .map((trade, idx) => (
-                            <FNOSignalCard key={trade.script} signal={trade} suffix={`top4-${idx}`} variant="top4" />
-                          ))
-                      ) : (
-                        <p className="text-sm text-slate-400">No stock trades available yet.</p>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {fnoData.custom_signal ? (
-                    <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="custom-script-result-card">
-                      <CardHeader className="py-3">
-                        <CardTitle className="text-white text-sm">Custom Script Result</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-1 text-xs">
-                        <p className="font-mono text-cyan-200">{fnoData.custom_signal.script}</p>
-                        <LiveInfoBox signal={fnoData.custom_signal} suffix="custom-script-result" />
-                        <p>Direction: {fnoData.custom_signal.direction}</p>
-                        <p>Entry/SL/T1/T2: ₹{formatNumber(fnoData.custom_signal.entry_price)} / ₹{formatNumber(fnoData.custom_signal.stop_loss)} / ₹{formatNumber(fnoData.custom_signal.target1)} / ₹{formatNumber(fnoData.custom_signal.target2)}</p>
-                        <p>Confluence: {fnoData.custom_signal.confluence_score}</p>
-                      </CardContent>
-                    </Card>
-                  ) : null}
-                </div>
-              </div>
-
-              {/* === Part 2: Individual Stock Signals — 3 Column Grid, Max 15 === */}
-              <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="stock-fno-bottom-panel">
-                <CardHeader>
-                  <CardTitle className="text-white">Profitable F&O Signals — Best 15 Individual Stocks</CardTitle>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {fnoData.stock_signals?.length ? (
-                    fnoData.stock_signals.slice(0, 15).map((signal, idx) => (
-                      <FNOSignalCard key={signal.script} signal={signal} suffix={`stock-${idx}`} variant="stock" />
-                    ))
-                  ) : (
-                    <p className="text-sm text-slate-400" data-testid="stock-fno-empty-note">No verified stock option-chain opportunities found in this cycle.</p>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          ) : null}
-
-          {/* Hidden Export Table for JPG capture */}
-          {fnoData && (
-            <div
-              ref={exportTableRef}
-              style={{
-                position: "absolute", left: "-9999px", top: 0, width: "1100px",
-                background: "#ffffff", padding: "24px", fontFamily: "Arial, sans-serif", fontSize: "13px", color: "#1a1a1a",
-              }}
-            >
-              <h2 style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#FFFFFF", background: "#1E3A5F", padding: "8px 12px", borderRadius: "4px" }}>
-                Stock Options — Correct Lot Sizes \u0915\u0947 \u0938\u093e\u0925
-              </h2>
-              <table style={{ width: "100%", borderCollapse: "collapse", color: "#1A1A1A" }}>
-                <thead>
-                  <tr style={{ background: "#1E3A5F" }}>
-                    {["Script", "Bias", "Lot", "Entry ₹", "SL", "T1", "T2", "Investment (₹)", "T1%", "T1 Profit ₹", "T2%", "T2 Profit ₹", "Conf", "Bias Point"].map((h) => (
-                      <th key={h} style={{ border: "1px solid #d1d5db", padding: "6px 8px", textAlign: "center", fontWeight: "600", fontSize: "12px", color: "#FFFFFF" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {collectAllFnoSignals(fnoData).map((sig, i) => {
-                    const row = buildExportRow(sig);
-                    return (
-                      <tr key={sig.script} style={{ background: i % 2 === 0 ? "#ffffff" : "#f0f4f8", color: "#1A1A1A" }}>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", fontWeight: "500", color: "#1A1A1A" }}>{row["Script"]}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", color: row["Bias"] === "BULLISH" ? "#059669" : "#dc2626", fontWeight: "600" }}>{row["Bias"]}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["Lot"]}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>₹{row["Entry ₹"]}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#dc2626" }}>{row["SL"]}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["T1"]}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>{row["T2"]}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#1A1A1A" }}>₹{Number(row["Investment (₹)"]).toLocaleString("en-IN")}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{Number(row["T1%"]).toFixed(2)}%</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T1 Profit ₹"]).toLocaleString("en-IN")}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>{Number(row["T2%"]).toFixed(2)}%</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: "#059669" }}>₹{Number(row["T2 Profit ₹"]).toLocaleString("en-IN")}</td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "center", fontWeight: "600", color: row["Conf"] >= 80 ? "#D97706" : "#1A1A1A" }}>
-                          {row["Conf"]}
-                        </td>
-                        <td style={{ border: "1px solid #e5e7eb", padding: "5px 8px", textAlign: "right", color: row["Bias Point"] >= 0 ? "#2563EB" : "#EA580C" }}>{Number(row["Bias Point"]).toFixed(2)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <p style={{ marginTop: "12px", fontSize: "11px", color: "#6b7280" }}>
-                Note: \u0938\u092d\u0940 lot sizes NSE verified \u0939\u0948\u0902 (March 2026 – dhan.co) — Investment = Entry Price × Lot Size (1 lot premium cost) | Generated: {new Date().toLocaleString("en-IN")}
-              </p>
-            </div>
-          )}
+          <FNOGeneratorPanel
+            me={me} fnoData={fnoData} fnoLoading={fnoLoading} fnoError={fnoError} fnoProgress={fnoProgress}
+            generate={generate} settingsOpen={settingsOpen} setSettingsOpen={setSettingsOpen}
+            budgetInput={budgetInput} setBudgetInput={setBudgetInput} riskInput={riskInput} setRiskInput={setRiskInput}
+            settingsSaving={settingsSaving} saveSettings={saveSettings}
+            exportMenuOpen={exportMenuOpen} setExportMenuOpen={setExportMenuOpen} exportTableRef={exportTableRef}
+            customPositions={customPositions} loadCustomPositions={loadCustomPositions}
+            authHeaders={authHeaders} syncCredits={syncCredits}
+            alertSoundEnabled={alertSoundEnabled} enableAlertSound={enableAlertSound} playAlertSound={playAlertSound}
+          />
+          {fnoData && <FNOResultsGrid fnoData={fnoData} />}
+          <FNOExportTable ref={exportTableRef} fnoData={fnoData} />
         </>
       )}
 
-      {activeTab === "alerts" && (
-        <AlertRuleEngine authHeaders={authHeaders} />
-      )}
-
-      {activeTab === "journal" && (
-        <TradingJournal authHeaders={authHeaders} />
-      )}
-
-      {activeTab === "backtester" && (
-        <StrategyBacktester authHeaders={authHeaders} />
-      )}
-
-      {activeTab === "performance" && (
-        <FNOSignalHistory authHeaders={authHeaders} />
-      )}
-
+      {activeTab === "alerts" && <AlertRuleEngine authHeaders={authHeaders} />}
+      {activeTab === "journal" && <TradingJournal authHeaders={authHeaders} />}
+      {activeTab === "backtester" && <StrategyBacktester authHeaders={authHeaders} />}
+      {activeTab === "performance" && <FNOSignalHistory authHeaders={authHeaders} />}
       {activeTab === "analytics" && (
         <div className="space-y-6">
           <FNOIVAnalytics authHeaders={authHeaders} />
@@ -410,6 +104,141 @@ export function FNODashboard({
   );
 }
 
+// ── Signal Generator Panel ────────────────────────────────────────────────────
+
+function FNOGeneratorPanel({
+  me, fnoData, fnoLoading, fnoError, fnoProgress, generate,
+  settingsOpen, setSettingsOpen, budgetInput, setBudgetInput, riskInput, setRiskInput,
+  settingsSaving, saveSettings, exportMenuOpen, setExportMenuOpen, exportTableRef,
+  customPositions, loadCustomPositions, authHeaders, syncCredits,
+  alertSoundEnabled, enableAlertSound, playAlertSound,
+}) {
+  return (
+    <Card className="result-card border-slate-800 bg-slate-950/70">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-white">F&O Projections</CardTitle>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setSettingsOpen((v) => !v)} className="h-7 w-7 p-0 text-slate-400 hover:text-cyan-300" data-testid="fno-settings-toggle">
+            <Settings size={15} />
+          </Button>
+          <span className="text-xs text-slate-500" data-testid="fno-budget-display">Budget: {Number(me?.fno_budget || 500000).toLocaleString("en-IN")} | Risk: {me?.account_risk_pct || 2}%</span>
+        </div>
+        <Button type="button" onClick={() => generate()} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="fno-generate-button">
+          <RefreshCw size={16} className={fnoLoading ? "animate-spin" : ""} />
+          {fnoLoading ? (fnoProgress || "Generating...") : "Generate F&O Projections (-2)"}
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {settingsOpen && (
+          <div className="flex flex-wrap items-end gap-3 rounded-md border border-slate-700 bg-slate-900/80 p-3" data-testid="fno-settings-panel">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400">Account Size</label>
+              <Input type="number" min="0" step="1000" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} className="w-40 border-slate-700 bg-slate-800 text-slate-100" data-testid="fno-budget-input" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400">Risk Per Trade (%)</label>
+              <Input type="number" min="0.1" max="100" step="0.1" value={riskInput} onChange={(e) => setRiskInput(e.target.value)} className="w-28 border-slate-700 bg-slate-800 text-slate-100" data-testid="fno-risk-input" />
+            </div>
+            <Button type="button" onClick={saveSettings} disabled={settingsSaving} className="h-9 bg-cyan-600 text-white hover:bg-cyan-500" data-testid="fno-settings-save">
+              {settingsSaving ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        )}
+        <FNOStickyCards customPositions={customPositions} loadCustomPositions={loadCustomPositions} authHeaders={authHeaders} syncCredits={syncCredits} alertSoundEnabled={alertSoundEnabled} enableAlertSound={enableAlertSound} playAlertSound={playAlertSound} />
+        <FNOEventPopup authHeaders={authHeaders} />
+        <BBEAlertMonitor authHeaders={authHeaders} alertSoundEnabled={alertSoundEnabled} playAlertSound={playAlertSound} />
+        {fnoError && <p className="text-sm text-rose-400" data-testid="fno-error">{fnoError}</p>}
+        {!fnoData ? (
+          <p className="text-sm text-slate-400" data-testid="fno-empty-note">Nothing shown yet. Click <strong>Generate F&O Projections (-2)</strong> for live analysis.</p>
+        ) : (
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <p className="text-xs text-slate-400" data-testid="fno-refreshed-at">
+              Refreshed at: {formatTime(fnoData.analysis_refreshed_at)} | Charged: {fnoData.cost_charged}
+            </p>
+            <ExportMenu fnoData={fnoData} open={exportMenuOpen} setOpen={setExportMenuOpen} exportTableRef={exportTableRef} />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ExportMenu({ fnoData, open, setOpen, exportTableRef }) {
+  const items = [
+    { label: "Export as CSV", ext: "csv", fn: () => exportFnoAsCSV(fnoData) },
+    { label: "Export as XLS", ext: "xls", fn: () => exportFnoAsXLS(fnoData) },
+    { label: "Export as PDF", ext: "pdf", fn: () => exportFnoAsPDF(fnoData) },
+    { label: "Export as Word", ext: "doc", fn: () => exportFnoAsWord(fnoData) },
+    { label: "Export as JPG", ext: "jpg", fn: () => exportFnoAsJPG(exportTableRef) },
+  ];
+  return (
+    <div className="relative">
+      <Button data-testid="fno-export-btn" variant="outline" size="sm" className="border-cyan-700 bg-cyan-900/30 text-cyan-300 hover:bg-cyan-800/50 gap-1.5" onClick={() => setOpen((v) => !v)}>
+        <Download className="h-3.5 w-3.5" /> Export
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-9 z-50 flex flex-col gap-0.5 rounded-lg border border-cyan-800 bg-slate-900 p-1 shadow-xl" data-testid="fno-export-menu">
+          {items.map(({ label, ext, fn }) => (
+            <button key={ext} data-testid={`export-${ext}`} className="flex items-center gap-2 rounded px-4 py-2 text-sm text-slate-200 hover:bg-cyan-900/50 hover:text-white whitespace-nowrap" onClick={() => { setOpen(false); fn(); }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Results Grid ──────────────────────────────────────────────────────────────
+
+function FNOResultsGrid({ fnoData }) {
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-testid="fno-3col-layout">
+        <div className="lg:sticky lg:top-4 lg:self-start">
+          {fnoData.nifty_projection ? <IndexPane pane={fnoData.nifty_projection} /> : <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400 animate-pulse">Computing NIFTY...</div>}
+        </div>
+        <div>
+          {fnoData.banknifty_projection ? <IndexPane pane={fnoData.banknifty_projection} /> : <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400 animate-pulse">Computing BANKNIFTY...</div>}
+        </div>
+        <div className="space-y-4">
+          <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="top4-trades-panel">
+            <CardHeader className="py-3"><CardTitle className="text-white text-sm">Top 4 Best Stock Trades</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              {fnoData.stock_signals?.length ? (
+                [...fnoData.stock_signals].sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0)).slice(0, 4).map((trade, idx) => (
+                  <FNOSignalCard key={trade.script} signal={trade} suffix={`top4-${idx}`} variant="top4" />
+                ))
+              ) : <p className="text-sm text-slate-400">No stock trades available yet.</p>}
+            </CardContent>
+          </Card>
+          {fnoData.custom_signal && (
+            <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="custom-script-result-card">
+              <CardHeader className="py-3"><CardTitle className="text-white text-sm">Custom Script Result</CardTitle></CardHeader>
+              <CardContent className="space-y-1 text-xs">
+                <p className="font-mono text-cyan-200">{fnoData.custom_signal.script}</p>
+                <LiveInfoBox signal={fnoData.custom_signal} suffix="custom-script-result" />
+                <p>Direction: {fnoData.custom_signal.direction}</p>
+                <p>Entry/SL/T1/T2: {formatNumber(fnoData.custom_signal.entry_price)} / {formatNumber(fnoData.custom_signal.stop_loss)} / {formatNumber(fnoData.custom_signal.target1)} / {formatNumber(fnoData.custom_signal.target2)}</p>
+                <p>Confluence: {fnoData.custom_signal.confluence_score}</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+      <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="stock-fno-bottom-panel">
+        <CardHeader><CardTitle className="text-white">Profitable F&O Signals — Best 15 Individual Stocks</CardTitle></CardHeader>
+        <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {fnoData.stock_signals?.length ? (
+            fnoData.stock_signals.slice(0, 15).map((signal, idx) => <FNOSignalCard key={signal.script} signal={signal} suffix={`stock-${idx}`} variant="stock" />)
+          ) : <p className="text-sm text-slate-400" data-testid="stock-fno-empty-note">No verified stock option-chain opportunities found in this cycle.</p>}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+// ── Index Pane (NIFTY / BANKNIFTY) ───────────────────────────────────────────
 
 function IndexPane({ pane }) {
   return (
@@ -419,75 +248,63 @@ function IndexPane({ pane }) {
           <span>{pane.index_name}</span>
           <Badge className="border border-cyan-500/50 bg-cyan-500/20 text-cyan-200 text-xs">Spot {formatNumber(pane.spot, 2)}</Badge>
         </CardTitle>
-        <p className="text-[10px] text-slate-400" data-testid={`pane-range-${pane.index_name.toLowerCase()}`}>
-          Strike Filter: {formatNumber(pane.strike_range_min, 0)} – {formatNumber(pane.strike_range_max, 0)}
-        </p>
+        <p className="text-[10px] text-slate-400">Strike: {formatNumber(pane.strike_range_min, 0)} – {formatNumber(pane.strike_range_max, 0)}</p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Assured Signals */}
-        <div data-testid={`pane-assured-${pane.index_name.toLowerCase()}`}>
-          <p className="mb-1.5 text-xs font-semibold text-cyan-300">Assured Directional</p>
-          {pane.assured_signals.length ? (
-            <div className="space-y-1.5">
-              {pane.assured_signals.slice(0, 4).map((signal, idx) => (
-                <FNOSignalCard key={signal.script} signal={signal} suffix={`assured-${pane.index_name.toLowerCase()}-${idx}`} variant="assured" />
-              ))}
-            </div>
-          ) : (
-            <p className="text-[10px] text-slate-500">No assured directional setup currently.</p>
-          )}
-        </div>
-
-        {/* Watchlist */}
-        <div data-testid={`pane-watchlist-${pane.index_name.toLowerCase()}`}>
-          <p className="mb-1.5 text-xs font-semibold text-emerald-300">Watchlist</p>
-          {pane.watchlist_signals?.length ? (
-            <div className="space-y-1.5">
-              {pane.watchlist_signals.map((signal, idx) => (
-                <FNOSignalCard key={`${signal.script}-watch`} signal={signal} suffix={`watch-${pane.index_name.toLowerCase()}-${idx}`} variant="watchlist" />
-              ))}
-            </div>
-          ) : (
-            <p className="text-[10px] text-slate-500">No watchlist setups right now.</p>
-          )}
-        </div>
-
-        {/* Non-Directional */}
-        <div data-testid={`pane-nondirectional-${pane.index_name.toLowerCase()}`}>
-          <p className="mb-1.5 text-xs font-semibold text-amber-300">Non-Directional</p>
-          {pane.non_directional_strategies.length ? (
-            <div className="space-y-1.5">
-              {pane.non_directional_strategies.map((item) => (
-                <div key={`${pane.index_name}-${item.strike}`} className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[10px]">
-                  <p className="font-semibold text-amber-200">{item.strategy}</p>
-                  <p>Strike: {formatNumber(item.strike, 0)} | CE: {item.ce_script} | PE: {item.pe_script}</p>
-                  <p>Entry: ₹{formatNumber(item.combined_entry)}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[10px] text-slate-500">No non-directional setups.</p>
-          )}
-        </div>
-
-        {/* Reports */}
-        <div className="space-y-1.5" data-testid={`pane-reports-${pane.index_name.toLowerCase()}`}>
-          <div className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-[10px]">
-            <p className="font-semibold text-cyan-300 mb-0.5">With Consolidated</p>
-            <p>Breadth: {formatNumber(pane.with_consolidated_report.breadth_score)} | Momentum: {formatNumber(pane.with_consolidated_report.momentum_score)} | Bias: {pane.with_consolidated_report.bias}</p>
-          </div>
-          <div className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-[10px]">
-            <p className="font-semibold text-cyan-300 mb-0.5">Without Consolidated</p>
-            <p>Breadth: {formatNumber(pane.without_consolidated_report.breadth_score)} | Momentum: {formatNumber(pane.without_consolidated_report.momentum_score)} | Bias: {pane.without_consolidated_report.bias}</p>
-          </div>
-        </div>
-
-        {pane.rejection_note ? (
-          <p className="rounded-md border border-slate-700 bg-slate-900/70 p-2 text-[10px] font-bold text-white" data-testid={`pane-rejection-note-${pane.index_name.toLowerCase()}`}>
-            {pane.rejection_note}
-          </p>
-        ) : null}
+        <SignalSection title="Assured Directional" signals={pane.assured_signals} prefix={`assured-${pane.index_name.toLowerCase()}`} variant="assured" color="cyan" />
+        <SignalSection title="Watchlist" signals={pane.watchlist_signals} prefix={`watch-${pane.index_name.toLowerCase()}`} variant="watchlist" color="emerald" />
+        <NonDirectionalSection strategies={pane.non_directional_strategies} indexName={pane.index_name} />
+        <ReportsSection pane={pane} />
+        {pane.rejection_note && <p className="rounded-md border border-slate-700 bg-slate-900/70 p-2 text-[10px] font-bold text-white">{pane.rejection_note}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+function SignalSection({ title, signals, prefix, variant, color }) {
+  const colorMap = { cyan: "text-cyan-300", emerald: "text-emerald-300" };
+  return (
+    <div>
+      <p className={`mb-1.5 text-xs font-semibold ${colorMap[color]}`}>{title}</p>
+      {signals?.length ? (
+        <div className="space-y-1.5">{signals.slice(0, 4).map((s, i) => <FNOSignalCard key={s.script} signal={s} suffix={`${prefix}-${i}`} variant={variant} />)}</div>
+      ) : <p className="text-[10px] text-slate-500">No {title.toLowerCase()} setups right now.</p>}
+    </div>
+  );
+}
+
+function NonDirectionalSection({ strategies, indexName }) {
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-semibold text-amber-300">Non-Directional</p>
+      {strategies?.length ? (
+        <div className="space-y-1.5">
+          {strategies.map((item) => (
+            <div key={`${indexName}-${item.strike}`} className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[10px]">
+              <p className="font-semibold text-amber-200">{item.strategy}</p>
+              <p>Strike: {formatNumber(item.strike, 0)} | CE: {item.ce_script} | PE: {item.pe_script}</p>
+              <p>Entry: {formatNumber(item.combined_entry)}</p>
+            </div>
+          ))}
+        </div>
+      ) : <p className="text-[10px] text-slate-500">No non-directional setups.</p>}
+    </div>
+  );
+}
+
+function ReportsSection({ pane }) {
+  return (
+    <div className="space-y-1.5">
+      {["with_consolidated_report", "without_consolidated_report"].map(key => {
+        const r = pane[key];
+        const label = key.includes("with") ? "With Consolidated" : "Without Consolidated";
+        return (
+          <div key={key} className="rounded-md border border-slate-800 bg-slate-900/70 p-2 text-[10px]">
+            <p className="font-semibold text-cyan-300 mb-0.5">{label}</p>
+            <p>Breadth: {formatNumber(r.breadth_score)} | Momentum: {formatNumber(r.momentum_score)} | Bias: {r.bias}</p>
+          </div>
+        );
+      })}
+    </div>
   );
 }
