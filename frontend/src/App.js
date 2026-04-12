@@ -13,6 +13,7 @@ import { ErrorBoundary } from "@/components/Shared/ErrorBoundary";
 import { useNotifications, NotificationBell, NotificationPanel } from "@/components/Shared/NotificationCenter";
 import { usePushNotifications, PushNotifToggle } from "@/components/Shared/PushNotifications";
 import { LiveHelpModule } from "@/components/Shared/LiveHelpModule";
+import { UserCrmInbox } from "@/components/Shared/UserCrmInbox";
 
 // Lazy-loaded heavy dashboard components (~40% initial bundle reduction)
 const MultibaggerDashboard = lazy(() => import("@/components/Multibagger/MultibaggerDashboard").then(m => ({ default: m.MultibaggerDashboard })));
@@ -306,6 +307,7 @@ export default function App() {
         )}
 
         <ErrorBoundary>
+        <UserCrmInbox authHeaders={authHeaders} />
         <Suspense fallback={<LazyFallback />}>
         {currentPage === "multibagger" ? (
           <MultibaggerDashboard authHeaders={authHeaders} syncCredits={syncCredits} />

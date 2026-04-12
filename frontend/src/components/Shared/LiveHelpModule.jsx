@@ -62,6 +62,12 @@ export function LiveHelpModule({ authHeaders, me }) {
       setConnected(true);
       ws.send(JSON.stringify({ type: "join", role: "user", user_key: me?.user_key || "", username: me?.username || "User" }));
       setMessages(prev => [...prev, { type: "system", text: "Connected to Live Help. An admin will join when available.", ts: new Date().toISOString() }]);
+      // Fetch session analysis hints on connect
+      axios.get(`${API}/livehelp/session-analysis`, { headers: authHeaders }).then(res => {
+        (res.data.suggestions || []).forEach(s => {
+          setMessages(prev => [...prev, { type: "hint", text: s.message, severity: s.severity, ts: new Date().toISOString() }]);
+        });
+      }).catch(() => {});
     };
 
     ws.onmessage = (e) => {
@@ -129,7 +135,9 @@ export function LiveHelpModule({ authHeaders, me }) {
 
   // ── WebRTC Voice ────────────────────────────────────────────────────
   const createPeerConnection = useCallback(() => {
-    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current.length > 0 ? iceServersRef.current : [{ urls: "stun:stun.l.google.com:19302" }] });
+    // Use fetched ICE servers, fallback to Google STUN
+    const config = iceServersRef.current.length > 0 ? iceServersRef.current : [{ urls: "stun:stun.l.google.com:19302" }];
+    const pc = new RTCPeerConnection({ iceServers: config });
     pc.onicecandidate = (e) => {
       if (e.candidate && wsRef.current) {
         wsRef.current.send(JSON.stringify({ type: "ice-candidate", candidate: e.candidate.toJSON() }));

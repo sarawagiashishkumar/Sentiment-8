@@ -778,7 +778,13 @@ async def startup_tasks():
         await db.usage_tracking.create_index([("user_key", 1), ("feature", 1), ("ts_epoch", -1)])
         await db.payments.create_index([("user_key", 1), ("status", 1)])
         await db.livehelp_messages.create_index([("session_id", 1), ("ts_epoch", -1)])
-        logger.info("CRM/Fraud/Alert/Payment/LiveHelp indexes ensured")
+        # Performance indexes for heavy queries
+        await db.fno_signal_log.create_index([("generated_at", -1)])
+        await db.trading_journal.create_index([("user_key", 1), ("ts_epoch", -1)])
+        await db.trading_journal.create_index([("user_key", 1), ("event_type", 1)])
+        await db.user_notifications.create_index([("user_key", 1), ("ts", -1)])
+        await db.custom_positions.create_index([("user_key", 1), ("status", 1)])
+        logger.info("All database indexes ensured")
     except Exception as exc:
         logger.warning("CRM/Fraud index creation failed (non-fatal): %s", exc)
 

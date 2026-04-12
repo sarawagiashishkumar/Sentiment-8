@@ -55,12 +55,18 @@ def _is_impossible_travel(distance_km: float, elapsed_seconds: float) -> dict:
 
 
 async def _get_ip_geo(ip: str) -> dict | None:
-    """Get approximate geolocation from IP using ip-api.com (free, no key)."""
+    """Get approximate geolocation from IP using ip-api.com (free, no key).
+    Uses asyncio to avoid blocking the event loop."""
     if not ip or ip in ("127.0.0.1", "::1", "localhost"):
         return None
     try:
+        import asyncio
         import requests
-        resp = requests.get(f"http://ip-api.com/json/{ip}?fields=status,lat,lon,city,regionName,country,isp", timeout=5)
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(
+            None,
+            lambda: requests.get(f"http://ip-api.com/json/{ip}?fields=status,lat,lon,city,regionName,country,isp", timeout=3)
+        )
         if resp.status_code == 200:
             data = resp.json()
             if data.get("status") == "success":
