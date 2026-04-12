@@ -4,12 +4,15 @@ All models are defined here and re-exported.
 """
 from __future__ import annotations
 
+import math
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+
+# ── Auth & Session ────────────────────────────────────────────────────────────
 
 class StatusCheck(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -30,7 +33,7 @@ class AccessRequest(BaseModel):
 
 class AccessResponse(BaseModel):
     token: str
-    role: Literal["owner", "sub_admin", "user"]
+    role: str  # "owner" | "sub_admin" | "user"
     credits: float
     user_key: str
     username: str
@@ -40,13 +43,15 @@ class AccessResponse(BaseModel):
 
 
 class MeResponse(BaseModel):
-    role: Literal["owner", "sub_admin", "user"]
+    role: str  # "owner" | "sub_admin" | "user"
     credits: float
     user_key: str
     username: str
     admin_exempt: bool
     fno_budget: float = 500000.0
     account_risk_pct: float = 2.0
+    package: str = "free"
+    suspended: bool = False
 
 
 class UserSettingsUpdate(BaseModel):
@@ -54,22 +59,26 @@ class UserSettingsUpdate(BaseModel):
     account_risk_pct: float | None = None
 
 
+# ── Admin ─────────────────────────────────────────────────────────────────────
+
 class AdminUserView(BaseModel):
     user_key: str
     username: str
-    role: Literal["owner", "sub_admin", "user"]
+    role: str  # "owner" | "sub_admin" | "user"
     credits: float
     created_at: str
     created_by: str
     quota_limit: int
     quota_used: int
     credential_label: str
+    suspended: bool = False
+    package: str = "free"
 
 
 class AdminCreateUserRequest(BaseModel):
     username: str | None = None
     password: str | None = None
-    role: Literal["sub_admin", "user"] = "user"
+    role: str = "user"  # "sub_admin" | "user"
     initial_credits: float = 0
     quota_limit: int = 10
 
@@ -84,17 +93,17 @@ class AdminSetQuotaRequest(BaseModel):
 
 class AdminUserProfileUpdateRequest(BaseModel):
     username: str | None = None
-    role: Literal["owner", "sub_admin", "user"] | None = None
+    role: str | None = None  # "owner" | "sub_admin" | "user"
 
 
 class DomainMappingCreateRequest(BaseModel):
     domain: str
     target_record: str
-    record_type: Literal["A"] = "A"
+    record_type: str = "A"
 
 
 class DomainMappingStatusUpdateRequest(BaseModel):
-    status: Literal["PENDING", "ACTIVE", "FAILED"]
+    status: str  # "PENDING" | "ACTIVE" | "FAILED"
 
 
 class ApiControlUpdateRequest(BaseModel):
@@ -102,6 +111,12 @@ class ApiControlUpdateRequest(BaseModel):
     moneycontrol_data_enabled: bool | None = None
     strict_live_only: bool | None = None
 
+
+class MacroEventsUpdateRequest(BaseModel):
+    events: list[str]
+
+
+# ── Stock Data ────────────────────────────────────────────────────────────────
 
 class StockCoreNormalized(BaseModel):
     symbol: str
@@ -121,6 +136,18 @@ class StockCoreNormalized(BaseModel):
     sector: str = "Unknown"
 
 
+# ── Multibagger ───────────────────────────────────────────────────────────────
+
+_FLOAT_FIELDS_MB: set[str] = {
+    "ltp", "market_cap_cr", "pe_ratio", "year_high", "year_low",
+    "upside_to_52w_high_pct", "pb_ratio_est", "peg_ratio_est",
+    "current_rsi_level", "gtt_buy_price",
+    "roe", "roce", "beneish_m_score", "eps_growth_pct",
+    "debt_to_equity", "current_ratio", "gross_margin",
+    "pct_below_ath", "roic_vs_wacc", "fcf_yield_val", "eps_cagr_3y",
+}
+
+
 class MultibaggerCandidate(BaseModel):
     symbol: str
     company_name: str
@@ -138,8 +165,8 @@ class MultibaggerCandidate(BaseModel):
     multibagger_score: int
     current_rsi_level: float | None = None
     gtt_buy_price: float | None = None
-    targeted_upside_price: dict
-    targeted_upside_profit_pct: dict
+    targeted_upside_price: dict[str, Any]
+    targeted_upside_profit_pct: dict[str, Any]
     thesis: str
     analysis_refreshed_at: str
     roe: float | None = None
@@ -150,9 +177,9 @@ class MultibaggerCandidate(BaseModel):
     debt_to_equity: float | None = None
     current_ratio: float | None = None
     gross_margin: float | None = None
-    vol_bands: dict | None = None
-    # Phase 3: Multibagger Screener + Price Band Upgrade fields
-    price_bands: dict | None = None
+    vol_bands: dict[str, Any] | None = None
+    # Price Band Upgrade fields
+    price_bands: dict[str, Any] | None = None
     band_computation_status: str | None = None
     forensic_flag: str | None = None
     conviction_penalty: int = 0
@@ -170,23 +197,12 @@ class MultibaggerCandidate(BaseModel):
     data_source: str | None = None
     cache_as_of: str | None = None
 
-    from pydantic import model_validator
-
     @model_validator(mode="before")
     @classmethod
-    def _sanitize_nan_floats(cls, values):
-        import math
-        _float_fields = {
-            "ltp", "market_cap_cr", "pe_ratio", "year_high", "year_low",
-            "upside_to_52w_high_pct", "pb_ratio_est", "peg_ratio_est",
-            "current_rsi_level", "gtt_buy_price",
-            "roe", "roce", "beneish_m_score", "eps_growth_pct",
-            "debt_to_equity", "current_ratio", "gross_margin",
-            "pct_below_ath", "roic_vs_wacc", "fcf_yield_val", "eps_cagr_3y",
-        }
+    def _sanitize_nan_floats(cls, values: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(values, dict):
             return values
-        for field in _float_fields:
+        for field in _FLOAT_FIELDS_MB:
             v = values.get(field)
             if v is None:
                 continue
@@ -198,13 +214,15 @@ class MultibaggerCandidate(BaseModel):
         return values
 
 
+# ── F&O ───────────────────────────────────────────────────────────────────────
+
 class FNOContract(BaseModel):
     script: str
     underlying: str
     expiry: str
     expiry_time_ist: str = "15:30"
     strike: float
-    option_type: Literal["CE", "PE"]
+    option_type: str  # "CE" | "PE"
     exchange: str
     lot_size: int
 
@@ -214,7 +232,7 @@ class FNOSignalResponse(BaseModel):
     underlying: str
     expiry: str
     strike: float
-    option_type: Literal["CE", "PE"]
+    option_type: str  # "CE" | "PE"
     exchange: str
     lot_size: int
     underlying_ltp: float
@@ -228,13 +246,13 @@ class FNOSignalResponse(BaseModel):
     ltp_margin_to_t1_amount: float
     ltp_margin_to_t1_pct: float
     achievable_profit_pct: float
-    direction: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+    direction: str  # "BULLISH" | "BEARISH" | "NEUTRAL"
     strategy: str
     strategy_library_id: str | None = None
     strategy_library_name: str | None = None
     market_regime: str | None = None
-    macro_context: dict | None = None
-    index_breadth: dict | None = None
+    macro_context: dict[str, Any] | None = None
+    index_breadth: dict[str, Any] | None = None
     entry_price: float
     stop_loss: float
     target1: float
@@ -246,39 +264,39 @@ class FNOSignalResponse(BaseModel):
     best_exit_price: float | None = None
     remaining_trading_days: int = 0
     best_exit_date_str: str | None = None
-    near_expiry_badge: bool = False   # True when remaining_trading_days == 2 (next-day expiry)
-    expiry_today_badge: bool = False  # True when option expires TODAY (same-day expiry)
-    best_budget_entry: float | None = None    # Pullback entry: wait for this price before buying
-    budget_entry_alert: bool = False          # True when meaningful pullback zone ≥ 3% below entry
-    trigger_factors: List[str]
+    near_expiry_badge: bool = False
+    expiry_today_badge: bool = False
+    best_budget_entry: float | None = None
+    budget_entry_alert: bool = False
+    trigger_factors: list[str]
     confluence_score: int
-    signal_quality: Literal["HIGH", "MEDIUM", "LOW"]
+    signal_quality: str  # "HIGH" | "MEDIUM" | "LOW"
     conviction_level: str = "MEDIUM"
     is_potential_trade: bool
     minutes_to_expiry: int
-    expiry_risk: Literal["LOW", "MEDIUM", "HIGH"]
-    data_source: Literal["LIVE_OPTION_CHAIN", "MODELED_FROM_SPOT"]
+    expiry_risk: str  # "LOW" | "MEDIUM" | "HIGH"
+    data_source: str  # "LIVE_OPTION_CHAIN" | "MODELED_FROM_SPOT"
     analysis_refreshed_at: str
-    # Option chain analytics (computed from live Kite OI / IV / Gamma data)
+    # Option chain analytics
     max_pain: float | None = None
-    iv_rank: float | None = None       # IV percentile within current chain (0-100 proxy)
-    iv_rank_52w: float | None = None   # True 52-week IV percentile (from iv_history)
-    atm_iv: float | None = None        # Current ATM implied volatility
-    oi_buildup: str | None = None      # LONG_BUILDUP | SHORT_BUILDUP | SHORT_COVERING | LONG_UNWINDING | NEUTRAL
-    gex: float | None = None           # Net gamma exposure (scaled, CE-minus-PE)
-    # Step 4: Position sizing annotation (additive, does NOT block signals)
+    iv_rank: float | None = None
+    iv_rank_52w: float | None = None
+    atm_iv: float | None = None
+    oi_buildup: str | None = None
+    gex: float | None = None
+    # Position sizing
     not_affordable: bool = False
-    sizing_info: dict | None = None
-    # Batch 3: V2 Scoring Breakdown (additive fields, existing fields unchanged)
-    confluence_score_v2: float | None = None    # final 0-100 V2 score
-    score_bucket_A: float | None = None         # strategy/backtest sub-score
-    score_bucket_B: float | None = None         # direction/breadth sub-score
-    score_bucket_C: float | None = None         # options/flow/sentiment sub-score
-    score_bucket_D: float | None = None         # trade quality sub-score
-    score_suppress_reason: str | None = None    # reason if nearly suppressed
-    score_regime_label: str | None = None       # regime at signal time
-    score_flow_band: str | None = None          # flow band at signal time
-    score_news_flag: str | None = None          # POSITIVE/NEGATIVE/NEUTRAL
+    sizing_info: dict[str, Any] | None = None
+    # V2 Scoring Breakdown
+    confluence_score_v2: float | None = None
+    score_bucket_A: float | None = None
+    score_bucket_B: float | None = None
+    score_bucket_C: float | None = None
+    score_bucket_D: float | None = None
+    score_suppress_reason: str | None = None
+    score_regime_label: str | None = None
+    score_flow_band: str | None = None
+    score_news_flag: str | None = None
 
 
 class NonDirectionalStrategy(BaseModel):
@@ -292,33 +310,25 @@ class NonDirectionalStrategy(BaseModel):
 
 
 class IndexAnalysisReport(BaseModel):
-    report_type: Literal["with_consolidated", "without_consolidated"]
+    report_type: str  # "with_consolidated" | "without_consolidated"
     breadth_score: float
     momentum_score: float
-    bias: Literal["BULLISH", "BEARISH", "NEUTRAL"]
-    top_contributors: List[str]
+    bias: str  # "BULLISH" | "BEARISH" | "NEUTRAL"
+    top_contributors: list[str]
     summary: str
 
 
 class IndexProjectionPane(BaseModel):
-    index_name: Literal["NIFTY", "BANKNIFTY"]
+    index_name: str  # "NIFTY" | "BANKNIFTY"
     spot: float
     strike_range_min: float
     strike_range_max: float
-    assured_signals: List[FNOSignalResponse]
-    watchlist_signals: List[FNOSignalResponse]
-    non_directional_strategies: List[NonDirectionalStrategy]
+    assured_signals: list[FNOSignalResponse]
+    watchlist_signals: list[FNOSignalResponse]
+    non_directional_strategies: list[NonDirectionalStrategy]
     rejection_note: str | None = None
     with_consolidated_report: IndexAnalysisReport
     without_consolidated_report: IndexAnalysisReport
-
-
-class MultibaggerGenerateResponse(BaseModel):
-    cost_charged: float
-    credits_remaining: float
-    analysis_refreshed_at: str
-    candidates: List[MultibaggerCandidate]
-    potential_count: int
 
 
 class FNOGenerateRequest(BaseModel):
@@ -329,17 +339,32 @@ class FNOGenerateResponse(BaseModel):
     cost_charged: float
     credits_remaining: float
     analysis_refreshed_at: str
-    signals: List[FNOSignalResponse]
-    potential_signals: List[FNOSignalResponse]
-    top_trades: List[FNOSignalResponse]
+    signals: list[FNOSignalResponse]
+    potential_signals: list[FNOSignalResponse]
+    top_trades: list[FNOSignalResponse]
     custom_signal: FNOSignalResponse | None = None
     nifty_projection: IndexProjectionPane
     banknifty_projection: IndexProjectionPane
-    stock_signals: List[FNOSignalResponse]
+    stock_signals: list[FNOSignalResponse]
     no_signals_alert: str | None = None
-    market_regime: dict | None = None
-    market_session: dict | None = None
+    market_regime: dict[str, Any] | None = None
+    market_session: dict[str, Any] | None = None
 
+
+class MultibaggerGenerateResponse(BaseModel):
+    cost_charged: float
+    credits_remaining: float
+    analysis_refreshed_at: str
+    candidates: list[MultibaggerCandidate]
+    potential_count: int
+
+
+class ScriptSearchResult(BaseModel):
+    query: str
+    suggestions: list[str]
+
+
+# ── Portfolio ─────────────────────────────────────────────────────────────────
 
 class PortfolioPositionInput(BaseModel):
     symbol: str
@@ -348,13 +373,13 @@ class PortfolioPositionInput(BaseModel):
 
 
 class PortfolioAnalyzeRequest(BaseModel):
-    positions: List[PortfolioPositionInput]
+    positions: list[PortfolioPositionInput]
 
 
 class PortfolioHorizonRange(BaseModel):
     upside_pct: float
     downside_pct: float
-    flag: Literal["GREEN", "RED"]
+    flag: str  # "GREEN" | "RED"
 
 
 class PortfolioExpectedSignal(BaseModel):
@@ -362,7 +387,7 @@ class PortfolioExpectedSignal(BaseModel):
     min_expected_price: float | None = None
     amount_signal: str
     percent_signal: str
-    direction: Literal["PROFIT", "LOSS"]
+    direction: str  # "PROFIT" | "LOSS"
 
 
 class PortfolioStockAnalysis(BaseModel):
@@ -379,21 +404,21 @@ class PortfolioStockAnalysis(BaseModel):
     quantity: float
     allocation_pct: float
     pnl_pct: float
-    value_flag: Literal["Attractive", "Fair", "Expensive"]
-    price_zone: Literal["Near 52W low", "Mid range", "Near 52W high"]
-    momentum_proxy: Literal["Positive trend", "Flat", "Negative trend"]
-    quality_proxy: Literal["Stable quality", "Speculative", "Moderate"]
+    value_flag: str  # "Attractive" | "Fair" | "Expensive"
+    price_zone: str  # "Near 52W low" | "Mid range" | "Near 52W high"
+    momentum_proxy: str  # "Positive trend" | "Flat" | "Negative trend"
+    quality_proxy: str  # "Stable quality" | "Speculative" | "Moderate"
     expected_ranges: dict[str, PortfolioHorizonRange]
     expected_signals: dict[str, PortfolioExpectedSignal]
     recommendation: str
     comments: str
-    master_snapshot: dict | None = None
+    master_snapshot: dict[str, Any] | None = None
     altman_z_zone: str | None = None
     roic_wacc_spread: float | None = None
     piotroski_score: int | None = None
     beneish_m_score: float | None = None
-    # Phase 4: Price Band + Verdict Integration
-    price_bands: dict | None = None
+    # Price Band + Verdict Integration
+    price_bands: dict[str, Any] | None = None
     band_error: str | None = None
     holding_verdict: str | None = None
 
@@ -402,11 +427,13 @@ class PortfolioAnalyzeResponse(BaseModel):
     cost_charged: float
     credits_remaining: float
     parsed_positions_count: int
-    stocks: List[PortfolioStockAnalysis]
-    failed_symbols: List[str] = []
-    portfolio_risk_metrics: dict | None = None
-    enhanced_analytics: dict | None = None
+    stocks: list[PortfolioStockAnalysis]
+    failed_symbols: list[str] = []
+    portfolio_risk_metrics: dict[str, Any] | None = None
+    enhanced_analytics: dict[str, Any] | None = None
 
+
+# ── Custom Positions ──────────────────────────────────────────────────────────
 
 class CustomPositionCreateRequest(BaseModel):
     script: str
@@ -420,8 +447,7 @@ class CustomPositionSellRequest(BaseModel):
 
 
 class MonitoringEvent(BaseModel):
-    """Batch 4: Monitoring event for sticky F&O positions."""
-    type: str  # NEWS_IMPACT, REGIME_SHIFT, URGENT_EXIT
+    type: str  # NEWS_IMPACT | REGIME_SHIFT | URGENT_EXIT
     symbol: str = ""
     underlying: str = ""
     script: str = ""
@@ -429,7 +455,7 @@ class MonitoringEvent(BaseModel):
     timestamp: str = ""
     severity: str = "MEDIUM"
     reason: str = ""
-    details: dict = Field(default_factory=dict)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class CustomPositionResponse(BaseModel):
@@ -444,7 +470,7 @@ class CustomPositionResponse(BaseModel):
     buy_price: float
     created_at: str
     last_update: str
-    status: Literal["OPEN", "CLOSED", "EXPIRED", "SOLD"]
+    status: str  # "OPEN" | "CLOSED" | "EXPIRED" | "SOLD"
     alert: str | None = None
     latest_option_ltp: float | None = None
     target1: float | None = None
@@ -477,30 +503,24 @@ class CustomPositionCreateResponse(BaseModel):
     position: CustomPositionResponse
 
 
-class ScriptSearchResult(BaseModel):
-    query: str
-    suggestions: List[str]
+# ── Exports ───────────────────────────────────────────────────────────────────
 
-
-class MacroEventsUpdateRequest(BaseModel):
-    events: List[str]
-
-
-__all__ = [
+__all__: list[str] = [
     "StatusCheck", "StatusCheckCreate",
-    "AccessRequest", "AccessResponse", "MeResponse",
+    "AccessRequest", "AccessResponse", "MeResponse", "UserSettingsUpdate",
     "AdminUserView", "AdminCreateUserRequest", "AdminSetCreditsRequest",
     "AdminSetQuotaRequest", "AdminUserProfileUpdateRequest",
     "DomainMappingCreateRequest", "DomainMappingStatusUpdateRequest",
-    "ApiControlUpdateRequest", "StockCoreNormalized",
-    "MultibaggerCandidate", "FNOContract", "FNOSignalResponse",
-    "NonDirectionalStrategy", "IndexAnalysisReport", "IndexProjectionPane",
-    "MultibaggerGenerateResponse", "FNOGenerateRequest", "FNOGenerateResponse",
+    "ApiControlUpdateRequest", "MacroEventsUpdateRequest",
+    "StockCoreNormalized",
+    "MultibaggerCandidate", "MultibaggerGenerateResponse",
+    "FNOContract", "FNOSignalResponse", "NonDirectionalStrategy",
+    "IndexAnalysisReport", "IndexProjectionPane",
+    "FNOGenerateRequest", "FNOGenerateResponse",
+    "ScriptSearchResult",
     "PortfolioPositionInput", "PortfolioAnalyzeRequest",
-    "PortfolioHorizonRange", "PortfolioExpectedSignal", "PortfolioStockAnalysis",
-    "PortfolioAnalyzeResponse", "CustomPositionCreateRequest",
-    "MonitoringEvent",
-    "CustomPositionSellRequest", "CustomPositionResponse",
-    "CustomPositionCreateResponse", "ScriptSearchResult",
-    "MacroEventsUpdateRequest",
+    "PortfolioHorizonRange", "PortfolioExpectedSignal",
+    "PortfolioStockAnalysis", "PortfolioAnalyzeResponse",
+    "CustomPositionCreateRequest", "CustomPositionSellRequest",
+    "MonitoringEvent", "CustomPositionResponse", "CustomPositionCreateResponse",
 ]

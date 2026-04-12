@@ -582,6 +582,22 @@ async def get_position_alerts(current_user: dict = Depends(get_current_user)):
     return {"alerts": all_events, "count": len(all_events)}
 
 
+
+# ── /fno/scripts/search ──────────────────────────────────────────────────────
+
+@fno_router.get("/fno/scripts/search", response_model=ScriptSearchResult)
+async def search_scripts(q: str = Query(default="")):
+    query = q.strip().upper()
+    suggestions = []
+    for row in FNO_CONTRACTS:
+        script = row["script"]
+        if not query or query in script:
+            suggestions.append(script)
+    suggestions = sorted(set(suggestions))[:30]
+    return ScriptSearchResult(query=query, suggestions=suggestions)
+
+
+
 # ---------------------------------------------------------------------------
 # BBE (Budget Entry) Alerts: Real-time LTP monitoring against BBE zones
 # ---------------------------------------------------------------------------

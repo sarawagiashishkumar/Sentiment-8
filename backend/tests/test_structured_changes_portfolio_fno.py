@@ -1,7 +1,6 @@
 import io
 import os
 import asyncio
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -131,27 +130,26 @@ def test_stock_signal_builder_is_not_hard_capped_to_three(monkeypatch):
     
     After architecture extraction, the signal building functions may have been
     moved from server.py to services/fno_signal_engine.py.
+    Uses source-file inspection instead of dynamic module loading for safety.
     """
     if "/app/backend" not in sys.path:
         sys.path.append("/app/backend")
     
-    # Check if the function still exists in server.py
-    try:
-        spec = importlib.util.spec_from_file_location("server", "/app/backend/server.py")
-        server = importlib.util.module_from_spec(spec)
-        assert spec and spec.loader
-        spec.loader.exec_module(server)
-    except Exception:
-        pytest.skip("server.py cannot be loaded as standalone module (requires running app context)")
-    
-    if not hasattr(server, "_build_stock_fno_signals"):
-        pytest.skip("_build_stock_fno_signals extracted from server.py to services/fno_signal_engine.py")
-
-    # After extraction, the function delegates to fno_signal_engine.py which can't be
-    # monkeypatched through server.py. Verify via source code inspection instead.
+    # SECURITY: Use source-file inspection instead of exec_module
+    # (exec_module loads the entire FastAPI app, risking side effects)
     from tests.helpers.test_utils import read_backend_source
     source = read_backend_source()
-    # Verify no hard cap of 3 stocks in the signal builder
-    assert "[:3]" not in source or "top_by_conviction[:3]" not in source, (
-        "Signal builder appears to hard-cap stock count to 3"
-    )
+    
+    # The function was extracted from server.py to services/fno_signal_engine.py
+    fno_engine_path = Path("/app/backend/services/fno_signal_engine.py")
+    if fno_engine_path.exists():
+        fno_source = fno_engine_path.read_text()
+        # Verify no hard cap of 3 stocks in the signal builder
+        assert "[:3]" not in fno_source or "top_by_conviction[:3]" not in fno_source, (
+            "Signal builder appears to hard-cap stock count to 3"
+        )
+    else:
+        # Fallback: check server.py source
+        assert "[:3]" not in source or "top_by_conviction[:3]" not in source, (
+            "Signal builder appears to hard-cap stock count to 3"
+        )
