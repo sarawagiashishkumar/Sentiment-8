@@ -158,6 +158,7 @@ export function AdminCrmPanel({ authHeaders }) {
 export function AdminFraudPanel({ authHeaders }) {
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState("all");
 
   const fetchIncidents = useCallback(async () => {
     setLoading(true);
@@ -177,32 +178,69 @@ export function AdminFraudPanel({ authHeaders }) {
     } catch (err) { console.error(err); }
   };
 
+  const pendingCount = incidents.filter(i => i.status === "pending").length;
+  const resolvedCount = incidents.filter(i => i.status !== "pending").length;
+  const filtered = filter === "all" ? incidents : incidents.filter(i => filter === "pending" ? i.status === "pending" : i.status !== "pending");
+
   return (
     <Card className="border-slate-800 bg-slate-950/70" data-testid="admin-fraud-panel">
-      <CardHeader>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
         <CardTitle className="text-white flex items-center gap-2 text-sm">
           <Users size={16} className="text-rose-400" /> Fraud Detection
-          {incidents.filter(i => i.status === "pending").length > 0 && (
-            <span className="bg-rose-500 text-white text-[10px] rounded-full px-1.5 py-0.5">{incidents.filter(i => i.status === "pending").length}</span>
-          )}
+          {pendingCount > 0 && <span className="bg-rose-500 text-white text-[10px] rounded-full px-1.5 py-0.5">{pendingCount}</span>}
         </CardTitle>
+        <Button onClick={fetchIncidents} className="h-7 bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs px-3" data-testid="fraud-refresh-btn">Refresh</Button>
       </CardHeader>
-      <CardContent className="space-y-2">
-        {incidents.length === 0 ? (
-          <p className="text-xs text-slate-500 text-center py-3">No fraud incidents</p>
-        ) : incidents.map(inc => (
+      <CardContent className="space-y-3">
+        {/* Summary Cards */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-2 text-center">
+            <p className="text-lg font-bold text-white">{incidents.length}</p>
+            <p className="text-[9px] text-slate-500">Total Incidents</p>
+          </div>
+          <div className="rounded-lg border border-rose-700/40 bg-rose-950/20 p-2 text-center">
+            <p className="text-lg font-bold text-rose-400">{pendingCount}</p>
+            <p className="text-[9px] text-slate-500">Pending</p>
+          </div>
+          <div className="rounded-lg border border-emerald-700/40 bg-emerald-950/20 p-2 text-center">
+            <p className="text-lg font-bold text-emerald-400">{resolvedCount}</p>
+            <p className="text-[9px] text-slate-500">Resolved</p>
+          </div>
+        </div>
+
+        {/* Filter Tabs */}
+        <div className="flex gap-2 border-b border-slate-800 pb-2">
+          {[["all", "All"], ["pending", "Pending"], ["resolved", "Resolved"]].map(([k, label]) => (
+            <button key={k} onClick={() => setFilter(k)} className={`text-xs px-3 py-1 rounded ${filter === k ? "bg-rose-600 text-white" : "text-slate-400"}`} data-testid={`fraud-filter-${k}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Incident List */}
+        {filtered.length === 0 ? (
+          <p className="text-xs text-slate-500 text-center py-3">No {filter === "all" ? "" : filter} fraud incidents</p>
+        ) : filtered.map(inc => (
           <div key={inc.fraud_id} className={`rounded-lg border px-3 py-2 ${inc.status === "pending" ? "border-rose-500/40 bg-rose-950/20" : "border-slate-700 bg-slate-900/40"}`} data-testid={`fraud-${inc.fraud_id}`}>
             <div className="flex items-center justify-between gap-2">
-              <div>
-                <span className="text-xs font-bold text-white">{inc.username || "Unknown"}</span>
-                <span className={`ml-2 text-[10px] px-1.5 rounded ${inc.status === "pending" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>{inc.status}</span>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-white">{inc.username || "Unknown"}</span>
+                  <span className={`text-[10px] px-1.5 rounded ${inc.status === "pending" ? "bg-rose-500/20 text-rose-300" : inc.status === "confirmed" ? "bg-amber-500/20 text-amber-300" : "bg-emerald-500/20 text-emerald-300"}`}>{inc.status}</span>
+                  {inc.details?.detection_type && <span className="text-[9px] text-violet-400 bg-violet-950/30 px-1.5 rounded">{inc.details.detection_type}</span>}
+                </div>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  {inc.details?.current_location} - {inc.details?.distance_km}km in {inc.details?.elapsed_hours}h ({inc.details?.required_speed_kmh} km/h)
+                  {inc.details?.current_location && <>{inc.details.current_location} &mdash; </>}
+                  {inc.details?.distance_km && <>{inc.details.distance_km}km in {inc.details.elapsed_hours}h ({inc.details.required_speed_kmh} km/h)</>}
                 </p>
+                {inc.details?.previous_location && (
+                  <p className="text-[9px] text-slate-500">From: {inc.details.previous_location}</p>
+                )}
                 <span className="text-[9px] text-slate-600">{inc.created_at ? new Date(inc.created_at).toLocaleString("en-IN") : ""}</span>
+                {inc.resolved_at && <span className="text-[9px] text-slate-600 ml-2">Resolved: {new Date(inc.resolved_at).toLocaleString("en-IN")}</span>}
               </div>
               {inc.status === "pending" && (
-                <div className="flex gap-1">
+                <div className="flex flex-col gap-1">
                   <Button onClick={() => resolveIncident(inc.fraud_id, "reactivate")} className="h-6 bg-emerald-600 text-white text-[10px] px-2" data-testid={`fraud-reactivate-${inc.fraud_id}`}>Reactivate</Button>
                   <Button onClick={() => resolveIncident(inc.fraud_id, "confirm")} className="h-6 bg-rose-600 text-white text-[10px] px-2" data-testid={`fraud-confirm-${inc.fraud_id}`}>Confirm</Button>
                 </div>

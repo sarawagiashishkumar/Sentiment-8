@@ -155,6 +155,27 @@ async def verify_offline_payment(
         return {"verified": False, "action": "rejected"}
 
 
+
+@payments_router.get("/admin/payments/history")
+async def get_payment_history(
+    limit: int = 50,
+    skip: int = 0,
+    admin_user: dict = Depends(get_current_user),
+):
+    """Get all payment records (history) with pagination."""
+    if admin_user.get("role") not in ("owner", "sub_admin"):
+        raise HTTPException(403, "Admin only")
+    cursor = _state.db.payments.find(
+        {}, {"_id": 0, "proof_image": 0},
+    ).sort("created_at", -1).skip(skip).limit(limit)
+    payments = await cursor.to_list(limit)
+    total = await _state.db.payments.count_documents({})
+    for p in payments:
+        user = await _state.db.app_users.find_one({"user_key": p.get("user_key", "")}, {"_id": 0, "username": 1})
+        p["username"] = (user or {}).get("username", "Unknown")
+    return {"payments": payments, "count": len(payments), "total": total}
+
+
 # ── User: Razorpay Payment ────────────────────────────────────────────────────
 
 @payments_router.post("/payments/create-order")

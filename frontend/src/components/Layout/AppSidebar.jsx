@@ -1,4 +1,4 @@
-import { Home, BarChart3, TrendingUp, FileUp, Shield, Grid3X3, FileText, Eye } from "lucide-react";
+import { Home, BarChart3, TrendingUp, FileUp, Shield, Grid3X3, FileText, Eye, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function AppSidebar({ currentPage, setCurrentPage, isAdmin, onAdminClick }) {
@@ -30,6 +30,9 @@ export function AppSidebar({ currentPage, setCurrentPage, isAdmin, onAdminClick 
         </Button>
         <Button type="button" onClick={() => setCurrentPage("watchlist")} className={`text-xs shrink-0 ${navClass("watchlist")}`} data-testid="nav-watchlist">
           <Eye size={14} /> <span className="hidden sm:inline">Watchlist</span><span className="sm:hidden">Watch</span>
+        </Button>
+        <Button type="button" onClick={() => setCurrentPage("plans")} className={`text-xs shrink-0 ${navClass("plans")}`} data-testid="nav-plans">
+          <Layers size={14} /> <span className="hidden sm:inline">Plans</span><span className="sm:hidden">Plans</span>
         </Button>
         {isAdmin ? (
           <Button type="button" onClick={() => { setCurrentPage("admin"); onAdminClick(); }} className={`text-xs shrink-0 ${navClass("admin")}`} data-testid="nav-admin">

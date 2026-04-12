@@ -3,17 +3,20 @@ import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CreditCard, Check, X, Eye, Image, Settings } from "lucide-react";
+import { CreditCard, Check, X, Eye, Image, Settings, History } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export function AdminPaymentsPanel({ authHeaders }) {
   const [configStatus, setConfigStatus] = useState(null);
   const [pending, setPending] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
   const [showConfig, setShowConfig] = useState(false);
   const [configForm, setConfigForm] = useState({ key_id: "", key_secret: "", upi_id: "" });
   const [proofImage, setProofImage] = useState(null);
   const [proofPaymentId, setProofPaymentId] = useState(null);
+  const [tab, setTab] = useState("pending");
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -29,7 +32,15 @@ export function AdminPaymentsPanel({ authHeaders }) {
     } catch (err) { console.error("Failed to fetch pending payments:", err?.message); }
   }, [authHeaders]);
 
-  useEffect(() => { fetchStatus(); fetchPending(); }, [fetchStatus, fetchPending]);
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/admin/payments/history?limit=100`, { headers: authHeaders });
+      setHistory(res.data.payments || []);
+      setHistoryTotal(res.data.total || 0);
+    } catch (err) { console.error("Failed to fetch payment history:", err?.message); }
+  }, [authHeaders]);
+
+  useEffect(() => { fetchStatus(); fetchPending(); fetchHistory(); }, [fetchStatus, fetchPending, fetchHistory]);
 
   const saveConfig = async (e) => {
     e.preventDefault();
@@ -44,6 +55,7 @@ export function AdminPaymentsPanel({ authHeaders }) {
     try {
       await axios.post(`${API}/admin/payments/${paymentId}/verify?action=${action}`, {}, { headers: authHeaders });
       fetchPending();
+      fetchHistory();
     } catch (err) { console.error(err); }
   };
 
@@ -53,6 +65,13 @@ export function AdminPaymentsPanel({ authHeaders }) {
       setProofImage(res.data.proof_image);
       setProofPaymentId(paymentId);
     } catch (err) { console.error(err); }
+  };
+
+  const statusColor = (s) => {
+    if (s === "verified" || s === "approved") return "text-emerald-400 bg-emerald-950/30";
+    if (s === "rejected") return "text-rose-400 bg-rose-950/30";
+    if (s === "pending_verification") return "text-amber-400 bg-amber-950/30";
+    return "text-slate-400 bg-slate-800";
   };
 
   return (
@@ -65,7 +84,7 @@ export function AdminPaymentsPanel({ authHeaders }) {
           <Button onClick={() => setShowConfig(!showConfig)} className="h-7 bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs px-3" data-testid="payments-config-toggle">
             <Settings size={12} className="mr-1" /> Configure
           </Button>
-          <Button onClick={fetchPending} className="h-7 bg-emerald-600 text-white hover:bg-emerald-500 text-xs px-3" data-testid="payments-refresh">Refresh</Button>
+          <Button onClick={() => { fetchPending(); fetchHistory(); }} className="h-7 bg-emerald-600 text-white hover:bg-emerald-500 text-xs px-3" data-testid="payments-refresh">Refresh</Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -90,34 +109,84 @@ export function AdminPaymentsPanel({ authHeaders }) {
           </form>
         )}
 
+        {/* Tabs: Pending | History */}
+        <div className="flex gap-2 border-b border-slate-800 pb-2">
+          <button onClick={() => setTab("pending")} className={`text-xs px-3 py-1 rounded ${tab === "pending" ? "bg-amber-600 text-white" : "text-slate-400"}`} data-testid="payments-tab-pending">
+            Pending ({pending.length})
+          </button>
+          <button onClick={() => setTab("history")} className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${tab === "history" ? "bg-emerald-600 text-white" : "text-slate-400"}`} data-testid="payments-tab-history">
+            <History size={12} /> History ({historyTotal})
+          </button>
+        </div>
+
         {/* Pending Payments */}
-        <div>
-          <p className="text-[10px] text-slate-400 font-semibold mb-1.5">Pending Verifications ({pending.length})</p>
-          {pending.length === 0 ? (
-            <p className="text-xs text-slate-500 text-center py-3">No pending payments</p>
-          ) : (
-            <div className="space-y-1.5" data-testid="pending-payments-list">
-              {pending.map(p => (
-                <div key={p.payment_id} className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2" data-testid={`payment-${p.payment_id}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <span className="text-xs font-bold text-white">{p.username}</span>
-                      <span className="ml-2 text-[10px] text-amber-300">INR {p.amount}</span>
-                      <span className="ml-2 text-[10px] text-slate-500">{p.method}</span>
-                      {p.notes && <p className="text-[10px] text-slate-400 mt-0.5">{p.notes}</p>}
-                      <span className="text-[9px] text-slate-600 block">{p.created_at ? new Date(p.created_at).toLocaleString("en-IN") : ""}</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => viewProof(p.payment_id)} className="p-1 text-cyan-400 hover:text-cyan-300" title="View Proof" data-testid={`proof-${p.payment_id}`}><Image size={14} /></button>
-                      <button onClick={() => verifyPayment(p.payment_id, "approve")} className="p-1 text-emerald-400 hover:text-emerald-300" title="Approve" data-testid={`approve-${p.payment_id}`}><Check size={14} /></button>
-                      <button onClick={() => verifyPayment(p.payment_id, "reject")} className="p-1 text-rose-400 hover:text-rose-300" title="Reject" data-testid={`reject-${p.payment_id}`}><X size={14} /></button>
+        {tab === "pending" && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-semibold mb-1.5">Pending Verifications ({pending.length})</p>
+            {pending.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-3">No pending payments</p>
+            ) : (
+              <div className="space-y-1.5" data-testid="pending-payments-list">
+                {pending.map(p => (
+                  <div key={p.payment_id} className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2" data-testid={`payment-${p.payment_id}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-white">{p.username}</span>
+                        <span className="ml-2 text-[10px] text-amber-300">INR {p.amount}</span>
+                        <span className="ml-2 text-[10px] text-slate-500">{p.method}</span>
+                        {p.notes && <p className="text-[10px] text-slate-400 mt-0.5">{p.notes}</p>}
+                        <span className="text-[9px] text-slate-600 block">{p.created_at ? new Date(p.created_at).toLocaleString("en-IN") : ""}</span>
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={() => viewProof(p.payment_id)} className="p-1 text-cyan-400 hover:text-cyan-300" title="View Proof" data-testid={`proof-${p.payment_id}`}><Image size={14} /></button>
+                        <button onClick={() => verifyPayment(p.payment_id, "approve")} className="p-1 text-emerald-400 hover:text-emerald-300" title="Approve" data-testid={`approve-${p.payment_id}`}><Check size={14} /></button>
+                        <button onClick={() => verifyPayment(p.payment_id, "reject")} className="p-1 text-rose-400 hover:text-rose-300" title="Reject" data-testid={`reject-${p.payment_id}`}><X size={14} /></button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Payment History */}
+        {tab === "history" && (
+          <div data-testid="payment-history-list">
+            {history.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-3">No payment history yet</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[10px]" data-testid="payment-history-table">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-slate-700">
+                      <th className="px-2 py-1.5 text-left">User</th>
+                      <th className="px-2 py-1.5 text-right">Amount</th>
+                      <th className="px-2 py-1.5 text-center">Method</th>
+                      <th className="px-2 py-1.5 text-center">Status</th>
+                      <th className="px-2 py-1.5 text-left">Purpose</th>
+                      <th className="px-2 py-1.5 text-right">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map(p => (
+                      <tr key={p.payment_id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                        <td className="px-2 py-1.5 text-slate-200 font-semibold">{p.username}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-200 font-mono">INR {p.amount || 0}</td>
+                        <td className="px-2 py-1.5 text-center text-slate-400">{p.method || "—"}</td>
+                        <td className="px-2 py-1.5 text-center">
+                          <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${statusColor(p.status)}`}>{(p.status || "").replace(/_/g, " ")}</span>
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-400">{p.purpose || "reactivation"}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-500">{p.created_at ? new Date(p.created_at).toLocaleDateString("en-IN") : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Proof Image Modal */}
         {proofImage && (

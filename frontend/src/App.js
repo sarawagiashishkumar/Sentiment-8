@@ -22,6 +22,7 @@ import { AdminDashboard } from "@/components/Admin/AdminDashboard";
 import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
 import { ReportsDashboard } from "@/components/Reports/ReportsDashboard";
 import { WatchlistPanel } from "@/components/Watchlist/WatchlistPanel";
+import { PlanComparisonPage, LowCreditsModal } from "@/components/Shared/PlanComparison";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -36,6 +37,8 @@ export default function App() {
   const [customPositions, setCustomPositions] = useState([]);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const [lowCreditsOpen, setLowCreditsOpen] = useState(false);
+  const lowCreditsShownRef = useRef(false);
 
   const { notifications, unreadCount, addNotification, markRead, markAllRead, dismiss: dismissNotif, clearAll: clearAllNotifs, setNotifications } = useNotifications();
   const { enabled: pushEnabled, permission: pushPermission, toggle: togglePush, sendPush } = usePushNotifications();
@@ -119,6 +122,16 @@ export default function App() {
   const handleClearAll = () => { clearAllNotifs(); axios.delete(`${API}/notifications`, { headers: authHeaders }).catch(() => {}); };
   const handleLogout = async () => { await onLogout(); setCurrentPage("home"); setCustomPositions([]); };
 
+  // ── Low credits modal trigger (once per session when credits < 5) ──
+  useEffect(() => {
+    if (!me || me.role === "owner" || lowCreditsShownRef.current) return;
+    const credits = Number(me.credits || 0);
+    if (credits > 0 && credits < 5) {
+      setLowCreditsOpen(true);
+      lowCreditsShownRef.current = true;
+    }
+  }, [me]);
+
   // ── Login gate ────────────────────────────────────────────────────
   if (!token || !me) {
     return <LoginPage loginUsername={loginUsername} setLoginUsername={setLoginUsername} loginLoading={loginLoading} loginError={loginError} onLogin={onLogin} />;
@@ -145,11 +158,13 @@ export default function App() {
           {currentPage === "heatmap" && <MarketHeatmapDashboard authHeaders={authHeaders} />}
           {currentPage === "reports" && <ReportsDashboard authHeaders={authHeaders} />}
           {currentPage === "watchlist" && <WatchlistPanel authHeaders={authHeaders} />}
+          {currentPage === "plans" && <PlanComparisonPage authHeaders={authHeaders} me={me} />}
         </ErrorBoundary>
 
         <AppFooter />
         <NotificationPanel notifications={notifications} isOpen={notifPanelOpen} onClose={() => setNotifPanelOpen(false)} onMarkRead={markRead} onMarkAllRead={handleMarkAllRead} onDismiss={dismissNotif} onClearAll={handleClearAll} />
         <LiveHelpModule authHeaders={authHeaders} me={me} />
+        <LowCreditsModal me={me} authHeaders={authHeaders} isOpen={lowCreditsOpen} onClose={() => setLowCreditsOpen(false)} />
       </div>
     </main>
   );

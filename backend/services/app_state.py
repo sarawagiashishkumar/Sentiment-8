@@ -4,51 +4,62 @@ Centralized application state — breaks circular import chain.
 server.py populates these at startup. Services and routes import from here
 instead of doing lazy `import server` for basic state access.
 """
-from datetime import timezone, timedelta
+from __future__ import annotations
+
+from datetime import datetime, timezone, timedelta
+from typing import Any, Optional
+
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 # ── Database ──────────────────────────────────────────────────────────────────
-db = None  # Set by server.py on startup (AsyncIOMotorDatabase)
+db: Optional[AsyncIOMotorDatabase] = None
 
 # ── Timezone ──────────────────────────────────────────────────────────────────
-IST = timezone(timedelta(hours=5, minutes=30))
+IST: timezone = timezone(timedelta(hours=5, minutes=30))
 
 # ── Kite Connect ──────────────────────────────────────────────────────────────
-KITE_API_KEY = None
-KITE_API_SECRET = None
-KITE_REDIRECT_URL = None
-kite_access_token = None
+KITE_API_KEY: Optional[str] = None
+KITE_API_SECRET: Optional[str] = None
+KITE_REDIRECT_URL: Optional[str] = None
+kite_access_token: Optional[str] = None
 
 # ── Config Constants ──────────────────────────────────────────────────────────
-CONFLUENCE_THRESHOLD_DISPLAY = 40
+CONFLUENCE_THRESHOLD_DISPLAY: int = 40
 
 # ── Caches (populated at runtime) ─────────────────────────────────────────────
-SECTOR_MOMENTUM_CACHE = {}
-SECTOR_MOMENTUM_CACHE_TTL_SECONDS = 1800
+SECTOR_MOMENTUM_CACHE: dict[str, Any] = {}
+SECTOR_MOMENTUM_CACHE_TTL_SECONDS: int = 1800
 
 # ── Script Master Tracking ────────────────────────────────────────────────────
-SCRIPT_MASTER_LAST_SYNC_DATE = None
-KITE_OPTION_MASTER_LAST_SYNC_DATE = None
-KITE_SCRIPT_MASTER_URL = "https://api.kite.trade/instruments"
+SCRIPT_MASTER_LAST_SYNC_DATE: Optional[str] = None
+KITE_OPTION_MASTER_LAST_SYNC_DATE: Optional[str] = None
+KITE_SCRIPT_MASTER_URL: str = "https://api.kite.trade/instruments"
 
 # ── LOT_SIZE_MAP (populated from data/lot_sizes.py at startup) ────────────────
-LOT_SIZE_MAP = {}
+LOT_SIZE_MAP: dict[str, int] = {}
 
 # ── Performance Tracking ──────────────────────────────────────────────────────
-LAST_FNO_PERF = {}
-LAST_MB_PERF = {}
+LAST_FNO_PERF: dict[str, Any] = {}
+LAST_MB_PERF: dict[str, Any] = {}
 
 # ── Session Store (shared between auth and routes) ────────────────────────────
-SESSION_STORE: dict = {}
+SESSION_STORE: dict[str, dict[str, Any]] = {}
 
 # ── Runtime Config (populated by server.py) ───────────────────────────────────
-KITE_ALLOWED_DATA_ENDPOINTS: list = []
+KITE_ALLOWED_DATA_ENDPOINTS: list[str] = []
 KITE_READ_ONLY_MODE: bool = False
-NSE_HOLIDAYS: set = set()
+NSE_HOLIDAYS: set[str] = set()
 OWNER_BOOTSTRAP_USERNAME: str = ""
 LEGACY_OWNER_ALIAS: str = ""
 
 
-def configure(database, api_key=None, api_secret=None, redirect_url=None, access_token=None):
+def configure(
+    database: AsyncIOMotorDatabase,
+    api_key: Optional[str] = None,
+    api_secret: Optional[str] = None,
+    redirect_url: Optional[str] = None,
+    access_token: Optional[str] = None,
+) -> None:
     """Called by server.py on startup to inject shared state."""
     global db, KITE_API_KEY, KITE_API_SECRET, KITE_REDIRECT_URL, kite_access_token
     db = database
@@ -62,8 +73,14 @@ def configure(database, api_key=None, api_secret=None, redirect_url=None, access
         kite_access_token = access_token
 
 
-def configure_runtime(session_store=None, allowed_endpoints=None, read_only=None,
-                      holidays=None, owner_username=None, legacy_alias=None):
+def configure_runtime(
+    session_store: Optional[dict] = None,
+    allowed_endpoints: Optional[list[str]] = None,
+    read_only: Optional[bool] = None,
+    holidays: Optional[set] = None,
+    owner_username: Optional[str] = None,
+    legacy_alias: Optional[str] = None,
+) -> None:
     """Called by server.py after full init to inject runtime config."""
     global SESSION_STORE, KITE_ALLOWED_DATA_ENDPOINTS, KITE_READ_ONLY_MODE
     global NSE_HOLIDAYS, OWNER_BOOTSTRAP_USERNAME, LEGACY_OWNER_ALIAS
@@ -83,5 +100,4 @@ def configure_runtime(session_store=None, allowed_endpoints=None, read_only=None
 
 def _utc_now_iso() -> str:
     """UTC timestamp as ISO string."""
-    from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
