@@ -198,6 +198,106 @@ async def admin_delete_user(user_ref: str, admin_user: dict = Depends(get_admin_
     return {"deleted": True}
 
 
+@admin_router.post("/admin/users/{user_ref}/suspend")
+async def admin_toggle_suspend(user_ref: str, admin_user: dict = Depends(get_admin_user)):
+    """Toggle suspend/unsuspend for a user."""
+    import server as _srv
+    from pymongo import ReturnDocument
+
+    target = await _srv._get_user_by_ref(user_ref)
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target["role"] == "owner":
+        raise HTTPException(400, "Owner cannot be suspended")
+
+    new_state = not target.get("suspended", False)
+    updated = await _state.db.app_users.find_one_and_update(
+        {"user_key": target["user_key"]},
+        {"$set": {"suspended": new_state}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    return {"user_key": target["user_key"], "suspended": new_state, "username": updated.get("username")}
+
+
+class BulkCreditRequest(BaseModel):
+    user_keys: list[str]
+    credits_delta: float
+
+
+@admin_router.post("/admin/users/bulk-credits")
+async def admin_bulk_credit_adjustment(
+    payload: BulkCreditRequest,
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Bulk adjust credits for multiple users. credits_delta can be positive (topup) or negative."""
+    results = []
+    for uk in payload.user_keys:
+        user = await _state.db.app_users.find_one({"user_key": uk}, {"_id": 0})
+        if not user:
+            results.append({"user_key": uk, "ok": False, "reason": "not_found"})
+            continue
+        new_credits = max(0, round(float(user.get("credits", 0)) + payload.credits_delta, 2))
+        await _state.db.app_users.update_one({"user_key": uk}, {"$set": {"credits": new_credits}})
+        results.append({"user_key": uk, "ok": True, "new_credits": new_credits})
+    return {"results": results, "adjusted": sum(1 for r in results if r["ok"])}
+
+
+class TopupRequest(BaseModel):
+    credits: float
+
+
+@admin_router.post("/admin/users/{user_ref}/topup")
+async def admin_topup_credits(
+    user_ref: str,
+    payload: TopupRequest,
+    admin_user: dict = Depends(get_admin_user),
+):
+    """Add credits to a user (topup). Always positive."""
+    import server as _srv
+    from pymongo import ReturnDocument
+
+    if payload.credits <= 0:
+        raise HTTPException(400, "Topup amount must be positive")
+    target = await _srv._get_user_by_ref(user_ref)
+    if not target:
+        raise HTTPException(404, "User not found")
+
+    new_credits = round(float(target.get("credits", 0)) + payload.credits, 2)
+    await _state.db.app_users.find_one_and_update(
+        {"user_key": target["user_key"]},
+        {"$set": {"credits": new_credits}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    return {"user_key": target["user_key"], "credits": new_credits, "added": payload.credits}
+
+
+@admin_router.get("/admin/users/export")
+async def admin_export_users_csv(admin_user: dict = Depends(get_owner_user)):
+    """Export all users as CSV."""
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+
+    users = await _state.db.app_users.find({}, {"_id": 0}).to_list(10000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["user_key", "username", "role", "credits", "package", "suspended", "created_by", "created_at"])
+    for u in users:
+        writer.writerow([
+            u.get("user_key", ""), u.get("username", ""), u.get("role", ""),
+            u.get("credits", 0), u.get("package", "free"),
+            u.get("suspended", False), u.get("created_by", ""), u.get("created_at", ""),
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=users_export.csv"},
+    )
+
+
 @admin_router.patch("/admin/users/{user_ref}/profile", response_model=AdminUserView)
 async def admin_update_user_profile(
     user_ref: str,
@@ -856,6 +956,22 @@ PACKAGES = {
 }
 
 
+async def _get_packages() -> dict:
+    """Get packages from DB, falling back to hardcoded defaults."""
+    db_pkgs = await _state.db.system_meta.find_one({"key": "packages"}, {"_id": 0})
+    if db_pkgs and db_pkgs.get("data"):
+        return db_pkgs["data"]
+    return PACKAGES
+
+
+async def _get_feature_costs() -> dict:
+    """Get global feature costs from DB, falling back to hardcoded defaults."""
+    doc = await _state.db.system_meta.find_one({"key": "feature_costs"}, {"_id": 0})
+    if doc and doc.get("data"):
+        return {**DEFAULT_FEATURE_COSTS, **doc["data"]}
+    return DEFAULT_FEATURE_COSTS
+
+
 class PermissionUpdate(BaseModel):
     feature_costs: dict | None = None  # Override per-feature credit costs
     usage_limits: dict | None = None   # Override usage caps
@@ -866,11 +982,85 @@ class PermissionUpdate(BaseModel):
 @admin_router.get("/admin/packages")
 async def get_available_packages(admin_user: dict = Depends(get_admin_user)):
     """List all available service packages with costs and limits."""
+    pkgs = await _get_packages()
+    costs = await _get_feature_costs()
     return {
-        "packages": PACKAGES,
-        "default_feature_costs": DEFAULT_FEATURE_COSTS,
+        "packages": pkgs,
+        "default_feature_costs": costs,
         "default_usage_limits": DEFAULT_USAGE_LIMITS,
     }
+
+
+class PackageCreateUpdate(BaseModel):
+    key: str
+    label: str
+    credits: float
+    limits: dict
+
+
+@admin_router.post("/admin/packages")
+async def create_or_update_package(
+    payload: PackageCreateUpdate,
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Create or update a package tier. Persisted to MongoDB."""
+    pkgs = await _get_packages()
+    pkgs[payload.key] = {
+        "label": payload.label,
+        "credits": payload.credits,
+        "limits": {**DEFAULT_USAGE_LIMITS, **payload.limits},
+    }
+    await _state.db.system_meta.update_one(
+        {"key": "packages"},
+        {"$set": {"key": "packages", "data": pkgs}},
+        upsert=True,
+    )
+    return {"ok": True, "package_key": payload.key, "total_packages": len(pkgs)}
+
+
+@admin_router.delete("/admin/packages/{package_key}")
+async def delete_package(
+    package_key: str,
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Delete a custom package tier. Cannot delete 'free'."""
+    if package_key == "free":
+        raise HTTPException(400, "Cannot delete the free tier")
+    pkgs = await _get_packages()
+    if package_key not in pkgs:
+        raise HTTPException(404, "Package not found")
+    # Check if any users are on this package
+    user_count = await _state.db.app_users.count_documents({"package": package_key})
+    if user_count > 0:
+        raise HTTPException(400, f"Cannot delete: {user_count} users are on this package. Migrate them first.")
+    del pkgs[package_key]
+    await _state.db.system_meta.update_one(
+        {"key": "packages"},
+        {"$set": {"key": "packages", "data": pkgs}},
+        upsert=True,
+    )
+    return {"deleted": True, "package_key": package_key}
+
+
+class FeatureCostsUpdate(BaseModel):
+    costs: dict
+
+
+@admin_router.patch("/admin/feature-costs")
+async def update_global_feature_costs(
+    payload: FeatureCostsUpdate,
+    admin_user: dict = Depends(get_owner_user),
+):
+    """Update global default feature credit costs."""
+    invalid = [k for k in payload.costs if k not in DEFAULT_FEATURE_COSTS]
+    if invalid:
+        raise HTTPException(400, f"Invalid feature keys: {invalid}")
+    await _state.db.system_meta.update_one(
+        {"key": "feature_costs"},
+        {"$set": {"key": "feature_costs", "data": payload.costs}},
+        upsert=True,
+    )
+    return {"ok": True, "updated_features": list(payload.costs.keys())}
 
 
 @admin_router.get("/admin/users/{user_ref}/permissions")
@@ -886,10 +1076,12 @@ async def get_user_permissions(
         raise HTTPException(404, "User not found")
 
     package = target.get("package", "free")
-    pkg_config = PACKAGES.get(package, PACKAGES["free"])
+    all_pkgs = await _get_packages()
+    pkg_config = all_pkgs.get(package, all_pkgs.get("free", PACKAGES["free"]))
 
     # Merge custom overrides with package defaults
-    feature_costs = {**DEFAULT_FEATURE_COSTS, **(pkg_config.get("feature_costs", {})), **(target.get("feature_costs", {}))}
+    global_costs = await _get_feature_costs()
+    feature_costs = {**global_costs, **(pkg_config.get("feature_costs", {})), **(target.get("feature_costs", {}))}
     usage_limits = {**pkg_config.get("limits", DEFAULT_USAGE_LIMITS), **(target.get("usage_limits", {}))}
     restrictions = target.get("feature_restrictions", [])
 
@@ -946,13 +1138,14 @@ async def update_user_permissions(
     if target["role"] == "owner" and not _is_owner(admin_user):
         raise HTTPException(403, "Only Owner can modify Owner permissions")
 
+    all_pkgs = await _get_packages()
     updates = {}
     if payload.package is not None:
-        if payload.package not in PACKAGES:
-            raise HTTPException(400, f"Invalid package. Options: {list(PACKAGES.keys())}")
+        if payload.package not in all_pkgs:
+            raise HTTPException(400, f"Invalid package. Options: {list(all_pkgs.keys())}")
         updates["package"] = payload.package
         # Apply package credits
-        pkg = PACKAGES[payload.package]
+        pkg = all_pkgs[payload.package]
         updates["credits"] = max(float(target.get("credits", 0)), pkg["credits"])
 
     if payload.feature_costs is not None:
@@ -974,7 +1167,7 @@ async def update_user_permissions(
     if not updates:
         raise HTTPException(400, "No changes provided")
 
-    updated = await _state.db.app_users.find_one_and_update(
+    await _state.db.app_users.find_one_and_update(
         {"user_key": target["user_key"]},
         {"$set": updates},
         projection={"_id": 0},
@@ -996,7 +1189,6 @@ async def check_usage_limit(user: dict, feature: str) -> bool:
         return False
 
     daily_key = f"{feature}_daily"
-    total_key = f"{feature}_total"
 
     if daily_key in limits:
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0).timestamp()

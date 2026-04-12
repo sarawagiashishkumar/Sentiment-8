@@ -134,7 +134,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
       {activeTab === "users" && (
         <AdminUsersTab
           adminUsers={adminUsers} adminError={adminError} adminLoading={adminLoading}
-          isOwner={isOwner} me={me}
+          isOwner={isOwner} me={me} authHeaders={authHeaders}
           createForm={createForm} setCreateForm={setCreateForm}
           usernameEdit={usernameEdit} setUsernameEdit={setUsernameEdit}
           roleEdit={roleEdit} setRoleEdit={setRoleEdit}

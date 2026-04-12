@@ -228,6 +228,14 @@ export function AdminPermissionsPanel({ authHeaders }) {
   const [editCosts, setEditCosts] = useState({});
   const [showEditor, setShowEditor] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Package CRUD
+  const [showPkgCreate, setShowPkgCreate] = useState(false);
+  const [pkgForm, setPkgForm] = useState({ key: "", label: "", credits: 0, limits: {} });
+  const [editPkgKey, setEditPkgKey] = useState(null);
+  // Global fee editor
+  const [showFeeEditor, setShowFeeEditor] = useState(false);
+  const [feeEdits, setFeeEdits] = useState({});
+  const [feeSaving, setFeeSaving] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -242,6 +250,7 @@ export function AdminPermissionsPanel({ authHeaders }) {
       setPackages(res.data.packages || {});
       setDefaultCosts(res.data.default_feature_costs || {});
       setDefaultLimits(res.data.default_usage_limits || {});
+      setFeeEdits(res.data.default_feature_costs || {});
     } catch (err) { console.error(err); }
   }, [authHeaders]);
 
@@ -281,6 +290,49 @@ export function AdminPermissionsPanel({ authHeaders }) {
     );
   };
 
+  // Package CRUD handlers
+  const openCreatePkg = () => {
+    setPkgForm({ key: "", label: "", credits: 0, limits: {} });
+    setEditPkgKey(null);
+    setShowPkgCreate(true);
+  };
+  const openEditPkg = (key) => {
+    const pkg = packages[key];
+    setPkgForm({ key, label: pkg.label, credits: pkg.credits, limits: { ...(pkg.limits || {}) } });
+    setEditPkgKey(key);
+    setShowPkgCreate(true);
+  };
+  const savePkg = async () => {
+    if (!pkgForm.key.trim() || !pkgForm.label.trim()) return;
+    try {
+      await axios.post(`${API}/admin/packages`, {
+        key: pkgForm.key.trim().toLowerCase().replace(/\s+/g, "_"),
+        label: pkgForm.label.trim(),
+        credits: Number(pkgForm.credits),
+        limits: pkgForm.limits,
+      }, { headers: authHeaders });
+      setShowPkgCreate(false);
+      await fetchPackages();
+    } catch (err) { console.error(err); }
+  };
+  const deletePkg = async (key) => {
+    try {
+      await axios.delete(`${API}/admin/packages/${key}`, { headers: authHeaders });
+      await fetchPackages();
+    } catch (err) { console.error("Delete pkg:", err?.response?.data?.detail || err?.message); }
+  };
+
+  // Global fee save
+  const saveGlobalFees = async () => {
+    setFeeSaving(true);
+    try {
+      await axios.patch(`${API}/admin/feature-costs`, { costs: feeEdits }, { headers: authHeaders });
+      await fetchPackages();
+      setShowFeeEditor(false);
+    } catch (err) { console.error(err); }
+    setFeeSaving(false);
+  };
+
   const FEATURE_LABELS = {
     fno_generate: "F&O Signal Generation",
     multibagger_generate: "Multibagger Screener",
@@ -305,22 +357,103 @@ export function AdminPermissionsPanel({ authHeaders }) {
 
   return (
     <Card className="border-slate-800 bg-slate-950/70" data-testid="admin-permissions-panel">
-      <CardHeader>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
         <CardTitle className="text-white flex items-center gap-2 text-sm">
           <Users size={16} className="text-cyan-400" /> Permissions & Packages
         </CardTitle>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowFeeEditor(!showFeeEditor)} variant="outline" className="h-7 border-amber-700 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50 text-[10px] px-2" data-testid="global-fee-toggle-btn">
+            Global Fees
+          </Button>
+          <Button onClick={openCreatePkg} className="h-7 bg-cyan-600 text-white hover:bg-cyan-500 text-[10px] px-2" data-testid="create-package-btn">
+            + New Plan
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Global Fee Editor */}
+        {showFeeEditor && (
+          <div className="rounded-lg border border-amber-700/40 bg-amber-950/20 p-3 space-y-2" data-testid="global-fee-editor">
+            <p className="text-xs font-bold text-amber-300">Global Default Feature Costs (credits per use)</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {Object.entries(FEATURE_LABELS).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="text-slate-300">{label}</span>
+                  <input
+                    type="number" step="0.1" min="0"
+                    value={feeEdits[key] ?? 0}
+                    onChange={(e) => setFeeEdits(p => ({ ...p, [key]: parseFloat(e.target.value) || 0 }))}
+                    className="w-20 h-6 rounded border border-slate-700 bg-slate-800 text-slate-100 text-[10px] px-1.5 text-right"
+                    data-testid={`global-fee-${key}`}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button onClick={saveGlobalFees} disabled={feeSaving} className="h-7 bg-amber-600 text-white text-[10px] px-3" data-testid="global-fee-save-btn">
+                {feeSaving ? "Saving..." : "Save Global Fees"}
+              </Button>
+              <Button onClick={() => setShowFeeEditor(false)} variant="ghost" className="h-7 text-[10px] text-slate-400">Cancel</Button>
+            </div>
+          </div>
+        )}
+
+        {/* Package Create/Edit Form */}
+        {showPkgCreate && (
+          <div className="rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-3 space-y-2" data-testid="pkg-create-form">
+            <p className="text-xs font-bold text-cyan-300">{editPkgKey ? `Edit Plan: ${editPkgKey}` : "Create New Plan"}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div>
+                <label className="text-[9px] text-slate-400">Key (ID)</label>
+                <Input value={pkgForm.key} onChange={(e) => setPkgForm(p => ({ ...p, key: e.target.value }))} placeholder="e.g. starter" className="h-7 text-xs border-slate-700 bg-slate-800 text-slate-100" disabled={!!editPkgKey} data-testid="pkg-key-input" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-400">Label</label>
+                <Input value={pkgForm.label} onChange={(e) => setPkgForm(p => ({ ...p, label: e.target.value }))} placeholder="Starter Pack" className="h-7 text-xs border-slate-700 bg-slate-800 text-slate-100" data-testid="pkg-label-input" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-400">Credits</label>
+                <Input type="number" min="0" value={pkgForm.credits} onChange={(e) => setPkgForm(p => ({ ...p, credits: Number(e.target.value) }))} className="h-7 text-xs border-slate-700 bg-slate-800 text-slate-100" data-testid="pkg-credits-input" />
+              </div>
+            </div>
+            <p className="text-[9px] text-slate-400 font-semibold mt-1">Usage Limits for this Plan</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {Object.entries(LIMIT_LABELS).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="text-slate-300">{label}</span>
+                  <input
+                    type="number" min="0"
+                    value={pkgForm.limits[key] ?? defaultLimits[key] ?? 0}
+                    onChange={(e) => setPkgForm(p => ({ ...p, limits: { ...p.limits, [key]: parseInt(e.target.value) || 0 } }))}
+                    className="w-20 h-6 rounded border border-slate-700 bg-slate-800 text-slate-100 text-[10px] px-1.5 text-right"
+                    data-testid={`pkg-limit-${key}`}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button onClick={savePkg} className="h-7 bg-cyan-600 text-white text-[10px] px-3" data-testid="pkg-save-btn">{editPkgKey ? "Update Plan" : "Create Plan"}</Button>
+              <Button onClick={() => setShowPkgCreate(false)} variant="ghost" className="h-7 text-[10px] text-slate-400">Cancel</Button>
+            </div>
+          </div>
+        )}
+
         {/* Package Tiers Overview */}
         <div className="overflow-x-auto scrollbar-hide">
           <p className="text-[10px] text-slate-400 font-semibold mb-2">Available Tiers</p>
           <div className="flex gap-2 min-w-max pb-1">
             {Object.entries(packages).map(([key, pkg]) => (
-              <div key={key} className="rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 min-w-[130px]" data-testid={`package-card-${key}`}>
+              <div key={key} className="rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 min-w-[130px] relative group" data-testid={`package-card-${key}`}>
                 <p className="text-xs font-bold text-white">{pkg.label}</p>
                 <p className="text-[10px] text-cyan-400">{pkg.credits === 999999 ? "Unlimited" : pkg.credits} credits</p>
                 <p className="text-[9px] text-slate-500 mt-0.5">FNO: {pkg.limits?.fno_generate_daily === 999999 ? "Unlim" : pkg.limits?.fno_generate_daily}/day</p>
                 <p className="text-[9px] text-slate-500">Alerts: {pkg.limits?.alert_rules_total === 999999 ? "Unlim" : pkg.limits?.alert_rules_total} max</p>
+                <div className="absolute top-1 right-1 hidden group-hover:flex gap-0.5">
+                  <button onClick={() => openEditPkg(key)} className="text-[9px] text-cyan-400 hover:text-cyan-300 bg-slate-800 rounded px-1" data-testid={`pkg-edit-${key}`}>Edit</button>
+                  {key !== "free" && (
+                    <button onClick={() => deletePkg(key)} className="text-[9px] text-rose-400 hover:text-rose-300 bg-slate-800 rounded px-1" data-testid={`pkg-delete-${key}`}>Del</button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -400,7 +533,7 @@ export function AdminPermissionsPanel({ authHeaders }) {
 
               {/* Feature Credit Costs Editor */}
               <div>
-                <p className="text-[10px] text-slate-400 font-semibold mb-1">Credit Cost per Feature</p>
+                <p className="text-[10px] text-slate-400 font-semibold mb-1">Credit Cost per Feature (User Override)</p>
                 <div className="space-y-1">
                   {Object.entries(FEATURE_LABELS).map(([key, label]) => (
                     <div key={key} className="flex items-center justify-between gap-2 text-[10px]">
