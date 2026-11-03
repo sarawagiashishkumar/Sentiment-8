@@ -10,7 +10,7 @@ import { AdminMacroTab } from "./AdminMacroTab";
 import { AdminCrmPanel, AdminFraudPanel, AdminPermissionsPanel } from "./AdminCrmPanel";
 import { AdminPaymentsPanel } from "./AdminPaymentsPanel";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const ADMIN_TABS = [
   { id: "users", label: "User Management" },

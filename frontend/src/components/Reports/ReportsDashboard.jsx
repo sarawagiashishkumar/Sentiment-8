@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RefreshCw, Download, Calendar, TrendingUp, TrendingDown, BarChart3 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 function StatCard({ label, value, positive, icon: Icon }) {
   const getColor = () => {

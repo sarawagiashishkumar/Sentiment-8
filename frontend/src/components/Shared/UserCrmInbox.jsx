@@ -4,7 +4,7 @@ import { X, MessageSquare, Send, Reply } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function UserCrmInbox({ authHeaders }) {
   const [messages, setMessages] = useState([]);

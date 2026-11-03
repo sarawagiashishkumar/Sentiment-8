@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { Wifi, WifiOff } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const POLL_INTERVAL = 60000;
 
 export function SessionHealthIndicator({ authHeaders }) {

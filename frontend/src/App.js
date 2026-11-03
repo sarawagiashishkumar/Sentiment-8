@@ -25,7 +25,7 @@ import { WatchlistPanel } from "@/components/Watchlist/WatchlistPanel";
 import { PlanComparisonPage, LowCreditsModal } from "@/components/Shared/PlanComparison";
 import { NewsSentimentPanel } from "@/components/News/NewsSentimentPanel";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export default function App() {
   const {

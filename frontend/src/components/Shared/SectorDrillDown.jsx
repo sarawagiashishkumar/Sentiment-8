@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { X, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function SectorDrillDown({ sector, authHeaders, onClose }) {
   const [stocks, setStocks] = useState([]);

@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, Minus, RefreshCw, Newspaper } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const BIAS_STYLE = {
   BULLISH: { icon: TrendingUp, color: "text-emerald-400", bg: "bg-emerald-950/30 border-emerald-700/40" },

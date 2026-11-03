@@ -8,7 +8,7 @@ import { PortfolioHoldingRow } from "./PortfolioHoldingRow";
 import { PortfolioRiskPanel } from "./PortfolioRiskPanel";
 import { RiskDashboard } from "./RiskDashboard";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const ACCEPTED_TYPES = ".txt,.csv,.CSV,text/csv,application/csv,application/vnd.ms-excel,.xls,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,application/pdf,.jpg,.jpeg,.bmp,.png,.webp,image/*";
 
 export function PortfolioDashboard({ authHeaders, syncCredits }) {

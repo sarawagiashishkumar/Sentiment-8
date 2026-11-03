@@ -5,7 +5,7 @@ import { OptionsControls } from "./OptionsControls";
 import { OptionsTreemapView } from "./OptionsTreemapView";
 import { OptionsChainView } from "./OptionsChainView";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const REFRESH_INTERVAL = 30000;
 
 function isMarketHours() {

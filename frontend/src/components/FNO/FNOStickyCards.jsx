@@ -15,7 +15,7 @@ export function FNOStickyCards({
   enableAlertSound,
   playAlertSound,
 }) {
-  const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+  const API = "/api";
   const [showSoundPrompt, setShowSoundPrompt] = useState(false);
   const [customScript, setCustomScript] = useState("");
   const [customBuyPrice, setCustomBuyPrice] = useState("");

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RefreshCw, TrendingUp } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 // Chart style constants — extracted to avoid re-render allocations
 const CHART_TICK = { fontSize: 9, fill: "#94a3b8" };

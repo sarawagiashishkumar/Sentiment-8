@@ -5,7 +5,7 @@ import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
 import { HeatmapSkeleton } from "@/components/Shared/Skeletons";
 import { MiniChartPopup } from "@/components/Shared/MiniChartPopup";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const REFRESH_INTERVAL = 30000;
 
 function isMarketHours() {

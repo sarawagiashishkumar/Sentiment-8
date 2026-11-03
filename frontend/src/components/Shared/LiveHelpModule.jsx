@@ -7,8 +7,10 @@ import {
 } from "lucide-react";
 import axios from "axios";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const WS_BASE = process.env.REACT_APP_BACKEND_URL?.replace("https://", "wss://").replace("http://", "ws://");
+const API = "/api";
+const WS_BASE = typeof window === "undefined"
+  ? ""
+  : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 
 const LANGUAGES = [
   { code: "en-IN", label: "English" },

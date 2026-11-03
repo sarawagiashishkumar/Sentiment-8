@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Check, X, Zap, Star, Crown, Infinity } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const TIER_ICONS = { free: Zap, basic: Star, pro: Crown, unlimited: Infinity };
 const TIER_COLORS = {

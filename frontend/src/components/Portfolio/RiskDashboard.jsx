@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Shield, TrendingDown, Activity, BarChart3 } from "lucide-react";
 import { TVChart } from "@/components/Shared/TVChartWrapper";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 function MetricCard({ label, value, sub, icon: Icon, color = "text-white" }) {
   return (

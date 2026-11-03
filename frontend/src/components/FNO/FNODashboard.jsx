@@ -22,7 +22,7 @@ import { SubTabs } from "@/components/Layout/SubTabs";
 import { useFNOGeneration } from "@/hooks/useFNOGeneration";
 import axios from "axios";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const FNO_TABS = [
   { id: "signals", label: "Custom Script & F&O Generation" },

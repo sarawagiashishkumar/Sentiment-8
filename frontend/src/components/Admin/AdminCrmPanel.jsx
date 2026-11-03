@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MessageSquare, Send, Mail, Users, Eye, Reply, X, Megaphone } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function AdminCrmPanel({ authHeaders }) {
   const [inbox, setInbox] = useState([]);

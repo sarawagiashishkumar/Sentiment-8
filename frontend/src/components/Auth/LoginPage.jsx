@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import axios from "axios";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function LoginPage({ loginUsername, setLoginUsername, loginLoading, loginError, onLogin }) {
   const isSuspended = loginError && loginError.includes("ACCOUNT_SUSPENDED");

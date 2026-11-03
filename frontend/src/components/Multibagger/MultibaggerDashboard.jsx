@@ -10,7 +10,7 @@ import { formatNumber, formatTime, scoreBadge } from "@/utils/formatters";
 import { readNDJSONStream } from "@/components/Shared/NDJSONStreamConsumer";
 import { MultibaggerCandidateCard } from "./MultibaggerCandidateCard";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function MultibaggerDashboard({ authHeaders, syncCredits }) {
   const [multibaggerData, setMultibaggerData] = useState(null);

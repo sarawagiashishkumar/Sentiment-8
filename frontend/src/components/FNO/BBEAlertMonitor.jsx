@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { triggerWarningAlarm } from "@/components/Shared/KiteLiveWarning";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const POLL_INTERVAL = 30000;
 
 function isMarketHours() {
