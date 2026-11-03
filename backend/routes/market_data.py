@@ -6,6 +6,7 @@ Endpoints: /script-master/*, /sector-momentum, /kite/*
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -136,8 +137,8 @@ async def get_sector_momentum(
 @market_data_router.get("/kite/auth-url")
 async def get_kite_auth_url(current_user: dict = Depends(get_owner_user)):
     _ = current_user
-    if not _state.KITE_API_KEY or not _state.KITE_API_SECRET or not _state.KITE_REDIRECT_URL:
-        raise HTTPException(status_code=400, detail="Market Data API credentials not configured")
+    if not _state.KITE_API_KEY or not _state.KITE_API_SECRET:
+        raise HTTPException(status_code=503, detail="Kite API credentials are not configured on the server")
     return {
         "auth_url": f"https://kite.zerodha.com/connect/login?v=3&api_key={_state.KITE_API_KEY}",
         "redirect_url": _state.KITE_REDIRECT_URL,
@@ -281,7 +282,21 @@ async def kite_refresh_option_master(current_user: dict = Depends(get_owner_user
 
 @market_data_router.post("/kite/postback")
 async def kite_postback(payload: dict):
-    _ = payload
+    if not _state.KITE_API_SECRET:
+        raise HTTPException(status_code=503, detail="Kite postback verification is not configured")
+
+    order_id = payload.get("order_id")
+    order_timestamp = payload.get("order_timestamp")
+    checksum = payload.get("checksum")
+    if not all(isinstance(value, str) and value for value in (order_id, order_timestamp, checksum)):
+        raise HTTPException(status_code=400, detail="Invalid Kite postback payload")
+
+    expected_checksum = hashlib.sha256(
+        f"{order_id}{order_timestamp}{_state.KITE_API_SECRET}".encode()
+    ).hexdigest()
+    if not hmac.compare_digest(expected_checksum, checksum.lower()):
+        raise HTTPException(status_code=401, detail="Invalid Kite postback checksum")
+
     return {"received": True}
 
 
