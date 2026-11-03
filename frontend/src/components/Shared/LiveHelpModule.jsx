@@ -54,6 +54,7 @@ export function LiveHelpModule({ authHeaders, me }) {
   const chatEndRef = useRef(null);
   const iceServersRef = useRef([]);
   const recognitionRef = useRef(null);
+  const startListeningRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -91,7 +92,7 @@ export function LiveHelpModule({ authHeaders, me }) {
       setIsSpeaking(false);
       // In voice mode, auto-restart listening after AI finishes speaking
       if (voiceMode) {
-        setTimeout(() => startListening(), 300);
+        setTimeout(() => startListeningRef.current?.(), 300);
       }
     };
     utterance.onerror = () => setIsSpeaking(false);
@@ -104,7 +105,7 @@ export function LiveHelpModule({ authHeaders, me }) {
   };
 
   // ── AI Chat ─────────────────────────────────────────────────────────
-  const sendToAI = async (text) => {
+  const sendToAI = useCallback(async (text) => {
     if (!text.trim()) return;
     setMessages(prev => [...prev, { type: "outgoing", text: text.trim(), sender: me?.username || "You", ts: new Date().toISOString() }]);
     setInput("");
@@ -142,7 +143,7 @@ export function LiveHelpModule({ authHeaders, me }) {
       speak(fallback);
     }
     setAiLoading(false);
-  };
+  }, [authHeaders, me, sessionId, speak]);
 
   const handleSend = (e) => {
     e.preventDefault();
@@ -187,7 +188,11 @@ export function LiveHelpModule({ authHeaders, me }) {
     };
 
     recognition.start();
-  }, [isListening, lang]);
+  }, [isListening, lang, sendToAI]);
+
+  useEffect(() => {
+    startListeningRef.current = startListening;
+  }, [startListening]);
 
   const stopListening = () => {
     recognitionRef.current?.stop();
@@ -210,41 +215,6 @@ export function LiveHelpModule({ authHeaders, me }) {
       startListening();
     }
   };
-
-  // ── WebSocket for admin live support ────────────────────────────────
-  const connectWS = useCallback(() => {
-    if (!WS_BASE || wsRef.current) return;
-    const ws = new WebSocket(`${WS_BASE}/api/ws/livehelp/${sessionId}`);
-    wsRef.current = ws;
-    ws.onopen = () => {
-      setConnected(true);
-      ws.send(JSON.stringify({ type: "join", role: "user", user_key: me?.user_key || "", username: me?.username || "User" }));
-    };
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "chat") {
-          setMessages(prev => [...prev, { type: "incoming", text: msg.text, sender: msg.sender, ts: msg.ts }]);
-          speak(msg.text); // Speak admin messages too
-        } else if (msg.type === "peer-joined") {
-          setPeerConnected(true);
-          setMessages(prev => [...prev, { type: "system", text: `${msg.username || "Admin"} joined live support.`, ts: new Date().toISOString() }]);
-        } else if (msg.type === "peer-left") {
-          setPeerConnected(false);
-        } else if (msg.type === "ice-servers") {
-          iceServersRef.current = msg.servers || [];
-        } else if (msg.type === "offer") { handleRemoteOffer(msg.sdp); }
-        else if (msg.type === "answer") { handleRemoteAnswer(msg.sdp); }
-        else if (msg.type === "ice-candidate" && msg.candidate) { handleRemoteIceCandidate(msg.candidate); }
-        else if (msg.type === "voice-start") { setVoiceCallActive(true); }
-        else if (msg.type === "voice-end") { setVoiceCallActive(false); }
-        else if (msg.type === "system-hint") {
-          setMessages(prev => [...prev, { type: "hint", text: msg.message, severity: msg.severity, ts: new Date().toISOString() }]);
-        }
-      } catch (err) { console.error("WS message parse error:", err?.message); }
-    };
-    ws.onclose = () => { setConnected(false); wsRef.current = null; };
-  }, [sessionId, me, speak]);
 
   const disconnectAll = useCallback(() => {
     stopSpeaking(); stopListening();
@@ -304,9 +274,75 @@ export function LiveHelpModule({ authHeaders, me }) {
     setScreenSharing(false);
   };
 
-  const handleRemoteOffer = async (sdp) => { const pc = createPC(); try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); localStreamRef.current = s; s.getTracks().forEach(t => pc.addTrack(t, s)); } catch (e) { console.error("Mic access failed in offer handler"); } await pc.setRemoteDescription(new RTCSessionDescription(sdp)); const ans = await pc.createAnswer(); await pc.setLocalDescription(ans); wsRef.current?.send(JSON.stringify({ type: "answer", sdp: pc.localDescription.toJSON() })); setVoiceCallActive(true); };
-  const handleRemoteAnswer = async (sdp) => { if (pcRef.current) await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp)); };
-  const handleRemoteIceCandidate = async (c) => { if (pcRef.current) { try { await pcRef.current.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { console.error("ICE candidate failed"); } } };
+  const handleRemoteOffer = useCallback(async (sdp) => {
+    const pc = createPC();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localStreamRef.current = stream;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    } catch {
+      console.error("Mic access failed in offer handler");
+    }
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    wsRef.current?.send(JSON.stringify({ type: "answer", sdp: pc.localDescription.toJSON() }));
+    setVoiceCallActive(true);
+  }, [createPC]);
+
+  const handleRemoteAnswer = useCallback(async (sdp) => {
+    if (pcRef.current) await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
+  }, []);
+
+  const handleRemoteIceCandidate = useCallback(async (candidate) => {
+    if (!pcRef.current) return;
+    try {
+      await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch {
+      console.error("ICE candidate failed");
+    }
+  }, []);
+
+  const connectWS = useCallback(() => {
+    if (!WS_BASE || wsRef.current) return;
+    const ws = new WebSocket(`${WS_BASE}/api/ws/livehelp/${sessionId}`);
+    wsRef.current = ws;
+    ws.onopen = () => {
+      setConnected(true);
+      ws.send(JSON.stringify({ type: "join", role: "user", user_key: me?.user_key || "", username: me?.username || "User" }));
+    };
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "chat") {
+          setMessages(prev => [...prev, { type: "incoming", text: msg.text, sender: msg.sender, ts: msg.ts }]);
+          speak(msg.text);
+        } else if (msg.type === "peer-joined") {
+          setPeerConnected(true);
+          setMessages(prev => [...prev, { type: "system", text: `${msg.username || "Admin"} joined live support.`, ts: new Date().toISOString() }]);
+        } else if (msg.type === "peer-left") {
+          setPeerConnected(false);
+        } else if (msg.type === "ice-servers") {
+          iceServersRef.current = msg.servers || [];
+        } else if (msg.type === "offer") {
+          handleRemoteOffer(msg.sdp);
+        } else if (msg.type === "answer") {
+          handleRemoteAnswer(msg.sdp);
+        } else if (msg.type === "ice-candidate" && msg.candidate) {
+          handleRemoteIceCandidate(msg.candidate);
+        } else if (msg.type === "voice-start") {
+          setVoiceCallActive(true);
+        } else if (msg.type === "voice-end") {
+          setVoiceCallActive(false);
+        } else if (msg.type === "system-hint") {
+          setMessages(prev => [...prev, { type: "hint", text: msg.message, severity: msg.severity, ts: new Date().toISOString() }]);
+        }
+      } catch (err) {
+        console.error("WS message parse error:", err?.message);
+      }
+    };
+    ws.onclose = () => { setConnected(false); wsRef.current = null; };
+  }, [sessionId, me, speak, handleRemoteOffer, handleRemoteAnswer, handleRemoteIceCandidate]);
 
   useEffect(() => { return () => disconnectAll(); }, [disconnectAll]);
 

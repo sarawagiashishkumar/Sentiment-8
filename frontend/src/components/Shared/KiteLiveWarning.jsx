@@ -107,8 +107,7 @@ export function KiteLiveWarning({ authHeaders, addNotification }) {
       setDisconnected(true);
       setDismissed(false);
     }
-  }, [authHeaders]);
-
+  }, [authHeaders, addNotification]);
   useEffect(() => {
     requestNotificationPermission();
     checkHealth(); // immediate check

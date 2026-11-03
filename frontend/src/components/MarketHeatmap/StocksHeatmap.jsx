@@ -71,8 +71,6 @@ export function StocksHeatmap({ authHeaders, onFetchError }) {
     }
   }, [authHeaders, onFetchError]);
 
-  useEffect(() => { loadData(activeFilter); /* eslint-disable-next-line */ }, []);
-
   useEffect(() => {
     filterRef.current = activeFilter;
     setListPage(0);
