@@ -270,7 +270,7 @@ async def ai_chat(
         if not ai_service_url:
             raise RuntimeError("AI support service binding is unavailable")
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=5.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(55.0, connect=5.0)) as client:
             ai_response = await client.post(
                 f"{ai_service_url.rstrip('/')}/generate",
                 json={

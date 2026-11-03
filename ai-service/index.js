@@ -25,8 +25,15 @@ app.post("/generate", async (request, response) => {
     });
 
     return response.json({ text: result.text });
-  } catch {
-    console.error("[ai-service] AI Gateway request failed");
+  } catch (error) {
+    const statusCode =
+      typeof error === "object" && error !== null && "statusCode" in error
+        ? error.statusCode
+        : undefined;
+    console.error("[ai-service] AI Gateway request failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      statusCode,
+    });
     return response.status(502).json({ error: "AI support is temporarily unavailable." });
   }
 });
