@@ -507,7 +507,7 @@ async def run_backtest_batch(db, strategy_library: dict[str, dict]) -> dict[str,
 
     # Sync MongoDB client for instrument token lookup in threads
     from pymongo import MongoClient
-    sync_client = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+    sync_client = MongoClient(os.environ.get("MONGODB_URI") or os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
     db_name = os.environ.get("DB_NAME", "trading_signals")
     sync_db = sync_client[db_name]
 

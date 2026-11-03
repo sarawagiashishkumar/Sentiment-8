@@ -37,7 +37,7 @@ Build an AI-driven trading research platform for Indian NSE F&O (Futures & Optio
 │   │   └── ... (indicators, regime, forensic, IV, etc.)
 │   ├── models/__init__.py      # 30+ Pydantic models (fully type-hinted)
 │   ├── tests/                  # 91 test iterations
-│   └── .env                    # MONGO_URL, DB_NAME, KITE_API_*, EMERGENT_LLM_KEY
+│   └── .env                    # MONGODB_URI (Atlas preferred), MONGO_URL (legacy), DB_NAME, KITE_API_*
 ├── frontend/                   # React 18 + Shadcn UI
 │   ├── src/
 │   │   ├── App.js              # Main orchestrator (9 tabs, heartbeat, auth)

@@ -208,7 +208,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-mongo_url = os.environ["MONGO_URL"]
+mongo_url = os.environ.get("MONGODB_URI") or os.environ.get("MONGO_URL")
+if not mongo_url:
+    raise RuntimeError("Set MONGODB_URI or MONGO_URL to connect the backend to MongoDB.")
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
