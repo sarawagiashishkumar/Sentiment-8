@@ -4,7 +4,20 @@
     "backend": {
       "root": "backend",
       "framework": "fastapi",
-      "entrypoint": "server:app"
+      "entrypoint": "server:app",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "ai-service",
+          "format": "url",
+          "env": "AI_SERVICE_URL"
+        }
+      ]
+    },
+    "ai-service": {
+      "root": "ai-service",
+      "framework": "express",
+      "entrypoint": "index.js"
     },
     "api-proxy": {
       "root": "api-proxy",

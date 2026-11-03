@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 # Get the backend URL from frontend/.env
-BACKEND_URL = "https://sentiment-engine-ai.preview.emergentagent.com/api"
+BACKEND_URL = "http://127.0.0.1:4000/api"
 
 class BackendValidator:
     def __init__(self):

@@ -252,12 +252,7 @@ async def ai_chat(
 ):
     """AI Support Agent — answers user questions intelligently."""
     import os
-    from dotenv import load_dotenv
-    load_dotenv()
-
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        return {"reply": "AI support is temporarily unavailable. Please contact admin directly via the CRM.", "auto_ticket": False}
+    import httpx
 
     user_key = current_user.get("user_key", "")
     username = current_user.get("username", "User")
@@ -271,17 +266,23 @@ async def ai_chat(
             session_context += f"- {s['message']}\n"
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        ai_service_url = os.environ.get("AI_SERVICE_URL")
+        if not ai_service_url:
+            raise RuntimeError("AI support service binding is unavailable")
 
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"support_{user_key}_{req.session_id}",
-            system_message=SUPPORT_SYSTEM_PROMPT + session_context,
-        )
-        chat.with_model("openai", "gpt-4o-mini")
-
-        user_msg = UserMessage(text=req.message)
-        reply_text = await chat.send_message(user_msg)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=5.0)) as client:
+            ai_response = await client.post(
+                f"{ai_service_url.rstrip('/')}/generate",
+                json={
+                    "system": SUPPORT_SYSTEM_PROMPT + session_context,
+                    "prompt": req.message,
+                },
+            )
+        ai_response.raise_for_status()
+        reply_text = ai_response.json().get("text")
+        if not isinstance(reply_text, str) or not reply_text.strip():
+            raise ValueError("AI support service returned an empty response")
+        reply_text = reply_text.strip()
 
         # Detect bug-related keywords for auto-ticket
         bug_keywords = ["error", "crash", "broken", "not working", "bug", "failed", "stuck", "blank"]
