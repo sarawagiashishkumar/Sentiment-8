@@ -423,10 +423,7 @@ async def _fetch_option_snapshot_from_kite(contract: FNOContract) -> dict | None
     if not access_token or not _state.KITE_API_KEY:
         return None
 
-    await _sync_kite_option_master_daily()
-    instrument = await _resolve_kite_instrument_for_contract(contract)
-    if not instrument:
-        return None
+    instrument = f"NFO:{contract.script}"
 
     def _fetch_snapshot() -> dict | None:
         try:

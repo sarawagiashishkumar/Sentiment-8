@@ -200,8 +200,9 @@ export function FNOStickyCards({
                 <div className="grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
                   <p>Buy Price: <span className="font-mono">₹{formatNumber(position.buy_price)}</span></p>
                   <p>Lots / Units: <span className="font-mono">{position.quantity_lots} / {position.units}</span></p>
-                  <p>Live LTP: <span className="font-mono text-sm font-extrabold text-slate-900" data-testid={`custom-position-live-ltp-${position.id}`}>₹{formatNumber(position.latest_option_ltp)}</span></p>
+                  <p>Live LTP: <span className="font-mono text-sm font-extrabold text-slate-900" data-testid={`custom-position-live-ltp-${position.id}`}>{position.latest_option_ltp == null ? "Unavailable" : `₹${formatNumber(position.latest_option_ltp)}`}</span></p>
                   <p>LTP vs Buy: <span className={`font-mono font-semibold ${ltpDeltaClass}`} data-testid={`custom-position-buy-diff-${position.id}`}>{formatSignedInr(position.buy_to_ltp_diff)}</span></p>
+                  {position.latest_option_ltp == null ? <p className="md:col-span-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-200" role="status">Position saved. Waiting for a confirmed live option quote; P&amp;L alerts resume when pricing is available.</p> : null}
                   {position.sold_price !== null && position.sold_price !== undefined ? (
                     <p className="md:col-span-2 custom-position-pnl-box" data-testid={`custom-position-realized-pnl-${position.id}`}>
                       Sold @ <span className="font-mono">₹{formatNumber(position.sold_price)}</span> | Realized P&L: <span className={`ml-1 font-mono font-extrabold ${Number(position.realized_pnl || 0) >= 0 ? "text-emerald-100" : "text-rose-100"}`}>{formatSignedInr(position.realized_pnl)}</span>

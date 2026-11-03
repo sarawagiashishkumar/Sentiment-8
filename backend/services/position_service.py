@@ -191,7 +191,11 @@ async def _refresh_open_position(position: dict) -> dict:
             "lot_size": corrected_lot_size,
             "minutes_to_expiry": minutes_to_expiry,
             "last_update": _utc_now_iso(),
-            "revised_exit_plan": "Live option feed unavailable; showing last confirmed option LTP.",
+            "revised_exit_plan": (
+                "Live option feed unavailable; showing the last confirmed option LTP."
+                if _last_known_ltp > 0
+                else "Position saved; waiting for a confirmed live option quote. P&L and alerts will resume when pricing is available."
+            ),
         }
         if _corrected_be > _current_be:
             _unavail_update["best_exit_price"] = _corrected_be

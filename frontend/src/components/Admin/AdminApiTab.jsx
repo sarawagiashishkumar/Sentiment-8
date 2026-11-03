@@ -88,7 +88,7 @@ export function AdminApiTab({ kiteStatus, kiteConfig, checkKiteStatus, token }) 
             <p className="break-all font-mono text-xs text-cyan-400">{kiteConfig?.postback_url || "Not configured"}</p>
           </div>
           <p className="text-xs text-slate-500">
-            Register the redirect URL exactly in the Kite Developer Console. Postbacks are for order updates, not login, and apply only to orders placed with this API key. The API secret stays server-side.
+            Register the redirect URL exactly in the Kite Developer Console. Postbacks are for order updates, not login, and apply only to orders placed with this API key. The API secret is used only for the server-side token checksum and is never included in the OAuth URL.
           </p>
         </div>
         <div className="flex items-center gap-3">

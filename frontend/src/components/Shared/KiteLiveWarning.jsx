@@ -51,10 +51,12 @@ function showBrowserNotification(title, body) {
 
 // ── Main Component: Kite session status polling ──────────────────────────────
 
-export function KiteLiveWarning({ authHeaders, addNotification }) {
+export function KiteLiveWarning({ authHeaders, addNotification, isOwner }) {
   const [disconnected, setDisconnected] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [lastDisconnectTime, setLastDisconnectTime] = useState(null);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectError, setReconnectError] = useState("");
   const intervalRef = useRef(null);
   const alarmPlayedRef = useRef(false);
   const disconnectedRef = useRef(false);
@@ -95,6 +97,28 @@ export function KiteLiveWarning({ authHeaders, addNotification }) {
       // The application health indicator reports backend/network reachability separately.
     }
   }, [authHeaders, addNotification]);
+  const reconnectToKite = async () => {
+    const authWindow = window.open("about:blank", "_blank");
+    setReconnectError("");
+    setReconnecting(true);
+    try {
+      const response = await axios.get(`${API}/kite/auth-url`, { headers: authHeaders, timeout: 8000 });
+      const authUrl = response.data?.auth_url;
+      if (!authUrl) throw new Error("Kite OAuth URL is unavailable.");
+      if (authWindow) {
+        authWindow.opener = null;
+        authWindow.location.replace(authUrl);
+      } else {
+        window.location.assign(authUrl);
+      }
+    } catch (error) {
+      authWindow?.close();
+      setReconnectError(error?.response?.data?.detail || error?.message || "Unable to start Kite reconnection.");
+    } finally {
+      setReconnecting(false);
+    }
+  };
+
   useEffect(() => {
     requestNotificationPermission();
     checkHealth(); // immediate check
@@ -122,8 +146,20 @@ export function KiteLiveWarning({ authHeaders, addNotification }) {
           </h3>
           <p className="text-xs text-rose-300/80 mt-1">
             Live market data feed is disconnected. Your signals and heatmaps may show stale data.
-            Please re-authenticate from the <strong>Admin panel</strong> immediately.
+            {isOwner ? " Reconnect using your Kite login." : " Ask the account owner to reconnect Kite."}
           </p>
+          {isOwner ? (
+            <button
+              type="button"
+              onClick={reconnectToKite}
+              disabled={reconnecting}
+              className="mt-3 rounded-md border border-rose-400/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+              data-testid="kite-reconnect-button"
+            >
+              {reconnecting ? "Opening Kite login…" : "Reconnect API"}
+            </button>
+          ) : null}
+          {reconnectError ? <p className="mt-2 text-xs text-rose-200" role="alert">{reconnectError}</p> : null}
           {lastDisconnectTime && (
             <p className="text-[10px] text-rose-400/60 mt-1 font-mono">
               Detected: {lastDisconnectTime.toLocaleTimeString("en-IN")}

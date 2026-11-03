@@ -380,8 +380,8 @@ async def create_custom_position(
     try:
         latest_snapshot = await _srv._fetch_live_option_snapshot(contract)
         latest_option_ltp = float(latest_snapshot.get("ltp"))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Unable to fetch live option LTP") from exc
+    except Exception:
+        latest_option_ltp = None
 
     position_id = str(uuid.uuid4())
     now_iso = _srv._utc_now_iso()
@@ -401,8 +401,8 @@ async def create_custom_position(
         "last_update": now_iso,
         "status": "OPEN",
         "signal_state": "ACTIVE",
-        "alert": None,
-        "latest_option_ltp": round(float(latest_option_ltp), 2),
+        "alert": "LIVE_LTP_UNAVAILABLE" if latest_option_ltp is None else None,
+        "latest_option_ltp": round(float(latest_option_ltp), 2) if latest_option_ltp is not None else None,
         **_srv._compute_initial_option_targets(float(payload.buy_price)),
         "stop_loss": _srv._compute_initial_option_sl(float(payload.buy_price)),
         "projected_exit_price": None,
@@ -412,7 +412,7 @@ async def create_custom_position(
         "sold_price": None,
         "realized_pnl": None,
         "minutes_to_expiry": minutes_to_expiry,
-        "revised_exit_plan": "Hold with trailing stop once target1 hits",
+        "revised_exit_plan": "Hold with trailing stop once target1 hits" if latest_option_ltp is not None else "Position saved; live option price unavailable. Monitoring resumes when a confirmed Kite quote is available.",
     }
 
     await _srv.db.custom_positions.insert_one(doc)
