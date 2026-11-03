@@ -35,7 +35,7 @@ export default function App() {
   } = useAuth();
 
   const [currentPage, setCurrentPage] = useState("home");
-  const handlePageChange = (page) => { setCurrentPage(page); lastActivityRef.current = Date.now(); };
+  const handlePageChange = (page) => setCurrentPage(page);
   const [customPositions, setCustomPositions] = useState([]);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
@@ -124,7 +124,9 @@ export default function App() {
           <HomeDashboard setCurrentPage={handlePageChange} />
           <NewsSentimentPanel authHeaders={authHeaders} />
         </>}
-        {["multibagger", "fno", "portfolio", "heatmap", "reports", "watchlist"].includes(currentPage) && <KiteLiveWarning authHeaders={authHeaders} addNotification={addNotification} />}
+        {["multibagger", "fno", "portfolio", "heatmap", "reports", "watchlist"].includes(currentPage) && (
+          <KiteLiveWarning authHeaders={authHeaders} addNotification={addNotification} isOwner={isOwner} />
+        )}
 
         <ErrorBoundary>
           <UserCrmInbox authHeaders={authHeaders} />

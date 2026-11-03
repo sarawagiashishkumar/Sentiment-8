@@ -14,19 +14,20 @@ const API = "/api";
 
 const ADMIN_TABS = [
   { id: "users", label: "User Management" },
-  { id: "permissions", label: "Permissions & Packages" },
-  { id: "payments", label: "Payments" },
+  { id: "permissions", label: "Permissions & Packages", ownerOnly: true },
+  { id: "payments", label: "Payments", ownerOnly: true },
   { id: "crm", label: "CRM Messages" },
   { id: "fraud", label: "Fraud Detection" },
-  { id: "controls", label: "Advanced Controls" },
-  { id: "macro", label: "Active Macro Events" },
-  { id: "perf", label: "Generation Performance" },
-  { id: "kite", label: "API Connect" },
+  { id: "controls", label: "Advanced Controls", ownerOnly: true },
+  { id: "macro", label: "Active Macro Events", ownerOnly: true },
+  { id: "perf", label: "Generation Performance", ownerOnly: true },
+  { id: "kite", label: "API Connect", ownerOnly: true },
   { id: "csv", label: "CSV Seeds" },
 ];
 
 export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydrateMe }) {
   const [activeTab, setActiveTab] = useState("users");
+  const visibleAdminTabs = ADMIN_TABS.filter((tab) => isOwner || !tab.ownerOnly);
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminError, setAdminError] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
@@ -68,6 +69,12 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
     try { const r = await axios.get(`${API}/admin/config`, { headers: authHeaders }); setAdminConfig(r.data); }
     catch (e) { setAdminError(e?.response?.data?.detail || "Unable to load admin config"); }
   }, [authHeaders]);
+
+  useEffect(() => {
+    if (!isOwner && ADMIN_TABS.some((tab) => tab.id === activeTab && tab.ownerOnly)) {
+      setActiveTab("users");
+    }
+  }, [activeTab, isOwner]);
 
   useEffect(() => {
     loadAdminUsers();
@@ -129,7 +136,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
 
   return (
     <section className="space-y-4" data-testid="admin-page">
-      <SubTabs tabs={ADMIN_TABS} active={activeTab} onChange={setActiveTab} />
+      <SubTabs tabs={visibleAdminTabs} active={activeTab} onChange={setActiveTab} />
 
       {activeTab === "users" && (
         <AdminUsersTab

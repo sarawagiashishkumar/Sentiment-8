@@ -192,8 +192,19 @@ function ExportMenu({ fnoData, open, setOpen, exportTableRef }) {
 // ── Results Grid ──────────────────────────────────────────────────────────────
 
 function FNOResultsGrid({ fnoData }) {
+  const marketIsOpen = fnoData.market_session?.is_open;
   return (
     <>
+      {marketIsOpen === false ? (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100" data-testid="fno-market-session-status" role="status">
+          Market closed. Showing signals generated from the latest available data; verify live prices before acting.
+        </div>
+      ) : null}
+      {fnoData.no_signals_alert ? (
+        <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-200" data-testid="fno-no-signals-alert" role="status">
+          {fnoData.no_signals_alert}
+        </div>
+      ) : null}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-testid="fno-3col-layout">
         <div className="lg:sticky lg:top-4 lg:self-start">
           {fnoData.nifty_projection ? <IndexPane pane={fnoData.nifty_projection} /> : <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400 animate-pulse">Computing NIFTY...</div>}

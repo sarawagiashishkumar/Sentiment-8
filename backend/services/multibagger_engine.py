@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from typing import Any
 
@@ -165,7 +166,42 @@ def compute_multibagger_analysis(
         + tier_scores["tier_7"]
         + tier_scores["tier_8"]
     )
-    final_score = int(clamp(round(raw_score), 0, 100))
+    core_adjustment = 0.0
+    if pe is not None:
+        core_adjustment += clamp(4 - abs(pe - 20) / 8, -3, 4)
+    if pb_ratio_est is not None:
+        core_adjustment += clamp(3 - pb_ratio_est, -3, 3)
+    if position is not None:
+        core_adjustment += clamp((0.60 - position) * 5, -2, 2)
+    core_adjustment += clamp(day_change_pct * 0.5, -2, 2)
+    if market_cap is not None and market_cap > 0:
+        core_adjustment += clamp(math.log10(market_cap / 500), -1, 3)
+
+    fundamentals = fundamental or {}
+    fundamental_adjustment = 0.0
+    for key, center, scale, lower, upper in (
+        ("roe", 8, 4, -4, 6),
+        ("roce", 8, 4, -4, 6),
+        ("eps_growth_pct", 0, 10, -5, 6),
+        ("gross_margin", 20, 10, -3, 4),
+    ):
+        value = _safe_ratio(fundamentals.get(key), 1)
+        if value is not None:
+            fundamental_adjustment += clamp((value - center) / scale, lower, upper)
+
+    piotroski = _safe_ratio(fundamentals.get("piotroski_score"), 1)
+    if piotroski is not None:
+        fundamental_adjustment += clamp((piotroski - 4) * 1.25, -5, 6)
+
+    debt_to_equity = _safe_ratio(fundamentals.get("debt_to_equity"), 1)
+    if debt_to_equity is not None:
+        fundamental_adjustment += clamp(1.5 - debt_to_equity, -5, 1.5)
+
+    debt_to_market_cap = _safe_ratio(fundamentals.get("total_debt_to_market_cap"), 1)
+    if debt_to_market_cap is not None and debt_to_market_cap > 0.15:
+        fundamental_adjustment -= clamp((debt_to_market_cap - 0.15) / 0.05, 0, 8)
+
+    final_score = int(clamp(round(raw_score + core_adjustment + fundamental_adjustment), 0, 100))
 
     tier_thresholds = {
         "tier_1": 10,
