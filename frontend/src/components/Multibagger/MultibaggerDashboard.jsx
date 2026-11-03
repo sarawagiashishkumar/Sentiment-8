@@ -17,7 +17,7 @@ export function MultibaggerDashboard({ authHeaders, syncCredits }) {
   const [multibaggerLoading, setMultibaggerLoading] = useState(false);
   const [multibaggerError, setMultibaggerError] = useState("");
   const [multibaggerProgress, setMultibaggerProgress] = useState("");
-  const [minScore, setMinScore] = useState(60);
+  const [minScore, setMinScore] = useState(0);
   const [customMbSymbol, setCustomMbSymbol] = useState("");
   const [customMbResult, setCustomMbResult] = useState(null);
   const [customMbLoading, setCustomMbLoading] = useState(false);
@@ -121,34 +121,42 @@ export function MultibaggerDashboard({ authHeaders, syncCredits }) {
             <CardTitle className="text-white">Projected Multibagger Table</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="relative w-full overflow-auto rounded-lg border border-slate-800" data-testid="multibagger-table-wrapper">
-              <Table data-testid="multibagger-table">
-                <TableHeader className="bg-slate-900">
-                  <TableRow>
-                    <TableHead>Stock</TableHead>
-                    <TableHead>Sector</TableHead>
-                    <TableHead>RSI</TableHead>
-                    <TableHead>GTT Buy</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>1W</TableHead>
-                    <TableHead>1M</TableHead>
-                    <TableHead>3M</TableHead>
-                    <TableHead>6M</TableHead>
-                    <TableHead>9M</TableHead>
-                    <TableHead>1Y</TableHead>
-                    <TableHead>Score</TableHead>
-                  </TableRow>
-                </TableHeader>
-                {filteredMultibaggers.map((row) => (
-                  <MultibaggerCandidateCard
-                    key={row.symbol}
-                    row={row}
-                    expanded={expandedMbBands[row.symbol]}
-                    onToggleBands={() => setExpandedMbBands(prev => ({...prev, [row.symbol]: !prev[row.symbol]}))}
-                  />
-                ))}
-              </Table>
-            </div>
+            {filteredMultibaggers.length === 0 ? (
+              <p className="py-4 text-center text-sm text-slate-400" data-testid="multibagger-no-results">
+                {multibaggerData.candidates?.length
+                  ? `No candidates meet the minimum score of ${minScore}. Lower the threshold to show more generated results.`
+                  : "The scan completed, but no candidates were returned."}
+              </p>
+            ) : (
+              <div className="relative w-full overflow-auto rounded-lg border border-slate-800" data-testid="multibagger-table-wrapper">
+                <Table data-testid="multibagger-table">
+                  <TableHeader className="bg-slate-900">
+                    <TableRow>
+                      <TableHead>Stock</TableHead>
+                      <TableHead>Sector</TableHead>
+                      <TableHead>RSI</TableHead>
+                      <TableHead>GTT Buy</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>1W</TableHead>
+                      <TableHead>1M</TableHead>
+                      <TableHead>3M</TableHead>
+                      <TableHead>6M</TableHead>
+                      <TableHead>9M</TableHead>
+                      <TableHead>1Y</TableHead>
+                      <TableHead>Score</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  {filteredMultibaggers.map((row) => (
+                    <MultibaggerCandidateCard
+                      key={row.symbol}
+                      row={row}
+                      expanded={expandedMbBands[row.symbol]}
+                      onToggleBands={() => setExpandedMbBands(prev => ({...prev, [row.symbol]: !prev[row.symbol]}))}
+                    />
+                  ))}
+                </Table>
+              </div>
+            )}
           </CardContent>
         </Card>
       ) : null}

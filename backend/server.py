@@ -211,7 +211,13 @@ logger = logging.getLogger(__name__)
 mongo_url = os.environ.get("MONGODB_URI") or os.environ.get("MONGO_URL")
 if not mongo_url:
     raise RuntimeError("Set MONGODB_URI or MONGO_URL to connect the backend to MongoDB.")
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=5000,
+    socketTimeoutMS=60000,
+    waitQueueTimeoutMS=5000,
+)
 db = client[os.environ["DB_NAME"]]
 
 app = FastAPI()
@@ -424,19 +430,32 @@ async def root():
 
 @api_router.get("/health")
 async def health_check():
-    """Comprehensive health check — DB, Kite session, background tasks."""
+    """Return API readiness without letting diagnostic queries delay the probe."""
     checks = {}
 
-    # MongoDB connectivity
     try:
-        await db.command("ping")
-        checks["database"] = {"status": "healthy", "connected": True}
-    except Exception as exc:
-        checks["database"] = {"status": "unhealthy", "error": str(exc)[:100]}
+        await asyncio.wait_for(db.command("ping"), timeout=5.0)
+    except Exception:
+        checks.update(
+            {
+                "database": {"status": "unhealthy", "connected": False},
+                "kite_session": {"status": "unavailable"},
+                "background_tasks": {"status": "not_checked"},
+                "data": {"status": "unavailable"},
+            }
+        )
+        return {"status": "degraded", "checks": checks, "ts": datetime.now(IST).isoformat()}
 
-    # Kite session status
+    checks["database"] = {"status": "healthy", "connected": True}
+
     try:
-        row = await db.system_meta.find_one({"key": "kite_session"}, {"_id": 0, "date": 1, "user_id": 1, "updated_at": 1})
+        row = await asyncio.wait_for(
+            db.system_meta.find_one(
+                {"key": "kite_session"},
+                {"_id": 0, "date": 1, "user_id": 1, "updated_at": 1},
+            ),
+            timeout=1.0,
+        )
         if row:
             today = datetime.now(IST).date().isoformat()
             is_today = row.get("date") == today
@@ -451,7 +470,6 @@ async def health_check():
     except Exception:
         checks["kite_session"] = {"status": "check_failed"}
 
-    # Background tasks health
     import services.app_state as _app_state
     checks["background_tasks"] = {
         "iv_collector": "running",
@@ -461,23 +479,24 @@ async def health_check():
         "last_mb_gen": bool(_app_state.LAST_MB_PERF),
     }
 
-    # Collection counts (quick metrics)
     try:
-        user_count = await db.app_users.count_documents({})
-        signal_count = await db.fno_signal_log.count_documents({})
+        user_count, signal_count = await asyncio.wait_for(
+            asyncio.gather(
+                db.app_users.estimated_document_count(),
+                db.fno_signal_log.estimated_document_count(),
+            ),
+            timeout=1.5,
+        )
         checks["data"] = {"users": user_count, "signals_logged": signal_count}
     except Exception:
         checks["data"] = {"status": "unavailable"}
 
-    overall = "healthy" if checks.get("database", {}).get("connected") else "degraded"
-    return {"status": overall, "checks": checks, "ts": datetime.now(IST).isoformat()}
+    return {"status": "healthy", "checks": checks, "ts": datetime.now(IST).isoformat()}
 
 
 @api_router.get("/heartbeat")
 async def heartbeat():
-    """Lightweight keep-alive endpoint. Frontend pings on every interaction
-    and at intervals to prevent Kubernetes pod eviction and maintain session warmth.
-    Any call here = active engagement = server stays awake."""
+    """Legacy liveness endpoint retained for callers that still use it."""
     return {"status": "alive", "ts": datetime.now(IST).isoformat(), "active": True}
 
 # ── Auth routes: extracted to routes/auth.py ──
@@ -791,6 +810,8 @@ async def _run_startup_maintenance():
     try:
         await db.alert_rules.create_index([("user_key", 1), ("enabled", 1)])
         await db.login_sessions.create_index([("user_key", 1), ("ts_epoch", -1)])
+        await db.login_sessions.create_index("token_hash", unique=True, sparse=True)
+        await db.login_sessions.create_index("expires_at", expireAfterSeconds=0)
         await db.fraud_incidents.create_index([("user_key", 1), ("status", 1)])
         await db.crm_messages.create_index([("to", 1), ("ts_epoch", -1)])
         await db.crm_messages.create_index([("to_user_key", 1), ("dismissed", 1)])

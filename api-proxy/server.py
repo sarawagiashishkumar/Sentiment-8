@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -10,7 +11,23 @@ from starlette.websockets import WebSocketState
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-app = FastAPI()
+BACKEND_TIMEOUT = httpx.Timeout(connect=8.0, read=120.0, write=30.0, pool=5.0)
+HEALTH_TIMEOUT = httpx.Timeout(connect=3.0, read=9.0, write=5.0, pool=3.0)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.backend_client = httpx.AsyncClient(
+        timeout=BACKEND_TIMEOUT,
+        follow_redirects=False,
+    )
+    try:
+        yield
+    finally:
+        await app.state.backend_client.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -44,18 +61,19 @@ async def proxy_http(request: Request, path: str = ""):
         for name, value in request.headers.raw
         if name.decode("latin-1").lower() not in HOP_BY_HOP_HEADERS | {"host"}
     ]
-    client = httpx.AsyncClient(timeout=None, follow_redirects=False)
+    client: httpx.AsyncClient = request.app.state.backend_client
+    request_timeout = HEALTH_TIMEOUT if request.url.path == "/api/health" else BACKEND_TIMEOUT
     outbound_request = client.build_request(
         request.method,
         target_url,
         headers=request_headers,
         content=request.stream(),
+        timeout=request_timeout,
     )
 
     try:
         upstream_response = await client.send(outbound_request, stream=True)
     except httpx.RequestError as error:
-        await client.aclose()
         raise HTTPException(status_code=502, detail="Backend service request failed") from error
 
     response_headers = [
@@ -66,7 +84,6 @@ async def proxy_http(request: Request, path: str = ""):
 
     async def close_upstream():
         await upstream_response.aclose()
-        await client.aclose()
 
     response = StreamingResponse(
         upstream_response.aiter_raw(),
