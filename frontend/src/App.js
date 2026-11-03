@@ -92,34 +92,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // ── Keep-alive heartbeat ──────────────────────────────────────────
-  const lastActivityRef = useRef(Date.now());
-  const heartbeatTimerRef = useRef(null);
-
-  useEffect(() => {
-    if (!token) return undefined;
-    const ping = () => { axios.get(`${API}/heartbeat`, { headers: authHeaders, timeout: 5000 }).catch(() => {}); };
-    const resetActivity = () => { lastActivityRef.current = Date.now(); };
-
-    const events = ["click", "scroll", "keydown", "mousemove", "touchstart", "focus"];
-    events.forEach(e => window.addEventListener(e, resetActivity, { passive: true }));
-    const vis = () => { if (!document.hidden) resetActivity(); };
-    document.addEventListener("visibilitychange", vis);
-    const interceptor = axios.interceptors.response.use(r => { resetActivity(); return r; }, err => { resetActivity(); return Promise.reject(err); });
-
-    ping();
-    heartbeatTimerRef.current = setInterval(() => {
-      if (Date.now() - lastActivityRef.current < 1800000 || !document.hidden) ping();
-    }, 30000);
-
-    return () => {
-      events.forEach(e => window.removeEventListener(e, resetActivity));
-      document.removeEventListener("visibilitychange", vis);
-      axios.interceptors.response.eject(interceptor);
-      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
-    };
-  }, [token, authHeaders]);
-
   const handleMarkAllRead = () => { markAllRead(); axios.patch(`${API}/notifications/read-all`, {}, { headers: authHeaders }).catch(() => {}); };
   const handleClearAll = () => { clearAllNotifs(); axios.delete(`${API}/notifications`, { headers: authHeaders }).catch(() => {}); };
   const handleLogout = async () => { await onLogout(); handlePageChange("home"); setCustomPositions([]); };

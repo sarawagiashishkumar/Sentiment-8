@@ -4,25 +4,52 @@ import { AlertTriangle, Wifi, WifiOff } from "lucide-react";
 
 const API = "/api";
 const POLL_INTERVAL = 60000;
+const REQUEST_TIMEOUT = 15000;
+const RETRY_DELAY = 3000;
+const FAILURES_BEFORE_OFFLINE = 2;
 
 export function SessionHealthIndicator() {
   const [health, setHealth] = useState("checking");
   const intervalRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
+  const requestInFlightRef = useRef(false);
+  const consecutiveFailuresRef = useRef(0);
 
   const checkHealth = useCallback(async () => {
+    if (requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+
     try {
-      const resp = await axios.get(`${API}/health`, { timeout: 15000 });
-      const status = resp.data?.status;
-      setHealth(status === "healthy" ? "online" : status === "degraded" ? "degraded" : "offline");
+      const resp = await axios.get(`${API}/health`, { timeout: REQUEST_TIMEOUT });
+      consecutiveFailuresRef.current = 0;
+      setHealth(resp.data?.status === "healthy" ? "online" : "degraded");
     } catch {
-      setHealth("offline");
+      consecutiveFailuresRef.current += 1;
+      setHealth(consecutiveFailuresRef.current >= FAILURES_BEFORE_OFFLINE ? "offline" : "degraded");
+
+      if (consecutiveFailuresRef.current === 1) {
+        retryTimeoutRef.current = window.setTimeout(() => {
+          retryTimeoutRef.current = null;
+          void checkHealth();
+        }, RETRY_DELAY);
+      }
+    } finally {
+      requestInFlightRef.current = false;
     }
   }, []);
 
   useEffect(() => {
-    checkHealth();
-    intervalRef.current = setInterval(checkHealth, POLL_INTERVAL);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    void checkHealth();
+    intervalRef.current = setInterval(() => void checkHealth(), POLL_INTERVAL);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+    };
   }, [checkHealth]);
 
   const isOnline = health === "online";
@@ -32,7 +59,7 @@ export function SessionHealthIndicator() {
   const title = isOnline
     ? "Application API and database are healthy"
     : isDegraded
-    ? "Application API is responding with a dependency issue"
+    ? "The health check is delayed or a dependency is unavailable; retrying"
     : isChecking
     ? "Checking application API health"
     : "Application API is unreachable — click to retry";
@@ -40,7 +67,7 @@ export function SessionHealthIndicator() {
   return (
     <button
       type="button"
-      onClick={checkHealth}
+      onClick={() => void checkHealth()}
       className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
         isOnline
           ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
@@ -51,6 +78,7 @@ export function SessionHealthIndicator() {
           : "border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
       }`}
       data-testid="session-health-indicator"
+      data-health-status={health}
       aria-label={label}
       title={title}
     >

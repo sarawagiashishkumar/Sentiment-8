@@ -8,9 +8,8 @@ const POLL_INTERVAL_MS = 60000; // 60 seconds
 const ALARM_DURATION_MS = 5000; // 5 seconds loud alarm
 
 /**
- * Play the alarm sound at MAXIMUM volume for exactly 5 seconds.
- * Used for critical warnings only (API disconnection, network errors).
- * NOT used for success events (target achievements).
+ * Play the alarm sound at maximum volume for exactly 5 seconds.
+ * Used only for an explicitly confirmed Kite session disconnect.
  */
 function playAlarmSound() {
   try {
@@ -50,7 +49,7 @@ function showBrowserNotification(title, body) {
 }
 
 
-// ── Main Component: Background API Health Polling ────────────────────────────
+// ── Main Component: Kite session status polling ──────────────────────────────
 
 export function KiteLiveWarning({ authHeaders, addNotification }) {
   const [disconnected, setDisconnected] = useState(false);
@@ -73,11 +72,11 @@ export function KiteLiveWarning({ authHeaders, addNotification }) {
         if (!disconnectedRef.current && !alarmPlayedRef.current) {
           playAlarmSound();
           showBrowserNotification(
-            "API Authentication Failed",
-            "Market data connection lost. Please re-authenticate immediately."
+            "Kite Session Disconnected",
+            "Market data connection lost. Please re-authenticate."
           );
           if (addNotification) {
-            addNotification("critical", "API Disconnected", "Market Data API connection lost. Re-authenticate in Admin panel.");
+            addNotification("critical", "Kite Session Disconnected", "Market data connection lost. Re-authenticate in the Admin panel.");
           }
           alarmPlayedRef.current = true;
           setLastDisconnectTime(new Date());
@@ -91,21 +90,9 @@ export function KiteLiveWarning({ authHeaders, addNotification }) {
         setDisconnected(false);
         alarmPlayedRef.current = false;
       }
-    } catch (netErr) {
-      console.error("KiteLiveWarning: health check network error:", netErr.message);
-      // Network error to our own backend — also a disconnect
-      if (!disconnectedRef.current && !alarmPlayedRef.current) {
-        playAlarmSound();
-        showBrowserNotification(
-          "Network Connection Lost",
-          "Unable to reach the server. Check your internet connection."
-        );
-        alarmPlayedRef.current = true;
-        setLastDisconnectTime(new Date());
-      }
-      disconnectedRef.current = true;
-      setDisconnected(true);
-      setDismissed(false);
+    } catch {
+      // A failed status request does not prove that the Kite session is disconnected.
+      // The application health indicator reports backend/network reachability separately.
     }
   }, [authHeaders, addNotification]);
   useEffect(() => {
