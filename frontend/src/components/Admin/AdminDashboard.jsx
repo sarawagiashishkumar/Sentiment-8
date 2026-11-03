@@ -153,7 +153,7 @@ export function AdminDashboard({ authHeaders, me, isAdmin, isOwner, token, hydra
       {activeTab === "fraud" && <AdminFraudPanel authHeaders={authHeaders} />}
       {activeTab === "controls" && isOwner && <AdminControlsTab authHeaders={authHeaders} adminConfig={adminConfig} loadAdminConfig={loadAdminConfig} adminError={adminError} setAdminError={setAdminError} />}
       {activeTab === "macro" && isOwner && <AdminMacroTab authHeaders={authHeaders} />}
-      {activeTab === "kite" && isOwner && <AdminApiTab kiteStatus={kiteStatus} checkKiteStatus={checkKiteStatus} token={token} />}
+      {activeTab === "kite" && isOwner && <AdminApiTab kiteStatus={kiteStatus} kiteConfig={adminConfig?.kite} checkKiteStatus={checkKiteStatus} token={token} />}
       {activeTab === "perf" && isOwner && <AdminPerfTab authHeaders={authHeaders} />}
       {activeTab === "csv" && (
         <AdminCsvTab

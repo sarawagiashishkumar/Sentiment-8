@@ -1,13 +1,42 @@
+import { useState } from "react";
 import { Button } from "components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 
-export function AdminApiTab({ kiteStatus, checkKiteStatus, token }) {
+export function AdminApiTab({ kiteStatus, kiteConfig, checkKiteStatus, token }) {
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  const connectToKite = async () => {
+    setAuthError("");
+    setIsConnecting(true);
+    const authWindow = window.open("about:blank", "_blank");
+    if (authWindow) authWindow.opener = null;
+
+    try {
+      const response = await fetch("/api/kite/auth-url", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.auth_url) {
+        throw new Error(data.detail || "Unable to create a Kite login URL.");
+      }
+
+      if (authWindow) authWindow.location.replace(data.auth_url);
+      else window.location.assign(data.auth_url);
+    } catch (error) {
+      authWindow?.close();
+      setAuthError(error instanceof Error ? error.message : "Unable to start Kite login.");
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   return (
     <Card className="result-card border-slate-800 bg-slate-950/70">
       <CardHeader><CardTitle className="text-white">Market Data API Integration</CardTitle></CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-          <div className="space-y-2">
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+          <div className="flex flex-col gap-2">
             <p className="text-sm font-semibold text-slate-200">Connection Status</p>
             <div className="flex items-center gap-2">
               {kiteStatus?.connected ? (
@@ -18,16 +47,35 @@ export function AdminApiTab({ kiteStatus, checkKiteStatus, token }) {
             </div>
             {kiteStatus?.date && <p className="text-xs text-slate-500">Last authenticated: {kiteStatus.date}</p>}
           </div>
-          <Button type="button" onClick={async () => {
-            try { const res = await fetch(`/api/kite/auth-url`, { headers: { Authorization: `Bearer ${token}` } }); const data = await res.json(); if (data.auth_url) { window.open(data.auth_url, '_blank'); setTimeout(() => checkKiteStatus(), 3000); } } catch (err) { console.error('Market Data API auth error:', err); }
-          }} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="admin-connect-api-btn">Connect Market Data API</Button>
+          <Button
+            type="button"
+            onClick={connectToKite}
+            disabled={isConnecting}
+            aria-busy={isConnecting}
+            className="bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+            data-testid="admin-connect-api-btn"
+          >
+            {isConnecting ? "Preparing Kite login..." : "Connect Market Data API"}
+          </Button>
         </div>
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
-          <p className="text-xs font-semibold text-slate-300 mb-2">OAuth URL:</p>
-          <p className="text-xs text-cyan-400 break-all font-mono">https://kite.zerodha.com/connect/login?v=3&api_key=wgbgees3zbjpn254</p>
-          <p className="text-xs text-slate-500 mt-2">Note: Market Data API authentication expires daily. Re-authenticate each trading day for live data.</p>
+        {authError && <p role="alert" className="text-sm text-red-400">{authError}</p>}
+        <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+          <div>
+            <p className="text-xs font-semibold text-slate-300">Redirect URL</p>
+            <p className="break-all font-mono text-xs text-cyan-400">{kiteConfig?.redirect_url || "Not configured"}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-300">Postback URL</p>
+            <p className="break-all font-mono text-xs text-cyan-400">{kiteConfig?.postback_url || "Not configured"}</p>
+          </div>
+          <p className="text-xs text-slate-500">
+            Register the redirect URL exactly in the Kite Developer Console. Postbacks are for order updates, not login, and apply only to orders placed with this API key. The API secret stays server-side.
+          </p>
         </div>
-        <Button type="button" onClick={checkKiteStatus} className="bg-slate-800 text-slate-100 hover:bg-slate-700" data-testid="admin-refresh-api-status">Refresh Status</Button>
+        <div className="flex items-center gap-3">
+          <Button type="button" onClick={checkKiteStatus} className="bg-slate-800 text-slate-100 hover:bg-slate-700" data-testid="admin-refresh-api-status">Refresh Status</Button>
+          <p className="text-xs text-slate-500">After approving Kite login, return here and refresh the connection status.</p>
+        </div>
       </CardContent>
     </Card>
   );
