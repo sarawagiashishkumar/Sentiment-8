@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
 import {
   Send, X, Bug, Minimize2, Maximize2, Monitor, MonitorOff,
   Mic, MicOff, Bot, Volume2, VolumeX, Phone, PhoneOff, Globe,

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { X, MessageSquare, Send, Reply } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
 
 const API = "/api";
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { AlertTriangle, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "components/ui/button";
 
 const API = "/api";
 

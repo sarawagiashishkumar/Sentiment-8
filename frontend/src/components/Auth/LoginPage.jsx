@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
 import { KeyRound, Sparkles, AlertTriangle, Send, CreditCard, QrCode, Upload } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Button } from "components/ui/button";
+import { Card, CardContent } from "components/ui/card";
+import { Input } from "components/ui/input";
 import axios from "axios";
 
 const API = "/api";

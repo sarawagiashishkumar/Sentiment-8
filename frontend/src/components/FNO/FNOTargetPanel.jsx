@@ -1,4 +1,4 @@
-import { formatNumber } from "@/utils/formatters";
+import { formatNumber } from "utils/formatters";
 
 export function FNOTargetPanel({ signal }) {
   if (!signal.best_exit_price) return null;

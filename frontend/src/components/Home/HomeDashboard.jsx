@@ -1,5 +1,5 @@
 import { BarChart3, TrendingUp, FileUp, LayoutGrid } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 
 export function HomeDashboard({ setCurrentPage }) {
   return (

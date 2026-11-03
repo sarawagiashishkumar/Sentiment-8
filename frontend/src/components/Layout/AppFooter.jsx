@@ -1,5 +1,5 @@
 import { GaugeCircle } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "components/ui/card";
 
 export function AppFooter() {
   return (

@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import axios from "axios";
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
 import { RefreshCw, TrendingUp } from "lucide-react";
 
 const API = "/api";

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "components/ui/button";
+import { Card, CardContent } from "components/ui/card";
 import { Check, X, Zap, Star, Crown, Infinity } from "lucide-react";
 
 const API = "/api";

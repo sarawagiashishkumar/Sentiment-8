@@ -1,5 +1,5 @@
 import { Activity, LayoutGrid, List } from "lucide-react";
-import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
+import { RefreshCountdown } from "components/Shared/RefreshCountdown";
 import { OptionsSymbolSearch } from "./OptionsSymbolSearch";
 
 const INDEX_TABS = [

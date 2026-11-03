@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
-import { SubTabs } from "@/components/Layout/SubTabs";
+import { SubTabs } from "components/Layout/SubTabs";
 import { AdminUsersTab } from "./AdminUsersTab";
 import { AdminApiTab } from "./AdminApiTab";
 import { AdminCsvTab } from "./AdminCsvTab";

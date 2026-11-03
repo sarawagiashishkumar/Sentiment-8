@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { BarChart3, TrendingUp, TrendingDown, Activity, RefreshCw } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Button } from "components/ui/button";
+import { Badge } from "components/ui/badge";
 
 const API = "/api";
 

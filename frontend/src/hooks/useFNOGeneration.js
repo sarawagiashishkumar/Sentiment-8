@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import axios from "axios";
-import { readNDJSONStream } from "@/components/Shared/NDJSONStreamConsumer";
+import { readNDJSONStream } from "components/Shared/NDJSONStreamConsumer";
 
 const API = "/api";
 

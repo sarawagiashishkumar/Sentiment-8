@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
-import { HeatmapSkeleton } from "@/components/Shared/Skeletons";
+import { HeatmapSkeleton } from "components/Shared/Skeletons";
 import { OptionsControls } from "./OptionsControls";
 import { OptionsTreemapView } from "./OptionsTreemapView";
 import { OptionsChainView } from "./OptionsChainView";

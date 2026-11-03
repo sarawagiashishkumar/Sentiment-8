@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { AlertTriangle, ShoppingCart } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { triggerWarningAlarm } from "@/components/Shared/KiteLiveWarning";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Badge } from "components/ui/badge";
+import { triggerWarningAlarm } from "components/Shared/KiteLiveWarning";
 
 const API = "/api";
 const POLL_INTERVAL = 30000;

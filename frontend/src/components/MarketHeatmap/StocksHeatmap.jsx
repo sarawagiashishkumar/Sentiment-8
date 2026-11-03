@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import axios from "axios";
 import { LayoutGrid, List, Search, X } from "lucide-react";
-import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
-import { HeatmapSkeleton } from "@/components/Shared/Skeletons";
-import { MiniChartPopup } from "@/components/Shared/MiniChartPopup";
+import { RefreshCountdown } from "components/Shared/RefreshCountdown";
+import { HeatmapSkeleton } from "components/Shared/Skeletons";
+import { MiniChartPopup } from "components/Shared/MiniChartPopup";
 
 const API = "/api";
 const REFRESH_INTERVAL = 30000;

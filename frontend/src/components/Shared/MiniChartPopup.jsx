@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { X, TrendingUp, TrendingDown } from "lucide-react";
-import { TVChart } from "@/components/Shared/TVChartWrapper";
+import { TVChart } from "components/Shared/TVChartWrapper";
 
 const API = "/api";
 
