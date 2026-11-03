@@ -586,8 +586,7 @@ async def add_response_time_header(request, call_next):
     response.headers["X-Response-Time"] = f"{elapsed_ms}ms"
     return response
 
-@app.on_event("startup")
-async def startup_tasks():
+async def _run_startup_maintenance():
     global NSE_HOLIDAYS
     # Initialize NSE holiday manager (seeds DB, loads into memory, starts background updater)
     loaded = await init_holiday_manager(db)
@@ -665,7 +664,7 @@ async def startup_tasks():
 
     # ── Batch 1 NEW: Prime news sentiment cache (background) ─────────────
     try:
-        refresh_news_cache()
+        await asyncio.to_thread(refresh_news_cache)
         logger.info("News sentiment cache primed on startup")
     except Exception as exc:
         logger.warning("News cache prime failed (non-fatal): %s", exc)
@@ -864,6 +863,26 @@ async def startup_tasks():
         logger.info("News continuous monitor background task started")
     except Exception as exc:
         logger.warning("News continuous monitor start failed (non-fatal): %s", exc)
+
+
+_startup_maintenance_task: asyncio.Task | None = None
+
+
+async def _run_startup_maintenance_safely():
+    try:
+        await _run_startup_maintenance()
+    except Exception:
+        logger.exception("Deferred backend startup maintenance failed")
+
+
+@app.on_event("startup")
+async def startup_tasks():
+    global _startup_maintenance_task
+    if _startup_maintenance_task and not _startup_maintenance_task.done():
+        return
+    _startup_maintenance_task = asyncio.create_task(_run_startup_maintenance_safely())
+    logger.info("Deferred backend startup maintenance scheduled")
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

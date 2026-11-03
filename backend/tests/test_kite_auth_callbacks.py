@@ -69,5 +69,29 @@ class KiteAuthCallbackTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 503)
 
 
+class StartupLifecycleTests(unittest.TestCase):
+    def test_startup_does_not_wait_for_database_maintenance(self):
+        import server
+
+        async def verify():
+            started = asyncio.Event()
+            release = asyncio.Event()
+            completed = asyncio.Event()
+
+            async def blocked_maintenance():
+                started.set()
+                await release.wait()
+                completed.set()
+
+            with patch.object(server, "_run_startup_maintenance", blocked_maintenance):
+                await server.startup_tasks()
+                await asyncio.wait_for(started.wait(), timeout=1)
+                self.assertFalse(release.is_set())
+                release.set()
+                await asyncio.wait_for(completed.wait(), timeout=1)
+
+        asyncio.run(verify())
+
+
 if __name__ == "__main__":
     unittest.main()
