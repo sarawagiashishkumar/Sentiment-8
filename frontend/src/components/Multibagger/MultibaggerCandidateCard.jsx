@@ -1,6 +1,6 @@
-import { Badge } from "@/components/ui/badge";
-import { TableBody, TableCell, TableRow } from "@/components/ui/table";
-import { formatNumber, scoreBadge } from "@/utils/formatters";
+import { Badge } from "components/ui/badge";
+import { TableBody, TableCell, TableRow } from "components/ui/table";
+import { formatNumber, scoreBadge } from "utils/formatters";
 import { MultibaggerPriceBands } from "./MultibaggerPriceBands";
 
 export function MultibaggerCandidateCard({ row, expanded, onToggleBands }) {

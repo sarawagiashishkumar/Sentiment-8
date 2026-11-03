@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
-import { SubTabs } from "@/components/Layout/SubTabs";
+import { SubTabs } from "components/Layout/SubTabs";
 import { AdminUsersTab } from "./AdminUsersTab";
 import { AdminApiTab } from "./AdminApiTab";
 import { AdminCsvTab } from "./AdminCsvTab";
@@ -10,7 +10,7 @@ import { AdminMacroTab } from "./AdminMacroTab";
 import { AdminCrmPanel, AdminFraudPanel, AdminPermissionsPanel } from "./AdminCrmPanel";
 import { AdminPaymentsPanel } from "./AdminPaymentsPanel";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const ADMIN_TABS = [
   { id: "users", label: "User Management" },

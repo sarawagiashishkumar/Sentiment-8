@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Button } from "components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Input } from "components/ui/input";
 import { Plus, Trash2, Play, Settings } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function AdminControlsTab({ authHeaders, adminConfig, loadAdminConfig, adminError, setAdminError }) {
   const [apiControlsEdit, setApiControlsEdit] = useState(adminConfig?.api_controls || { kite_data_enabled: true, moneycontrol_data_enabled: true, strict_live_only: true });

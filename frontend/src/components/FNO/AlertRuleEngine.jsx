@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 import { Bell, Plus, Trash2, RefreshCw, ToggleLeft, ToggleRight, Zap } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const FIELD_OPTIONS = [
   { value: "symbol_ltp", label: "Symbol LTP (Price)" },

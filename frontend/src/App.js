@@ -1,31 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import "@/App.css";
+import "App.css";
 
-import { useAuth } from "@/hooks/useAuth";
-import { useAlertEngine } from "@/hooks/useAlertEngine";
-import { LoginPage } from "@/components/Auth/LoginPage";
-import { AppHeader } from "@/components/Layout/AppHeader";
-import { AppSidebar } from "@/components/Layout/AppSidebar";
-import { AppFooter } from "@/components/Layout/AppFooter";
-import { HomeDashboard } from "@/components/Home/HomeDashboard";
-import { KiteLiveWarning } from "@/components/Shared/KiteLiveWarning";
-import { ErrorBoundary } from "@/components/Shared/ErrorBoundary";
-import { useNotifications, NotificationBell, NotificationPanel } from "@/components/Shared/NotificationCenter";
-import { usePushNotifications, PushNotifToggle } from "@/components/Shared/PushNotifications";
-import { LiveHelpModule } from "@/components/Shared/LiveHelpModule";
-import { UserCrmInbox } from "@/components/Shared/UserCrmInbox";
-import { MultibaggerDashboard } from "@/components/Multibagger/MultibaggerDashboard";
-import { FNODashboard } from "@/components/FNO/FNODashboard";
-import { PortfolioDashboard } from "@/components/Portfolio/PortfolioDashboard";
-import { AdminDashboard } from "@/components/Admin/AdminDashboard";
-import { MarketHeatmapDashboard } from "@/components/MarketHeatmap/MarketHeatmapDashboard";
-import { ReportsDashboard } from "@/components/Reports/ReportsDashboard";
-import { WatchlistPanel } from "@/components/Watchlist/WatchlistPanel";
-import { PlanComparisonPage, LowCreditsModal } from "@/components/Shared/PlanComparison";
-import { NewsSentimentPanel } from "@/components/News/NewsSentimentPanel";
+import { useAuth } from "hooks/useAuth";
+import { useAlertEngine } from "hooks/useAlertEngine";
+import { LoginPage } from "components/Auth/LoginPage";
+import { AppHeader } from "components/Layout/AppHeader";
+import { AppSidebar } from "components/Layout/AppSidebar";
+import { AppFooter } from "components/Layout/AppFooter";
+import { HomeDashboard } from "components/Home/HomeDashboard";
+import { KiteLiveWarning } from "components/Shared/KiteLiveWarning";
+import { ErrorBoundary } from "components/Shared/ErrorBoundary";
+import { useNotifications, NotificationBell, NotificationPanel } from "components/Shared/NotificationCenter";
+import { usePushNotifications, PushNotifToggle } from "components/Shared/PushNotifications";
+import { LiveHelpModule } from "components/Shared/LiveHelpModule";
+import { UserCrmInbox } from "components/Shared/UserCrmInbox";
+import { MultibaggerDashboard } from "components/Multibagger/MultibaggerDashboard";
+import { FNODashboard } from "components/FNO/FNODashboard";
+import { PortfolioDashboard } from "components/Portfolio/PortfolioDashboard";
+import { AdminDashboard } from "components/Admin/AdminDashboard";
+import { MarketHeatmapDashboard } from "components/MarketHeatmap/MarketHeatmapDashboard";
+import { ReportsDashboard } from "components/Reports/ReportsDashboard";
+import { WatchlistPanel } from "components/Watchlist/WatchlistPanel";
+import { PlanComparisonPage, LowCreditsModal } from "components/Shared/PlanComparison";
+import { NewsSentimentPanel } from "components/News/NewsSentimentPanel";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export default function App() {
   const {

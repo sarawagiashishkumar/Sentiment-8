@@ -1,9 +1,9 @@
 import { useState, useCallback } from "react";
-import { SubTabs } from "@/components/Layout/SubTabs";
+import { SubTabs } from "components/Layout/SubTabs";
 import { SectorHeatmap } from "./SectorHeatmap";
 import { StocksHeatmap } from "./StocksHeatmap";
 import { OptionsHeatmap } from "./OptionsHeatmap";
-import { DataFetchErrorPopup } from "@/components/Shared/KiteLiveWarning";
+import { DataFetchErrorPopup } from "components/Shared/KiteLiveWarning";
 
 const TABS = [
   { id: "sectors", label: "Sector Heatmap" },

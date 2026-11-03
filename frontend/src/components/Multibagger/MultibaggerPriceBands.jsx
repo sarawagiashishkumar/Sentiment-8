@@ -1,4 +1,4 @@
-import { formatNumber } from "@/utils/formatters";
+import { formatNumber } from "utils/formatters";
 
 export function MultibaggerPriceBands({ row, expanded, onToggle }) {
   return (

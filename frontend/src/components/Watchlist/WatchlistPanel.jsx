@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 import { Eye, Plus, Trash2, Bell, RefreshCw, Wifi, WifiOff } from "lucide-react";
-import { useLivePrices } from "@/hooks/useLivePrices";
+import { useLivePrices } from "hooks/useLivePrices";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function WatchlistPanel({ authHeaders }) {
   const [items, setItems] = useState([]);

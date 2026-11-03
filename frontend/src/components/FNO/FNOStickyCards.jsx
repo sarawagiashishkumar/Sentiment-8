@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { formatNumber, formatSignedInr } from "@/utils/formatters";
+import { Badge } from "components/ui/badge";
+import { Button } from "components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Input } from "components/ui/input";
+import { formatNumber, formatSignedInr } from "utils/formatters";
 
 export function FNOStickyCards({
   customPositions,
@@ -15,7 +15,7 @@ export function FNOStickyCards({
   enableAlertSound,
   playAlertSound,
 }) {
-  const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+  const API = "/api";
   const [showSoundPrompt, setShowSoundPrompt] = useState(false);
   const [customScript, setCustomScript] = useState("");
   const [customBuyPrice, setCustomBuyPrice] = useState("");

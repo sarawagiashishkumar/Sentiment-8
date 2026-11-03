@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import axios from "axios";
-import { readNDJSONStream } from "@/components/Shared/NDJSONStreamConsumer";
+import { readNDJSONStream } from "components/Shared/NDJSONStreamConsumer";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 /**
  * Custom hook: encapsulates all FNO signal generation logic.

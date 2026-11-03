@@ -1,14 +1,14 @@
 import { useState, useRef, useCallback } from "react";
 import axios from "axios";
 import { FileUp, Upload, X, File } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Button } from "components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Input } from "components/ui/input";
 import { PortfolioHoldingRow } from "./PortfolioHoldingRow";
 import { PortfolioRiskPanel } from "./PortfolioRiskPanel";
 import { RiskDashboard } from "./RiskDashboard";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const ACCEPTED_TYPES = ".txt,.csv,.CSV,text/csv,application/csv,application/vnd.ms-excel,.xls,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,application/pdf,.jpg,.jpeg,.bmp,.png,.webp,image/*";
 
 export function PortfolioDashboard({ authHeaders, syncCredits }) {

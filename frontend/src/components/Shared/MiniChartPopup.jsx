@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { X, TrendingUp, TrendingDown } from "lucide-react";
-import { TVChart } from "@/components/Shared/TVChartWrapper";
+import { TVChart } from "components/Shared/TVChartWrapper";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 /**
  * Mini intraday chart popup — shown when clicking a stock tile in heatmaps.

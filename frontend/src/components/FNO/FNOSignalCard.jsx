@@ -1,6 +1,6 @@
-import { formatNumber, formatExpiryDate, directionBadge, qualityBadge } from "@/utils/formatters";
-import { Badge } from "@/components/ui/badge";
-import { LiveInfoBox } from "@/components/shared/LiveInfoBox";
+import { formatNumber, formatExpiryDate, directionBadge, qualityBadge } from "utils/formatters";
+import { Badge } from "components/ui/badge";
+import { LiveInfoBox } from "components/shared/LiveInfoBox";
 import { FNOIVBadge } from "./FNOIVBadge";
 
 const variantStyles = {

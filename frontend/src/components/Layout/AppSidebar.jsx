@@ -1,5 +1,5 @@
 import { Home, BarChart3, TrendingUp, FileUp, Shield, Grid3X3, FileText, Eye, Layers } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "components/ui/button";
 
 export function AppSidebar({ currentPage, setCurrentPage, isAdmin, onAdminClick }) {
   const navClass = (page) =>

@@ -1,16 +1,16 @@
 import { useMemo, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
-import { Table, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatNumber, formatTime, scoreBadge } from "@/utils/formatters";
-import { readNDJSONStream } from "@/components/Shared/NDJSONStreamConsumer";
+import { Badge } from "components/ui/badge";
+import { Button } from "components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Input } from "components/ui/input";
+import { Slider } from "components/ui/slider";
+import { Table, TableHead, TableHeader, TableRow } from "components/ui/table";
+import { formatNumber, formatTime, scoreBadge } from "utils/formatters";
+import { readNDJSONStream } from "components/Shared/NDJSONStreamConsumer";
 import { MultibaggerCandidateCard } from "./MultibaggerCandidateCard";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 export function MultibaggerDashboard({ authHeaders, syncCredits }) {
   const [multibaggerData, setMultibaggerData] = useState(null);

@@ -1,6 +1,6 @@
 import { forwardRef } from "react";
-import { formatNumber } from "@/utils/formatters";
-import { collectAllFnoSignals, buildExportRow } from "@/utils/exportUtils";
+import { formatNumber } from "utils/formatters";
+import { collectAllFnoSignals, buildExportRow } from "utils/exportUtils";
 
 export const FNOExportTable = forwardRef(function FNOExportTable({ fnoData }, ref) {
   if (!fnoData) return null;

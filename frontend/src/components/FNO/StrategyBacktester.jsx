@@ -1,12 +1,12 @@
 import { useState, useCallback } from "react";
 import axios from "axios";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 import { RefreshCw, Play, TrendingUp, TrendingDown } from "lucide-react";
-import { TVChart } from "@/components/Shared/TVChartWrapper";
+import { TVChart } from "components/Shared/TVChartWrapper";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const STRATEGY_TEMPLATES = [
   { id: "momentum_ce", label: "Momentum CE (Bullish)" },

@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { GaugeCircle, RefreshCw } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SectorDrillDown } from "@/components/Shared/SectorDrillDown";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { SectorDrillDown } from "components/Shared/SectorDrillDown";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const REFRESH_INTERVAL = 30000;
 
 function isMarketHours() {

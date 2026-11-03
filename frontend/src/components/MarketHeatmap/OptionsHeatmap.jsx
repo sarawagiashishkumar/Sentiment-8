@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
-import { HeatmapSkeleton } from "@/components/Shared/Skeletons";
+import { HeatmapSkeleton } from "components/Shared/Skeletons";
 import { OptionsControls } from "./OptionsControls";
 import { OptionsTreemapView } from "./OptionsTreemapView";
 import { OptionsChainView } from "./OptionsChainView";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const REFRESH_INTERVAL = 30000;
+const EMPTY_CHAINS = [];
 
 function isMarketHours() {
   const now = new Date();
@@ -44,8 +45,6 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
     }
   }, [authHeaders, onFetchError]);
 
-  useEffect(() => { loadData(activeSymbol, selectedExpiry); /* eslint-disable-next-line */ }, []);
-
   useEffect(() => {
     symbolRef.current = activeSymbol;
     setSelectedExpiry("");
@@ -66,7 +65,7 @@ export function OptionsHeatmap({ authHeaders, onFetchError }) {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [loadData]);
 
-  const chains = data?.chains || [];
+  const chains = data?.chains ?? EMPTY_CHAINS;
   const availableExpiries = chains.length > 0 ? (chains[0].available_expiries || []) : [];
 
   // Build flat contract list for treemap

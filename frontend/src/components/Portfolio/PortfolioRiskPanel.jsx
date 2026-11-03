@@ -1,7 +1,7 @@
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatNumber } from "@/utils/formatters";
+import { Badge } from "components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "components/ui/table";
+import { formatNumber } from "utils/formatters";
 
 export function PortfolioRiskPanel({ portfolioData }) {
   if (!portfolioData?.stocks?.length) return null;

@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 import { RefreshCw, BookOpen, TrendingUp, TrendingDown, Filter, Search, X } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const EVENT_LABELS = {
   signal_generated: { label: "Signal", color: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30" },

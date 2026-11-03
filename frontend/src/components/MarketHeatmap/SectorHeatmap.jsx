@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { TrendingUp, TrendingDown } from "lucide-react";
-import { SectorDrillDown } from "@/components/Shared/SectorDrillDown";
-import { RefreshCountdown } from "@/components/Shared/RefreshCountdown";
+import { SectorDrillDown } from "components/Shared/SectorDrillDown";
+import { RefreshCountdown } from "components/Shared/RefreshCountdown";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const REFRESH_INTERVAL = 30000;
 
 function isMarketHours() {

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { AlertTriangle, X, Volume2 } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 const ALARM_URL = "https://cdn.pixabay.com/download/audio/2022/03/25/audio_25c0b2671e.mp3";
 const POLL_INTERVAL_MS = 60000; // 60 seconds
 const ALARM_DURATION_MS = 5000; // 5 seconds loud alarm
@@ -107,8 +107,7 @@ export function KiteLiveWarning({ authHeaders, addNotification }) {
       setDisconnected(true);
       setDismissed(false);
     }
-  }, [authHeaders]);
-
+  }, [authHeaders, addNotification]);
   useEffect(() => {
     requestNotificationPermission();
     checkHealth(); // immediate check

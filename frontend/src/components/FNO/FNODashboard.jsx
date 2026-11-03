@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, RefreshCw, Settings } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { formatNumber, formatTime } from "@/utils/formatters";
-import { exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG, exportFnoAsPDF, exportFnoAsWord } from "@/utils/exportUtils";
-import { LiveInfoBox } from "@/components/shared/LiveInfoBox";
+import { Badge } from "components/ui/badge";
+import { Button } from "components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
+import { Input } from "components/ui/input";
+import { formatNumber, formatTime } from "utils/formatters";
+import { exportFnoAsCSV, exportFnoAsXLS, exportFnoAsJPG, exportFnoAsPDF, exportFnoAsWord } from "utils/exportUtils";
+import { LiveInfoBox } from "components/shared/LiveInfoBox";
 import { FNOSignalCard } from "./FNOSignalCard";
 import { FNOStickyCards } from "./FNOStickyCards";
 import { FNOEventPopup } from "./FNOEventPopup";
@@ -18,11 +18,11 @@ import { TradingJournal } from "./TradingJournal";
 import { StrategyBacktester } from "./StrategyBacktester";
 import { AlertRuleEngine } from "./AlertRuleEngine";
 import { FNOExportTable } from "./FNOExportTable";
-import { SubTabs } from "@/components/Layout/SubTabs";
-import { useFNOGeneration } from "@/hooks/useFNOGeneration";
+import { SubTabs } from "components/Layout/SubTabs";
+import { useFNOGeneration } from "hooks/useFNOGeneration";
 import axios from "axios";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const FNO_TABS = [
   { id: "signals", label: "Custom Script & F&O Generation" },

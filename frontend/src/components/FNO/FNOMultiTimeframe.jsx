@@ -1,11 +1,11 @@
 import { useCallback, useState } from "react";
 import axios from "axios";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
+import { Badge } from "components/ui/badge";
 import { RefreshCw, Layers } from "lucide-react";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = "/api";
 
 const trendColors = {
   BULLISH: "text-emerald-400 border-emerald-500/50 bg-emerald-900/20",

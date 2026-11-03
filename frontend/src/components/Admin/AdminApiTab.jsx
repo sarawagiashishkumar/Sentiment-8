@@ -1,5 +1,5 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
 
 export function AdminApiTab({ kiteStatus, checkKiteStatus, token }) {
   return (
@@ -19,7 +19,7 @@ export function AdminApiTab({ kiteStatus, checkKiteStatus, token }) {
             {kiteStatus?.date && <p className="text-xs text-slate-500">Last authenticated: {kiteStatus.date}</p>}
           </div>
           <Button type="button" onClick={async () => {
-            try { const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/kite/auth-url`, { headers: { Authorization: `Bearer ${token}` } }); const data = await res.json(); if (data.auth_url) { window.open(data.auth_url, '_blank'); setTimeout(() => checkKiteStatus(), 3000); } } catch (err) { console.error('Market Data API auth error:', err); }
+            try { const res = await fetch(`/api/kite/auth-url`, { headers: { Authorization: `Bearer ${token}` } }); const data = await res.json(); if (data.auth_url) { window.open(data.auth_url, '_blank'); setTimeout(() => checkKiteStatus(), 3000); } } catch (err) { console.error('Market Data API auth error:', err); }
           }} className="bg-cyan-500 text-slate-900 hover:bg-cyan-400" data-testid="admin-connect-api-btn">Connect Market Data API</Button>
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">

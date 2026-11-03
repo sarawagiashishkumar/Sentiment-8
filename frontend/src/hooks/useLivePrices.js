@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const WS_BASE = process.env.REACT_APP_BACKEND_URL?.replace("https://", "wss://").replace("http://", "ws://");
+const WS_BASE = typeof window === "undefined"
+  ? ""
+  : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 
 /**
  * Hook to stream live prices via WebSocket for watchlist symbols.

@@ -21,7 +21,7 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://sentiment-engine-ai.preview.emergentagent.com"
+    BASE_URL = "http://127.0.0.1:4000"
 
 
 @pytest.fixture(scope="module")
