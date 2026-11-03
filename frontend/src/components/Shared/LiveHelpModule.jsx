@@ -12,6 +12,8 @@ const WS_BASE = typeof window === "undefined"
   ? ""
   : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 
+const LOG_ACTION_PATH = "/livehelp/log-action";
+
 const LANGUAGES = [
   { code: "en-IN", label: "English" },
   { code: "hi-IN", label: "Hindi" },
@@ -61,14 +63,27 @@ export function LiveHelpModule({ authHeaders, me }) {
 
   // Session logging
   const logAction = useCallback(async (action) => {
-    try { await axios.post(`${API}/livehelp/log-action`, action, { headers: authHeaders }); } catch (err) { /* non-critical logging */ }
+    if (!authHeaders?.Authorization) return;
+    try { await axios.post(`${API}${LOG_ACTION_PATH}`, action, { headers: authHeaders }); } catch (err) { /* non-critical logging */ }
   }, [authHeaders]);
 
   useEffect(() => {
     if (!authHeaders?.Authorization) return;
     const id = axios.interceptors.response.use(
-      (res) => { logAction({ action: "api_call", endpoint: res.config?.url?.replace(API, ""), status: String(res.status) }); return res; },
-      (err) => { logAction({ action: "api_error", endpoint: err.config?.url?.replace(API, ""), status: String(err.response?.status || "network"), error: err.response?.data?.detail || err.message }); return Promise.reject(err); }
+      (res) => {
+        if (!res.config?.url?.includes(LOG_ACTION_PATH)) {
+          logAction({ action: "api_call", endpoint: res.config?.url?.replace(API, ""), status: String(res.status) });
+        }
+        return res;
+      },
+      (err) => {
+        const endpoint = err.config?.url || "";
+        const status = err.response?.status;
+        if (!endpoint.includes(LOG_ACTION_PATH) && status !== 401 && status !== 403 && (!status || status >= 500)) {
+          logAction({ action: "api_error", endpoint: endpoint.replace(API, ""), status: String(status || "network"), error: err.response?.data?.detail || err.message });
+        }
+        return Promise.reject(err);
+      }
     );
     return () => axios.interceptors.response.eject(id);
   }, [authHeaders, logAction]);

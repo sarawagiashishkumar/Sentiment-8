@@ -9,6 +9,8 @@ db and SESSION_STORE are injected by server.py via configure().
 """
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 
 from fastapi import Depends, Header, HTTPException
@@ -31,6 +33,39 @@ async def _get_user_by_key(user_key: str) -> dict | None:
     return await db.app_users.find_one({"user_key": user_key}, {"_id": 0})
 
 
+def hash_session_token(token: str) -> str:
+    """Hash bearer tokens before persisting them to MongoDB."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _find_session(token: str) -> dict | None:
+    if db is not None:
+        return await db.login_sessions.find_one(
+            {
+                "token_hash": hash_session_token(token),
+                "expires_at": {"$gt": datetime.now(timezone.utc)},
+            },
+            {"_id": 0, "user_key": 1},
+        )
+
+    session = SESSION_STORE.get(token)
+    if not session:
+        return None
+
+    try:
+        created_at = datetime.fromisoformat(session["created_at"])
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        SESSION_STORE.pop(token, None)
+        return None
+
+    if datetime.now(timezone.utc) - created_at > timedelta(hours=24):
+        SESSION_STORE.pop(token, None)
+        return None
+    return session
+
+
 def _is_owner(user: dict) -> bool:
     return user.get("role") == "owner"
 
@@ -47,13 +82,21 @@ async def get_current_user(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Unauthorized")
     token = authorization.replace("Bearer ", "", 1).strip()
-    session = SESSION_STORE.get(token)
+    try:
+        session = await _find_session(token)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Session store unavailable") from exc
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    user = await _get_user_by_key(session["user_key"])
+    user_key = session.get("user_key")
+    if not user_key:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    user = await _get_user_by_key(user_key)
     if not user:
         SESSION_STORE.pop(token, None)
+        if db is not None:
+            await db.login_sessions.delete_one({"token_hash": hash_session_token(token)})
         raise HTTPException(status_code=401, detail="Session expired")
     return user
 

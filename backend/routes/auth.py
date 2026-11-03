@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 import services.app_state as _state
-from deps import get_current_user
+from deps import get_current_user, hash_session_token
 from models import AccessRequest, AccessResponse, MeResponse, UserSettingsUpdate
 
 logger = logging.getLogger(__name__)
@@ -81,13 +82,24 @@ async def _check_fraud(user: dict, request: Request):
         logger.debug("Fraud check failed (non-fatal): %s", exc)
 
 
-def _create_session(user_key: str) -> str:
-    """Create a session token and store it."""
+async def _create_session(user_key: str) -> str:
+    """Create a 24-hour session and persist only its token hash."""
     token = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc)
+    expires_at = created_at + timedelta(hours=24)
     _state.SESSION_STORE[token] = {
         "user_key": user_key,
-        "created_at": _state._utc_now_iso(),
+        "created_at": created_at.isoformat(),
     }
+
+    if _state.db is not None:
+        await _state.db.login_sessions.insert_one({
+            "token_hash": hash_session_token(token),
+            "user_key": user_key,
+            "created_at": created_at,
+            "expires_at": expires_at,
+            "ts_epoch": created_at.timestamp(),
+        })
     return token
 
 
@@ -103,7 +115,7 @@ async def auth_access(payload: AccessRequest, request: Request):
     _check_suspended(user)
     await _check_fraud(user, request)
 
-    token = _create_session(user["user_key"])
+    token = await _create_session(user["user_key"])
     return AccessResponse(
         token=token,
         role=user["role"],
@@ -125,6 +137,8 @@ async def auth_logout(
     if authorization and authorization.startswith("Bearer "):
         token = authorization.replace("Bearer ", "", 1).strip()
         _state.SESSION_STORE.pop(token, None)
+        if _state.db is not None:
+            await _state.db.login_sessions.delete_one({"token_hash": hash_session_token(token)})
     return {"ok": True}
 
 

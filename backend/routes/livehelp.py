@@ -4,6 +4,7 @@ Zero third-party dependencies. Uses FastAPI WebSocket for signaling.
 Auto-generates CRM tickets for detected bugs.
 """
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
@@ -85,12 +86,26 @@ def _analyze_session_log(user_key: str) -> list[dict]:
 
 
 async def _auto_generate_ticket(user_key: str, error_info: str):
-    """Auto-generate a CRM ticket for detected bugs."""
+    """Create one CRM ticket per user/error signature within a short window."""
+    now = datetime.now(timezone.utc)
+    dedupe_key = hashlib.sha256(f"{user_key}|{error_info}".encode("utf-8")).hexdigest()
+    duplicate = await _state.db.crm_messages.find_one(
+        {
+            "type": "auto_bug_ticket",
+            "dedupe_key": dedupe_key,
+            "ts_epoch": {"$gte": now.timestamp() - 600},
+        },
+        {"_id": 1},
+    )
+    if duplicate:
+        return
+
     user = await _state.db.app_users.find_one({"user_key": user_key}, {"_id": 0, "username": 1})
     username = (user or {}).get("username", "Unknown")
 
     await _state.db.crm_messages.insert_one({
         "message_id": str(uuid.uuid4()),
+        "dedupe_key": dedupe_key,
         "from_user_key": user_key,
         "from_username": username,
         "to": "admin",
@@ -98,8 +113,8 @@ async def _auto_generate_ticket(user_key: str, error_info: str):
         "body": f"The Live Help system detected an issue during user session.\n\nUser: {username}\nError: {error_info}\n\nSession logs are available for review.",
         "type": "auto_bug_ticket",
         "status": "unread",
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "ts_epoch": datetime.now(timezone.utc).timestamp(),
+        "ts": now.isoformat(),
+        "ts_epoch": now.timestamp(),
     })
     logger.info("Auto-generated bug ticket for user %s: %s", username, error_info[:100])
 
@@ -130,9 +145,11 @@ async def log_session_action(
         if oldest_key != user_key:
             del _session_logs[oldest_key]
 
-    # Auto-detect errors and generate tickets
-    if action.get("status") in ("500", "502", "503") or action.get("error"):
-        error_desc = f"Endpoint: {action.get('endpoint', 'unknown')} | Status: {action.get('status', '')} | Error: {action.get('error', '')}"
+    # Only server-side failures indicate a platform bug; auth and validation errors are expected user states.
+    status = str(action.get("status", "")).strip()
+    endpoint = str(action.get("endpoint", "unknown")).split("?", 1)[0]
+    if status.isdigit() and 500 <= int(status) <= 599 and not endpoint.rstrip("/").endswith("/livehelp/log-action"):
+        error_desc = f"Endpoint: {endpoint} | Status: {status} | Error: {str(action.get('error', ''))[:400]}"
         await _auto_generate_ticket(user_key, error_desc)
 
     return {"logged": True}

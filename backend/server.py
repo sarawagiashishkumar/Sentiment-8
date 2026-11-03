@@ -791,6 +791,8 @@ async def _run_startup_maintenance():
     try:
         await db.alert_rules.create_index([("user_key", 1), ("enabled", 1)])
         await db.login_sessions.create_index([("user_key", 1), ("ts_epoch", -1)])
+        await db.login_sessions.create_index("token_hash", unique=True, sparse=True)
+        await db.login_sessions.create_index("expires_at", expireAfterSeconds=0)
         await db.fraud_incidents.create_index([("user_key", 1), ("status", 1)])
         await db.crm_messages.create_index([("to", 1), ("ts_epoch", -1)])
         await db.crm_messages.create_index([("to_user_key", 1), ("dismissed", 1)])
