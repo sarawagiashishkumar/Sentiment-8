@@ -214,13 +214,13 @@ function FNOResultsGrid({ fnoData }) {
         </div>
         <div className="space-y-4">
           <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="top4-trades-panel">
-            <CardHeader className="py-3"><CardTitle className="text-white text-sm">Top 4 Best Stock Trades</CardTitle></CardHeader>
+            <CardHeader className="py-3"><CardTitle className="text-white text-sm">Top Stock Setups by Confluence</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {fnoData.stock_signals?.length ? (
                 [...fnoData.stock_signals].sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0)).slice(0, 4).map((trade, idx) => (
                   <FNOSignalCard key={trade.script} signal={trade} suffix={`top4-${idx}`} variant="top4" />
                 ))
-              ) : <p className="text-sm text-slate-400">No stock trades available yet.</p>}
+              ) : <p className="text-sm text-slate-400">No stock option-chain setups were generated in this cycle.</p>}
             </CardContent>
           </Card>
           {fnoData.custom_signal && (
@@ -238,11 +238,11 @@ function FNOResultsGrid({ fnoData }) {
         </div>
       </div>
       <Card className="result-card border-slate-800 bg-slate-950/70" data-testid="stock-fno-bottom-panel">
-        <CardHeader><CardTitle className="text-white">Profitable F&O Signals — Best 15 Individual Stocks</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-white">Best-Confluence F&O Stock Signals</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {fnoData.stock_signals?.length ? (
             fnoData.stock_signals.slice(0, 15).map((signal, idx) => <FNOSignalCard key={signal.script} signal={signal} suffix={`stock-${idx}`} variant="stock" />)
-          ) : <p className="text-sm text-slate-400" data-testid="stock-fno-empty-note">No verified stock option-chain opportunities found in this cycle.</p>}
+          ) : <p className="text-sm text-slate-400" data-testid="stock-fno-empty-note">No stock option-chain setups were generated in this cycle. Check the index watchlists for the strongest available candidates.</p>}
         </CardContent>
       </Card>
     </>

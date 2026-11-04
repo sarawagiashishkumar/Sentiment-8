@@ -34,7 +34,7 @@ from services.technical_core import compute_full_technical_snapshot
 from services.mfe_mae_engine import get_cached_prob_table, get_cached_fwd_mfe
 from services.backtest_engine import fetch_strategy_backtest
 from services.iv_history import capture_atm_iv, get_iv_stats_52w
-from services.confluence_score_v2 import CONFLUENCE_THRESHOLD
+from services.confluence_score_v2 import CONFLUENCE_THRESHOLD, is_actionable_fno_signal
 
 logger = logging.getLogger(__name__)
 
@@ -1063,8 +1063,14 @@ async def build_fno_signal(
         trigger_factors.append(f"ADX={tech_adx:.0f}")
     
     signal_quality = _get_signal_quality(confluence_score)
+    signal_expiry_risk = _expiry_risk_bucket(minutes_to_expiry)
 
-    is_potential_trade = direction != "NEUTRAL" and confluence_score >= CONFLUENCE_THRESHOLD and risk_reward_target2 >= 1.2
+    is_potential_trade = is_actionable_fno_signal(
+        confluence_score,
+        direction,
+        risk_reward_target2,
+        signal_expiry_risk,
+    )
     if is_potential_trade:
         trigger_factors.append(f"Conviction={conviction_level}")
 
@@ -1151,7 +1157,7 @@ async def build_fno_signal(
         conviction_level=conviction_level,
         is_potential_trade=is_potential_trade,
         minutes_to_expiry=minutes_to_expiry,
-        expiry_risk=_expiry_risk_bucket(minutes_to_expiry),
+        expiry_risk=signal_expiry_risk,
         data_source="LIVE_OPTION_CHAIN",
         analysis_refreshed_at=refreshed_at,
         max_pain=max_pain,

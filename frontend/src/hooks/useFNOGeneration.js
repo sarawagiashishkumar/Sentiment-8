@@ -52,7 +52,9 @@ export function useFNOGeneration({ authHeaders, syncCredits }) {
               merged.nifty_projection = evt.data.nifty_projection;
               merged.signals = evt.data.nifty_projection.assured_signals || [];
               merged.potential_signals = merged.signals.filter(s => s.is_potential_trade);
-              merged.top_trades = merged.potential_signals.slice(0, 4);
+              merged.top_trades = [...merged.signals, ...(evt.data.nifty_projection.watchlist_signals || [])]
+                .sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0))
+                .slice(0, 4);
             }
             if (evt.phase === "banknifty" && evt.data.banknifty_projection) {
               merged.banknifty_projection = evt.data.banknifty_projection;
@@ -60,7 +62,9 @@ export function useFNOGeneration({ authHeaders, syncCredits }) {
               const bnSigs = evt.data.banknifty_projection.assured_signals || [];
               merged.signals = [...niftySigs, ...bnSigs].sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0));
               merged.potential_signals = merged.signals.filter(s => s.is_potential_trade);
-              merged.top_trades = merged.potential_signals.slice(0, 4);
+              merged.top_trades = [...merged.signals, ...(evt.data.banknifty_projection.watchlist_signals || [])]
+                .sort((a, b) => (b.confluence_score || 0) - (a.confluence_score || 0))
+                .slice(0, 4);
             }
             return merged;
           });

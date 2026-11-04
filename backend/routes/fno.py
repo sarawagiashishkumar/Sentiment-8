@@ -102,7 +102,7 @@ def _build_no_signals_alert(nifty_projection, banknifty_projection, stock_signal
     if banknifty_projection.rejection_note:
         reasons.append(f"BANKNIFTY: {banknifty_projection.rejection_note}")
     if not stock_signals:
-        reasons.append(f"Individual stock signals: No scripts passed {threshold_display}% confluence & R:R >= 1.2 filters")
+        reasons.append(f"Individual stock signals: No scripts passed {threshold_display}% actionable confluence & R:R >= 1.2 filters")
     regime = market_regime.get("regime", "UNKNOWN")
     if regime in ("LOW_VOL_RANGE",):
         reasons.append(f"Market in {regime} — directional setups lacking conviction")
@@ -111,7 +111,7 @@ def _build_no_signals_alert(nifty_projection, banknifty_projection, stock_signal
     if not market_session.get("is_open"):
         reasons.append(f"Market CLOSED ({market_session.get('status', 'CLOSED')})")
     reason_text = " | ".join(reasons) if reasons else f"Current market conditions do not meet minimum {threshold_display}% confluence threshold"
-    return f"No script signals currently available. Reason: {reason_text}"
+    return f"No actionable F&O trades currently available. Best valid candidates are shown in the index watchlists when available. Reason: {reason_text}"
 
 
 @fno_router.post("/fno/generate")
@@ -172,23 +172,23 @@ async def generate_fno_signals(
 
         nifty_projection = nifty_task.result()
         _perf["nifty_ms"] = round((_time.monotonic() - _t0) * 1000)
-        yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals)} signals ({_perf['nifty_ms']}ms)"})
+        yield _ndjson_line({"type": "progress", "phase": "nifty_done", "message": f"NIFTY: {len(nifty_projection.assured_signals) + len(nifty_projection.watchlist_signals)} candidates ({_perf['nifty_ms']}ms)"})
 
         # Send partial NIFTY results immediately so frontend can display them
         nifty_partial = {
             "nifty_projection": json.loads(nifty_projection.model_dump_json()) if hasattr(nifty_projection, 'model_dump_json') else {},
-            "signals_so_far": len(nifty_projection.assured_signals),
+            "signals_so_far": len(nifty_projection.assured_signals) + len(nifty_projection.watchlist_signals),
         }
         yield _ndjson_line({"type": "partial", "phase": "nifty", "data": nifty_partial})
 
         banknifty_projection = bn_task.result()
         _perf["banknifty_ms"] = round((_time.monotonic() - _t0) * 1000)
-        yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals)} signals ({_perf['banknifty_ms']}ms)"})
+        yield _ndjson_line({"type": "progress", "phase": "banknifty_done", "message": f"BANKNIFTY: {len(banknifty_projection.assured_signals) + len(banknifty_projection.watchlist_signals)} candidates ({_perf['banknifty_ms']}ms)"})
 
         # Send partial BANKNIFTY results
         banknifty_partial = {
             "banknifty_projection": json.loads(banknifty_projection.model_dump_json()) if hasattr(banknifty_projection, 'model_dump_json') else {},
-            "signals_so_far": len(nifty_projection.assured_signals) + len(banknifty_projection.assured_signals),
+            "signals_so_far": len(nifty_projection.assured_signals) + len(nifty_projection.watchlist_signals) + len(banknifty_projection.assured_signals) + len(banknifty_projection.watchlist_signals),
         }
         yield _ndjson_line({"type": "partial", "phase": "banknifty", "data": banknifty_partial})
 
@@ -222,12 +222,18 @@ async def generate_fno_signals(
         potential_signals = [*nifty_projection.assured_signals, *banknifty_projection.assured_signals]
         signals = sorted(potential_signals, key=lambda r: r.confluence_score, reverse=True)
 
-        top_pool = [*signals, *stock_signals]
+        best_index_candidates = [
+            *nifty_projection.assured_signals,
+            *nifty_projection.watchlist_signals,
+            *banknifty_projection.assured_signals,
+            *banknifty_projection.watchlist_signals,
+        ]
+        top_pool = [*best_index_candidates, *stock_signals]
         if custom_signal:
             top_pool.append(custom_signal)
         top_trades = sorted(
             top_pool,
-            key=lambda r: (r.is_potential_trade, r.confluence_score),
+            key=lambda signal: signal.confluence_score,
             reverse=True,
         )[:4]
 
@@ -254,7 +260,11 @@ async def generate_fno_signals(
             credits_remaining=round(float(updated_user.get("credits", 0)), 2),
             analysis_refreshed_at=refreshed_at,
             signals=signals,
-            potential_signals=[r for r in signals if r.is_potential_trade],
+            potential_signals=[
+                signal
+                for signal in [*signals, *stock_signals, *([custom_signal] if custom_signal else [])]
+                if signal.is_potential_trade
+            ],
             top_trades=top_trades,
             custom_signal=custom_signal,
             nifty_projection=nifty_projection,

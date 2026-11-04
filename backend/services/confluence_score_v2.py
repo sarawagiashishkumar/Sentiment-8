@@ -541,11 +541,24 @@ def compute_bucket_d(
 # ---------------------------------------------------------------------------
 
 BUCKET_WEIGHTS = {"A": 0.30, "B": 0.30, "C": 0.25, "D": 0.15}
-# Threshold calibrated for live market reality:
-# - Bucket B (fundamental/sentiment) structurally scores 25-40 (no yfinance data)
-# - Weighted max with B=40: 0.30*70+0.30*40+0.25*60+0.15*80 = 21+12+15+12 = 60
-# - Threshold 40 = "above average" filter: signals need positive evidence in majority of buckets
+# Keep a lower floor for generating valid candidates, but use a stricter score
+# when labeling a candidate as an actionable trade.
 CONFLUENCE_THRESHOLD = 40
+ACTIONABLE_CONFLUENCE_THRESHOLD = 55
+
+
+def is_actionable_fno_signal(
+    confluence_score: float,
+    direction: str,
+    risk_reward_target2: float,
+    expiry_risk: str,
+) -> bool:
+    return (
+        direction != "NEUTRAL"
+        and confluence_score >= ACTIONABLE_CONFLUENCE_THRESHOLD
+        and risk_reward_target2 >= 1.2
+        and expiry_risk != "HIGH"
+    )
 
 
 def compute_confluence_score_v2(

@@ -42,10 +42,24 @@ class TestConfluenceScoreThresholds:
     """Test BucketD hard_veto and CONFLUENCE_THRESHOLD values"""
     
     def test_confluence_threshold_is_40(self):
-        """Verify CONFLUENCE_THRESHOLD is 40 in confluence_score_v2.py"""
+        """Verify the signal-generation floor remains at 40."""
         from services.confluence_score_v2 import CONFLUENCE_THRESHOLD
         assert CONFLUENCE_THRESHOLD == 40, f"Expected CONFLUENCE_THRESHOLD=40, got {CONFLUENCE_THRESHOLD}"
         print(f"PASS: CONFLUENCE_THRESHOLD = {CONFLUENCE_THRESHOLD}")
+
+    def test_actionable_confluence_threshold_is_55(self):
+        """Keep the trade cutoff at 55 while displaying lower-scoring watchlists."""
+        from services.confluence_score_v2 import ACTIONABLE_CONFLUENCE_THRESHOLD
+        assert ACTIONABLE_CONFLUENCE_THRESHOLD == 55
+
+    def test_actionable_signal_gate_keeps_low_scores_as_watchlist_only(self):
+        from services.confluence_score_v2 import is_actionable_fno_signal
+
+        assert not is_actionable_fno_signal(54, "BULLISH", 1.5, "LOW")
+        assert is_actionable_fno_signal(55, "BULLISH", 1.2, "MEDIUM")
+        assert not is_actionable_fno_signal(70, "BULLISH", 1.1, "LOW")
+        assert not is_actionable_fno_signal(70, "BULLISH", 1.5, "HIGH")
+        assert not is_actionable_fno_signal(70, "NEUTRAL", 1.5, "LOW")
     
     def test_bucket_d_hard_veto_threshold_is_0_5(self):
         """Verify BucketD hard_veto triggers at rr_to_t1 < 0.5 (not 0.8)"""

@@ -36,7 +36,11 @@ from services.fno_signal_engine import (
 from services.fno_utils import _compute_report_from_rows, _format_script
 from services.technical_core import compute_full_technical_snapshot
 from services.iv_history import capture_atm_iv, get_iv_stats_52w
-from services.confluence_score_v2 import CONFLUENCE_THRESHOLD
+from services.confluence_score_v2 import (
+    ACTIONABLE_CONFLUENCE_THRESHOLD,
+    CONFLUENCE_THRESHOLD,
+    is_actionable_fno_signal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -354,62 +358,38 @@ async def _build_index_projection(index_name: Literal["NIFTY", "BANKNIFTY"], ref
         for item in rows
         if item.script not in paired_scripts
         and strike_range_min <= item.strike <= strike_range_max
-        and item.direction != "NEUTRAL"
         and expected_direction != "NEUTRAL"
         and item.direction == expected_direction
-        and item.confluence_score >= 58
-        and item.risk_reward_target2 >= 1.2
+        and is_actionable_fno_signal(
+            item.confluence_score,
+            item.direction,
+            item.risk_reward_target2,
+            item.expiry_risk,
+        )
         and item.risk_reward_target1 >= 0.8
-        and item.expiry_risk != "HIGH"
         and (item.target1 - item.entry_price) / max(item.entry_price, 0.01) <= 0.18
     ]
     assured_signals.sort(key=lambda row: row.confluence_score, reverse=True)
+    assured_scripts = {signal.script for signal in assured_signals}
 
-    watchlist_signals: list[FNOSignalResponse] = []
-
-    if len(assured_signals) < 2:
-        fallback_candidates = [
-            item
-            for item in rows
-            if item.script not in paired_scripts
-            and strike_range_min <= item.strike <= strike_range_max
-            and item.expiry_risk != "HIGH"
-            and item.direction != "NEUTRAL"
-            and item.confluence_score >= 45
-            and item.risk_reward_target2 >= 1.2
-        ]
-        fallback_candidates.sort(key=lambda row: row.confluence_score, reverse=True)
-        
-        existing_scripts = {s.script for s in assured_signals}
-        for candidate in fallback_candidates:
-            if candidate.script not in existing_scripts:
-                assured_signals.append(
-                    candidate.model_copy(update={
-                        "strategy": f"{candidate.conviction_level} Conviction Trade (Neutral Market)"
-                    })
-                )
-                if len(assured_signals) >= 2:
-                    break
-        
-        if len(assured_signals) < 2 and len(rows) > 0:
-            all_available = [
-                item for item in rows
-                if item.expiry_risk != "HIGH"
-                and item.script not in paired_scripts
-                and item.risk_reward_target2 >= 1.2
-            ]
-            all_available.sort(key=lambda row: row.confluence_score, reverse=True)
-            
-            existing_scripts = {s.script for s in assured_signals}
-            for candidate in all_available:
-                if candidate.script not in existing_scripts:
-                    assured_signals.append(
-                        candidate.model_copy(update={
-                            "strategy": f"Best Available Trade (Score: {candidate.confluence_score})"
-                        })
-                    )
-                    if len(assured_signals) >= 2:
-                        break
+    watchlist_candidates = [
+        item
+        for item in rows
+        if item.script not in paired_scripts
+        and item.script not in assured_scripts
+        and strike_range_min <= item.strike <= strike_range_max
+        and item.direction != "NEUTRAL"
+        and item.confluence_score >= CONFLUENCE_THRESHOLD
+        and item.expiry_risk != "HIGH"
+    ]
+    watchlist_candidates.sort(key=lambda row: row.confluence_score, reverse=True)
+    watchlist_signals = [
+        candidate.model_copy(update={
+            "is_potential_trade": False,
+            "strategy": "Best Available Watchlist Setup",
+        })
+        for candidate in watchlist_candidates[:8]
+    ]
 
     directional_count = len([item for item in rows if item.direction != "NEUTRAL"])
     high_conf_count = len([item for item in rows if item.confluence_score >= 80])
@@ -652,27 +632,47 @@ async def _build_stock_fno_signals(refreshed_at: str) -> list[FNOSignalResponse]
             potential = [
                 row
                 for row in symbol_rows
-                if row.confluence_score >= CONFLUENCE_THRESHOLD
-                and row.risk_reward_target2 >= 1.2
-                and row.expiry_risk != "HIGH"
+                if is_actionable_fno_signal(
+                    row.confluence_score,
+                    row.direction,
+                    row.risk_reward_target2,
+                    row.expiry_risk,
+                )
             ]
-            
+
             if potential:
                 potential.sort(key=lambda row: row.confluence_score, reverse=True)
                 logger.info(f"{symbol}: QUALIFIED - Confluence={potential[0].confluence_score}, Conviction={potential[0].conviction_level}")
                 return potential[0]
-            else:
-                for row in symbol_rows:
-                    reasons = []
-                    if row.confluence_score < CONFLUENCE_THRESHOLD:
-                        reasons.append(f"Confluence {row.confluence_score} < {CONFLUENCE_THRESHOLD} (minimum required)")
-                    if row.risk_reward_target2 < 1.2:
-                        reasons.append(f"R:R {row.risk_reward_target2:.2f} < 1.2")
-                    if row.expiry_risk == "HIGH":
-                        reasons.append("HIGH expiry risk")
-                    if reasons:
-                        logger.info(f"{symbol} {row.option_type}: {', '.join(reasons)}")
-                return None
+
+            for row in symbol_rows:
+                reasons = []
+                if row.confluence_score < ACTIONABLE_CONFLUENCE_THRESHOLD:
+                    reasons.append(f"Confluence {row.confluence_score} < {ACTIONABLE_CONFLUENCE_THRESHOLD} (actionable minimum)")
+                if row.risk_reward_target2 < 1.2:
+                    reasons.append(f"R:R {row.risk_reward_target2:.2f} < 1.2")
+                if row.expiry_risk == "HIGH":
+                    reasons.append("HIGH expiry risk")
+                if reasons:
+                    logger.info(f"{symbol} {row.option_type}: {', '.join(reasons)}")
+
+            watchlist = [
+                row for row in symbol_rows
+                if row.confluence_score >= CONFLUENCE_THRESHOLD
+                and row.expiry_risk != "HIGH"
+            ]
+            if watchlist:
+                watchlist.sort(key=lambda row: row.confluence_score, reverse=True)
+                best_available = watchlist[0]
+                logger.info(
+                    f"{symbol}: showing best available watchlist setup at "
+                    f"confluence={best_available.confluence_score}"
+                )
+                return best_available.model_copy(update={
+                    "is_potential_trade": False,
+                    "strategy": "Best Available Watchlist Setup",
+                })
+            return None
 
     built = await asyncio.gather(*[_build_for_symbol(symbol, normalized_cores[idx]) for idx, symbol in enumerate(symbols)])
     results = [item for item in built if item is not None]

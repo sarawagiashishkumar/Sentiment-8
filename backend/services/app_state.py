@@ -24,7 +24,7 @@ KITE_REDIRECT_URL: Optional[str] = None
 kite_access_token: Optional[str] = None
 
 # ── Config Constants ──────────────────────────────────────────────────────────
-CONFLUENCE_THRESHOLD_DISPLAY: int = 40
+CONFLUENCE_THRESHOLD_DISPLAY: int = 55
 
 # ── Caches (populated at runtime) ─────────────────────────────────────────────
 SECTOR_MOMENTUM_CACHE: dict[str, Any] = {}
