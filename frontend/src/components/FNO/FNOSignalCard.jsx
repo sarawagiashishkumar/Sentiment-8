@@ -38,6 +38,9 @@ export function FNOSignalCard({ signal, suffix, variant = "assured" }) {
           <Badge className={`border ${directionBadge(signal.direction)}`}>{signal.direction}</Badge>
         )}
       </div>
+      {!signal.is_potential_trade && (
+        <Badge variant="secondary" className="mb-1">Watchlist · not actionable</Badge>
+      )}
 
       {/* LiveInfoBox */}
       <LiveInfoBox signal={signal} suffix={suffix} />
